@@ -26,6 +26,7 @@ from comparison_wizard_manager import ComparisonWizardManager
 from export_wizard_manager import ExportWizardManager
 from signal_mixer_wizard_manager import SignalMixerWizardManager
 from process_wizard_manager import ProcessWizardManager
+from plot_wizard_manager import PlotWizardManager
 
 
 class MainWindowUI(QWidget):
@@ -762,29 +763,24 @@ Error Information:
                 QMessageBox.information(self, "No Data", "Please load some files first before using the plot wizard.")
                 return
             
-            # For now, show a message that this wizard is not yet implemented
-            # When plot_wizard_manager is available, use the same pattern as other wizards
-            QMessageBox.information(
-                self, 
-                "Plot Wizard", 
-                "Plot Wizard is not yet implemented.\nYou can use the main plot canvas to visualize your data."
+            # Create and show the plot wizard manager
+            self.plot_wizard_manager = PlotWizardManager(
+                file_manager=self.file_manager,
+                channel_manager=self.channel_manager,
+                signal_bus=None,  # Could be added later for inter-wizard communication
+                parent=self
             )
             
-            # Log the attempt
-            self.log_message("📊 Plot Wizard requested (not yet implemented)")
+            # Show the wizard window
+            self.plot_wizard_manager.show()
             
-            # Future implementation would look like:
-            # self.plot_wizard_manager = PlotWizardManager(
-            #     file_manager=self.file_manager,
-            #     channel_manager=self.channel_manager,
-            #     signal_bus=None,
-            #     parent=self
-            # )
-            # self.plot_wizard_manager.show()
+            # Log the successful launch
+            self.log_message("📊 Plot Wizard launched successfully")
             
         except Exception as e:
-            self.log_message(f"❌ Error with Plot Wizard: {str(e)}")
+            self.log_message(f"❌ Error launching Plot Wizard: {str(e)}")
             traceback.print_exc()
+            QMessageBox.critical(self, "Error", f"Failed to launch Plot Wizard: {str(e)}")
     
     def show_load_file_dialog(self):
         """Show file dialog to load data files"""
