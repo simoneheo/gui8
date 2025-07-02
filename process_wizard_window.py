@@ -1,0 +1,1305 @@
+from PySide6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QComboBox,
+    QLabel, QLineEdit, QPushButton, QListWidget, QTableWidget, QTableWidgetItem,
+    QSplitter, QTextEdit, QCheckBox, QFrame, QTabWidget, QRadioButton, QButtonGroup,
+    QGroupBox
+)
+from PySide6.QtCore import Qt, QEvent
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
+import matplotlib.pyplot as plt
+import sys
+import time
+from typing import Optional, Dict, List
+
+from steps.process_registry import load_all_steps
+from steps.process_registry import ProcessRegistry
+from process_wizard_manager import ProcessWizardManager
+from file_manager import FileManager
+from channel_manager import ChannelManager
+from channel import SourceType
+from steps.base_step import BaseStep
+import numpy as np
+from scipy.signal import find_peaks
+from scipy.ndimage import zoom
+
+class ProcessWizardWindow(QMainWindow):
+    """
+    Process Wizard window for applying signal processing steps to channels
+    """
+    
+    def __init__(self, file_manager=None, channel_manager=None, signal_bus=None, parent=None):
+        super().__init__(parent)
+        
+        # Store managers with consistent naming
+        self.file_manager = file_manager
+        self.channel_manager = channel_manager
+        self.signal_bus = signal_bus
+        self.parent_window = parent
+        
+        self.setWindowTitle("Process File")
+        self.setMinimumSize(1200, 800)
+        
+        # Initialize state tracking
+        self._stats = {
+            'total_processes': 0,
+            'successful_processes': 0,
+            'failed_processes': 0,
+            'last_process_time': None,
+            'session_start': time.time()
+        }
+        
+        # Initialize processing state
+        self.input_ch = None  # Track which channel is selected as input for next step
+        self._adding_filter = False  # Flag to prevent dropdown interference during filter operations
+        self.radio_button_group = None  # Button group for step table radio buttons
+        
+        # Validate initialization
+        if not self._validate_initialization():
+            return
+            
+        # Setup UI components
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        main_layout = QVBoxLayout(central_widget)
+
+        # Create main horizontal splitter
+        main_splitter = QSplitter(Qt.Horizontal)
+        main_layout.addWidget(main_splitter)
+
+        # Build panels
+        self._build_left_panel(main_splitter)
+        # self._build_right_panel(main_splitter)
+        
+        # Initialize manager with proper error handling
+        self._initialize_manager()
+        
+        # Update UI state
+        self._update_file_selector()
+        self._update_channel_selector()
+        self._update_input_channel_display()
+        
+        # Log initialization
+        self._log_state_change("Process wizard initialized successfully")
+
+    def _validate_initialization(self) -> bool:
+        """Validate that required managers are available"""
+        if not self.file_manager:
+            self._show_error("File manager not available")
+            return False
+            
+        if not self.channel_manager:
+            self._show_error("Channel manager not available")
+            return False
+            
+        return True
+        
+    def _show_error(self, message: str):
+        """Show error message to user"""
+        print(f"[ProcessWizard] ERROR: {message}")
+        if hasattr(self, 'console_output'):
+            self.console_output.append(f"ERROR: {message}")
+            
+    def _initialize_manager(self):
+        """Initialize the process manager with error handling"""
+        try:
+            # Load processing steps
+            load_all_steps("steps")
+            registry = ProcessRegistry
+            
+            # Create manager
+            self.wizard_manager = ProcessWizardManager(
+                ui=self,
+                registry=registry,
+                channel_lookup=self.get_active_channel_info
+            )
+            
+            # Update UI state
+            self._update_file_selector()
+            self._update_channel_selector()
+            
+        except Exception as e:
+            print(f"[ProcessWizard] ERROR: Failed to initialize manager: {e}")
+            self._show_error(f"Failed to initialize processing manager: {e}")
+            
+    def _log_state_change(self, message: str):
+        """Log state changes for debugging and monitoring"""
+        timestamp = time.strftime("%H:%M:%S")
+        print(f"[ProcessWizard {timestamp}] {message}")
+        
+    def get_stats(self) -> Dict:
+        """Get processing statistics"""
+        return {
+            **self._stats,
+            'available_files': len(self.file_manager.get_all_files()) if self.file_manager else 0,
+            'total_channels': self.channel_manager.get_channel_count() if self.channel_manager else 0,
+            'session_duration': time.time() - self._stats['session_start']
+        }
+        
+    def _build_left_panel(self, main_splitter):
+        """Build the left panel with processing controls"""
+        # Left Panel with grouped widgets
+        self.left_panel = QWidget()
+        left_layout = QVBoxLayout(self.left_panel)
+        
+        # Filters Group
+        filters_group = QGroupBox("Filters")
+        filter_layout = QVBoxLayout(filters_group)
+        
+        # Filter controls layout (search + category dropdown)
+        filter_controls_layout = QHBoxLayout()
+        
+        self.filter_search = QLineEdit()
+        self.filter_search.setPlaceholderText("Search filters...")
+        self.filter_search.textChanged.connect(self._on_filter_search)
+        
+        self.category_filter = QComboBox()
+        self.category_filter.addItem("All Categories")
+        self.category_filter.currentTextChanged.connect(self._on_category_filter_changed)
+        
+        filter_controls_layout.addWidget(self.filter_search, 2)  # Give search box more space
+        filter_controls_layout.addWidget(self.category_filter, 1)  # Category dropdown smaller
+        
+        self.filter_list = QListWidget()
+        
+
+        
+        filter_buttons_layout = QHBoxLayout()
+        self.add_filter_btn = QPushButton("Add Filter")
+        self.add_filter_btn.clicked.connect(self._on_add_filter)
+        filter_buttons_layout.addWidget(self.add_filter_btn)
+        
+        filter_layout.addLayout(filter_controls_layout)
+        filter_layout.addWidget(self.filter_list)
+        filter_layout.addLayout(filter_buttons_layout)
+        
+        # Input Channel Display
+        input_channel_group = QGroupBox("Input Channel")
+        input_channel_layout = QHBoxLayout(input_channel_group)
+        
+        self.input_channel_label = QLabel("No channel selected")
+        self.input_channel_label.setStyleSheet("color: #666; font-style: italic;")
+        input_channel_layout.addWidget(self.input_channel_label)
+        
+        # Console Group
+        console_group = QGroupBox("Console")
+        console_layout = QVBoxLayout(console_group)
+        
+        self.console_output = QTextEdit()
+        self.console_output.setPlaceholderText("Output will appear here...")
+        self.console_output.setReadOnly(True)
+        self.param_table = QTableWidget(0, 2)
+        self.param_table.setHorizontalHeaderLabels(["Parameter", "Value"])
+        self.param_table.verticalHeader().setVisible(False)
+        self.param_table.horizontalHeader().setStretchLastSection(True)
+        self.param_table.setEditTriggers(QTableWidget.AllEditTriggers)
+        self.param_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.param_table.setFixedHeight(120)  # Adjust as needed
+        
+        console_layout.addWidget(self.console_output)
+        console_layout.addWidget(self.param_table)
+        
+        # Add groups to left panel
+        left_layout.addWidget(filters_group)
+        left_layout.addWidget(input_channel_group)
+        left_layout.addWidget(console_group)
+
+        # Right Panel with vertical layout
+        self.right_panel = QWidget()
+        right_layout = QVBoxLayout(self.right_panel)
+        
+        # TopBar with file/channel dropdowns
+        topbar_layout = QHBoxLayout()
+        
+        # File selector
+        file_label = QLabel("File:")
+        self.file_selector = QComboBox()
+        self.file_selector.currentIndexChanged.connect(self._on_file_selected)
+        topbar_layout.addWidget(file_label)
+        topbar_layout.addWidget(self.file_selector)
+        
+        # Channel selector
+        channel_label = QLabel("Channel:")
+        self.channel_selector = QComboBox()
+        self.channel_selector.currentIndexChanged.connect(self._on_channel_selected)
+        topbar_layout.addWidget(channel_label)
+        topbar_layout.addWidget(self.channel_selector)
+        
+        topbar_layout.addStretch()
+        right_layout.addLayout(topbar_layout)
+        
+        # Step Table - small height, scrollable
+        self.step_table = QTableWidget(0, 3)  # 3 columns
+        self.step_table.setHorizontalHeaderLabels(["Line", "Channel Name", "Actions"])
+        self.step_table.verticalHeader().setVisible(False)
+        self.step_table.horizontalHeader().setStretchLastSection(True)
+        self.step_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.step_table.setSelectionMode(QTableWidget.SingleSelection)
+        self.step_table.setSelectionBehavior(QTableWidget.SelectRows)
+        # Custom selection style - thick box outline around entire row
+        self.step_table.setStyleSheet("""
+            QTableWidget { 
+                border: none; 
+                selection-background-color: transparent;
+                selection-color: black;
+                gridline-color: transparent;
+            }
+            QTableWidget::item:selected {
+                background-color: transparent;
+                border: none;
+            }
+            QTableWidget::item {
+                padding: 2px;
+                border: none;
+            }
+            QTableWidget::item:selected:first {
+                border-left: 3px solid #0078d4;
+                border-top: 3px solid #0078d4;
+                border-bottom: 3px solid #0078d4;
+            }
+            QTableWidget::item:selected:last {
+                border-right: 3px solid #0078d4;
+                border-top: 3px solid #0078d4;
+                border-bottom: 3px solid #0078d4;
+            }
+            QTableWidget::item:selected:!first:!last {
+                border-top: 3px solid #0078d4;
+                border-bottom: 3px solid #0078d4;
+            }
+        """)
+        self.step_table.setMaximumHeight(150)  # Small height
+        self.step_table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        right_layout.addWidget(self.step_table)
+
+        # Connect row selection signal
+        self.step_table.itemSelectionChanged.connect(self._on_row_selection_changed)
+
+        # Create tab widget for plot area
+        self.tab_widget = QTabWidget()
+
+        # Create Time Series tab
+        time_series_tab = QWidget()
+        time_series_layout = QVBoxLayout(time_series_tab)
+
+        # Plot area
+        self.figure = plt.figure(figsize=(8, 6), dpi=100)
+        self.ax = self.figure.add_subplot(111)
+        self.canvas = FigureCanvas(self.figure)
+        self.toolbar = NavigationToolbar(self.canvas, time_series_tab)
+        time_series_layout.addWidget(self.toolbar)
+        time_series_layout.addWidget(self.canvas)
+
+        # Create Spectrogram tab
+        spectrogram_tab = QWidget()
+        spectrogram_layout = QVBoxLayout(spectrogram_tab)
+
+        # Add spectrogram controls
+        controls_layout = QHBoxLayout()
+        
+        # Log scaling toggle
+        self.log_scale_checkbox = QCheckBox("Logarithmic Scaling")
+        self.log_scale_checkbox.setChecked(False)  # Default off
+        self.log_scale_checkbox.stateChanged.connect(self._on_spectrogram_settings_changed)
+        controls_layout.addWidget(self.log_scale_checkbox)
+        
+        # Downsampling toggle
+        self.downsample_checkbox = QCheckBox("Downsample for Performance")
+        self.downsample_checkbox.setChecked(True)  # Default on
+        self.downsample_checkbox.stateChanged.connect(self._on_spectrogram_settings_changed)
+        controls_layout.addWidget(self.downsample_checkbox)
+        
+        # Add spacer to push controls to the left
+        controls_layout.addStretch()
+        
+        spectrogram_layout.addLayout(controls_layout)
+
+        # Spectrogram plot area
+        self.spectrogram_figure = plt.figure(figsize=(8, 6), dpi=100)
+        self.spectrogram_ax = self.spectrogram_figure.add_subplot(111)
+        # Initialize colorbar list for spectrogram figure
+        self.spectrogram_figure._colorbar_list = []
+        # Set initial layout
+        self.spectrogram_figure.subplots_adjust(right=0.85, left=0.1, top=0.9, bottom=0.1)
+        self.spectrogram_canvas = FigureCanvas(self.spectrogram_figure)
+        self.spectrogram_toolbar = NavigationToolbar(self.spectrogram_canvas, spectrogram_tab)
+        spectrogram_layout.addWidget(self.spectrogram_toolbar)
+        spectrogram_layout.addWidget(self.spectrogram_canvas)
+
+        # Create Bar Chart tab
+        bar_chart_tab = QWidget()
+        bar_chart_layout = QVBoxLayout(bar_chart_tab)
+
+        # Bar chart plot area
+        self.bar_chart_figure = plt.figure(figsize=(8, 6), dpi=100)
+        self.bar_chart_ax = self.bar_chart_figure.add_subplot(111)
+        self.bar_chart_canvas = FigureCanvas(self.bar_chart_figure)
+        self.bar_chart_toolbar = NavigationToolbar(self.bar_chart_canvas, bar_chart_tab)
+        bar_chart_layout.addWidget(self.bar_chart_toolbar)
+        bar_chart_layout.addWidget(self.bar_chart_canvas)
+
+        # Add tabs
+        self.tab_widget.addTab(time_series_tab, "Time Series")
+        self.tab_widget.addTab(spectrogram_tab, "Spectrogram")
+        self.tab_widget.addTab(bar_chart_tab, "Bar Chart")
+        
+        # Connect tab change event
+        self.tab_widget.currentChanged.connect(self._on_tab_changed)
+
+        # Add plot area to right panel with stretch priority
+        right_layout.addWidget(self.tab_widget, 1)  # Stretch factor 1 = takes remaining space
+        
+        # Add panels to main splitter
+        main_splitter.addWidget(self.left_panel)
+        main_splitter.addWidget(self.right_panel)
+        
+        # Set splitter proportions (left panel smaller, right panel larger)
+        main_splitter.setSizes([300, 800])  # Left: 300px, Right: 800px
+
+        # Load steps and setup wizard manager
+        load_all_steps("steps")
+        self.process_registry = ProcessRegistry
+        self.all_filters = self.process_registry.all_steps()  # Store original list for searching
+        self.filter_list.addItems(self.all_filters)
+        
+        # Populate category dropdown with unique categories
+        self._populate_category_filter()
+        # Create wizard manager
+        self.wizard_manager = ProcessWizardManager(
+            ui=self,
+            registry=self.process_registry,
+            channel_lookup=self.get_active_channel_info
+        )
+
+        # Connect filter list to manager logic
+        self.filter_list.itemClicked.connect(self.wizard_manager._on_filter_selected)
+
+        # Update selectors in order: file -> channel -> plots
+        self._update_file_selector()
+        self._update_channel_selector()
+
+        # Initialize input_ch to the first available channel
+        if self.channel_selector.count() > 0:
+            self.input_ch = self.channel_selector.itemData(0)
+
+        # Initial update of tables and plots
+        self._update_step_table()
+        self._update_plot()
+        
+    def _update_file_selector(self):
+        """Update the file selector with all successfully parsed files."""
+        if not self.file_manager:
+            return
+
+        # Store previously selected file
+        current_file_id = self.file_selector.currentData()
+        prev_file_id = current_file_id if current_file_id else None
+
+        self.file_selector.clear()
+
+        # Get all files from file manager
+        all_files = self.file_manager.get_all_files()
+        if not all_files:
+            return
+
+        # Filter for files with successful parse status
+        from file import FileStatus
+        successfully_parsed_files = [
+            file for file in all_files 
+            if file.state.status == FileStatus.PARSED or file.state.status == FileStatus.PROCESSED
+        ]
+
+        if not successfully_parsed_files:
+            return
+
+        # Add successfully parsed files to selector
+        for file_info in successfully_parsed_files:
+            # Add status indicator in the display name for clarity
+            status_text = file_info.state.status.value
+            display_name = f"{file_info.filename} ({status_text})"
+            self.file_selector.addItem(display_name, file_info.file_id)
+
+        # Restore selection if possible, otherwise select first file
+        selection_restored = False
+        if prev_file_id:
+            for i in range(self.file_selector.count()):
+                if self.file_selector.itemData(i) == prev_file_id:
+                    self.file_selector.setCurrentIndex(i)
+                    selection_restored = True
+                    break
+        
+        if not selection_restored and self.file_selector.count() > 0:
+            self.file_selector.setCurrentIndex(0)
+
+    def _update_channel_selector(self):
+        """Update the channel selector based on selected file and type."""
+        if not self.channel_manager:
+            return
+
+        # Store previously selected channel
+        current_channel = self.get_active_channel_info()
+        prev_channel_id = current_channel.channel_id if current_channel else None
+
+        self.channel_selector.clear()
+
+        # Get selected file
+        selected_file_id = self.file_selector.currentData()
+        if not selected_file_id:
+            return
+
+        # Get channels for selected file
+        file_channels = self.channel_manager.get_channels_by_file(selected_file_id)
+        
+        # Filter for RAW channels only
+        filtered_channels = [ch for ch in file_channels if ch.type == SourceType.RAW]
+
+        # Add channels to selector
+        for ch in filtered_channels:
+            self.channel_selector.addItem(ch.legend_label, ch)
+
+        # Restore selection if possible, otherwise select first channel
+        selection_restored = False
+        if prev_channel_id:
+            for i in range(self.channel_selector.count()):
+                channel = self.channel_selector.itemData(i)
+                if channel.channel_id == prev_channel_id:
+                    self.channel_selector.setCurrentIndex(i)
+                    selection_restored = True
+                    break
+        
+        if not selection_restored and self.channel_selector.count() > 0:
+            self.channel_selector.setCurrentIndex(0)
+
+    def get_active_channel_info(self):
+        """Get the currently selected channel info."""
+        # First check if we have a radio button selection
+        if self.input_ch:
+            return self.input_ch
+
+        # Fallback to dropdown selection
+        if self.channel_selector.currentIndex() < 0:
+            return None
+            
+        channel = self.channel_selector.currentData()
+        if channel is None:
+            return None
+            
+        return channel
+
+    def _update_step_table(self):
+        """Update the unified step table with the current channel lineage."""
+        active_channel = self.get_active_channel_info()
+        if not active_channel:
+            print("[ProcessWizard] No active channel found")
+            return
+
+        print(f"[ProcessWizard] Active channel: {active_channel.channel_id} (step {active_channel.step}, file {active_channel.file_id})")
+        print(f"[ProcessWizard] Active channel lineage_id: {active_channel.lineage_id}")
+        
+        # Check if channel is in channel manager
+        channel_in_manager = self.channel_manager.has_channel(active_channel.channel_id)
+        print(f"[ProcessWizard] Channel in manager: {channel_in_manager}")
+        
+        # Check if lineage_id is in channel manager
+        lineage_in_manager = self.channel_manager.has_channel(active_channel.lineage_id)
+        print(f"[ProcessWizard] Lineage ID in manager: {lineage_in_manager}")
+        
+        # Check total channels in manager
+        total_channels = self.channel_manager.get_channel_count()
+        print(f"[ProcessWizard] Total channels in manager: {total_channels}")
+        
+        # Check channels by file
+        file_channels = self.channel_manager.get_channels_by_file(active_channel.file_id)
+        print(f"[ProcessWizard] Channels in file {active_channel.file_id}: {len(file_channels)}")
+        for ch in file_channels:
+            print(f"[ProcessWizard]   - {ch.channel_id} (step {ch.step})")
+        
+        lineage_dict = self.channel_manager.get_channels_by_lineage(active_channel.lineage_id)
+        print(f"[ProcessWizard] Lineage dict keys: {list(lineage_dict.keys())}")
+        
+        # Collect all channels from the lineage (parents, children, siblings)
+        all_lineage_channels = []
+        all_lineage_channels.extend(lineage_dict.get('parents', []))
+        all_lineage_channels.extend(lineage_dict.get('children', []))
+        all_lineage_channels.extend(lineage_dict.get('siblings', []))
+        
+        print(f"[ProcessWizard] All lineage channels: {len(all_lineage_channels)}")
+        for ch in all_lineage_channels:
+            print(f"[ProcessWizard]   - {ch.channel_id} (step {ch.step}, file {ch.file_id})")
+        
+        # Filter by file_id and sort by step
+        lineage = [ch for ch in all_lineage_channels if ch.file_id == active_channel.file_id]
+        lineage.sort(key=lambda ch: ch.step)
+        
+        print(f"[ProcessWizard] Filtered lineage (same file): {len(lineage)}")
+        for ch in lineage:
+            print(f"[ProcessWizard]   - {ch.channel_id} (step {ch.step})")
+        
+        # If no lineage found, get all channels from the same file and lineage_id
+        if not lineage:
+            print(f"[ProcessWizard] No lineage found, getting all channels from same file and lineage_id")
+            file_channels = self.channel_manager.get_channels_by_file(active_channel.file_id)
+            lineage = [ch for ch in file_channels if ch.lineage_id == active_channel.lineage_id]
+            # Remove duplicates based on channel_id
+            seen_ids = set()
+            unique_lineage = []
+            for ch in lineage:
+                if ch.channel_id not in seen_ids:
+                    seen_ids.add(ch.channel_id)
+                    unique_lineage.append(ch)
+            lineage = unique_lineage
+            lineage.sort(key=lambda ch: ch.step)
+            print(f"[ProcessWizard] Found {len(lineage)} unique channels with same lineage_id: {[ch.channel_id for ch in lineage]}")
+        
+        # Filter lineage based on current tab
+        current_tab_index = self.tab_widget.currentIndex()
+        filtered_lineage = self._filter_lineage_by_tab(lineage, current_tab_index)
+        
+        # Cache lineage for radio button logic
+        self._cached_lineage = filtered_lineage
+
+
+            
+
+        
+        self.step_table.setRowCount(len(filtered_lineage))
+
+        for i, channel in enumerate(filtered_lineage):
+
+
+
+            # Colored line indicator (similar to main window)
+            from plot_manager import StylePreviewWidget
+            
+            # Get channel properties
+            channel_color = getattr(channel, 'color', '#1f77b4')
+            channel_style = getattr(channel, 'style', '-')
+            channel_marker = getattr(channel, 'marker', None)
+            
+            # Use the same StylePreviewWidget as the main window
+            line_widget = StylePreviewWidget(
+                color=channel_color,
+                style=channel_style,
+                marker=channel_marker
+            )
+            line_widget.setFixedSize(60, 20)
+            line_widget.setToolTip(f"Channel style: {channel_style}, Color: {channel_color}, Marker: {channel_marker}")
+            self.step_table.setCellWidget(i, 0, line_widget)
+
+            # Channel Name
+            channel_name = channel.legend_label or channel.ylabel or f"Step {channel.step}"
+            self.step_table.setItem(i, 1, QTableWidgetItem(channel_name))
+
+            # Actions column (same as main window)
+            actions_widget = QWidget()
+            actions_layout = QHBoxLayout(actions_widget)
+            actions_layout.setContentsMargins(2, 2, 2, 2)
+            actions_layout.setSpacing(2)
+            
+            # Plot toggle button (colored/greyed based on visibility)
+            plot_button = QPushButton("📊")
+            plot_button.setMaximumWidth(25)
+            plot_button.setMaximumHeight(25)
+            if channel.show:
+                plot_button.setStyleSheet("QPushButton { background-color: #e8f5e8; }")  # Green background when visible
+            else:
+                plot_button.setStyleSheet("QPushButton { background-color: #f5f5f5; color: #aaa; }")  # Greyed when hidden
+            plot_button.clicked.connect(lambda checked=False, ch_id=channel.channel_id: self._toggle_channel_visibility(ch_id))
+            actions_layout.addWidget(plot_button)
+            
+            # Gear button (settings)
+            gear_button = QPushButton("⚙")
+            gear_button.setMaximumWidth(25)
+            gear_button.setMaximumHeight(25)
+            gear_button.clicked.connect(lambda checked=False, ch_id=channel.channel_id: self._handle_gear_button_clicked(ch_id))
+            actions_layout.addWidget(gear_button)
+            
+            # Exclamation button (warnings/info)
+            info_button = QPushButton("❗")
+            info_button.setMaximumWidth(25)
+            info_button.setMaximumHeight(25)
+            info_button.clicked.connect(lambda checked=False, ch_id=channel.channel_id: self._show_channel_info(ch_id))
+            actions_layout.addWidget(info_button)
+            
+            # Magnifying glass button (inspect data)
+            zoom_button = QPushButton("🔍")
+            zoom_button.setMaximumWidth(25)
+            zoom_button.setMaximumHeight(25)
+            zoom_button.setToolTip("Inspect and edit channel data")
+            zoom_button.clicked.connect(lambda checked=False, ch_id=channel.channel_id: self._inspect_channel_data(ch_id))
+            actions_layout.addWidget(zoom_button)
+            
+            # Tool button (transform data)
+            tool_button = QPushButton("🔨")
+            tool_button.setMaximumWidth(25)
+            tool_button.setMaximumHeight(25)
+            tool_button.setToolTip("Transform channel data with math expressions")
+            tool_button.clicked.connect(lambda checked=False, ch_id=channel.channel_id: self._transform_channel_data(ch_id))
+            actions_layout.addWidget(tool_button)
+            
+            # Trash button (delete)
+            delete_button = QPushButton("🗑️")
+            delete_button.setMaximumWidth(25)
+            delete_button.setMaximumHeight(25)
+            
+            # Disable delete button for RAW channels (step = 0)
+            if hasattr(channel, 'step') and channel.step == 0:
+                delete_button.setEnabled(False)
+                delete_button.setToolTip("Cannot delete RAW channel")
+            else:
+                delete_button.clicked.connect(lambda checked=False, ch_id=channel.channel_id: self._delete_channel(ch_id))
+                delete_button.setToolTip("Delete channel")
+            
+            actions_layout.addWidget(delete_button)
+            
+            self.step_table.setCellWidget(i, 2, actions_widget)
+
+            # Enhanced tooltip with parameters and parent step information
+            tooltip_parts = []
+            
+            # Add parameters information
+            if hasattr(channel, "params") and channel.params:
+                param_str = ", ".join(f"{k}={v}" for k, v in channel.params.items() if k != "fs")
+                if param_str:
+                    tooltip_parts.append(f"Params: {param_str}")
+                else:
+                    tooltip_parts.append("No parameters")
+            else:
+                tooltip_parts.append("No parameters")
+            
+            # Add parent step information
+            if hasattr(channel, "parent_ids") and channel.parent_ids:
+                parent_steps = []
+                for parent_id in channel.parent_ids:
+                    parent_channel = self.channel_manager.get_channel(parent_id)
+                    if parent_channel:
+                        parent_steps.append(str(parent_channel.step))
+                if parent_steps:
+                    tooltip_parts.append(f"Parent step(s): {', '.join(parent_steps)}")
+                else:
+                    tooltip_parts.append("Parent step: unknown")
+            else:
+                if channel.step == 0:
+                    tooltip_parts.append("Parent step: none (RAW)")
+                else:
+                    tooltip_parts.append("Parent step: unknown")
+            
+            tooltip = "\n".join(tooltip_parts)
+            
+            for col in range(self.step_table.columnCount()):
+                item = self.step_table.item(i, col)
+                if item:
+                    item.setToolTip(tooltip)
+                # Also set tooltip on widgets (radio and checkbox)
+                widget = self.step_table.cellWidget(i, col)
+                if widget and col != 2:  # Don't override the color tooltip for line widget
+                    widget.setToolTip(tooltip)
+        
+        # Verify final radio button state
+        selected_count = sum(1 for ch in filtered_lineage if self.input_ch and ch.channel_id == self.input_ch.channel_id)
+        
+        # Update the table selection to highlight the current input channel
+        self._update_step_table_selection()
+
+    def _filter_lineage_by_tab(self, lineage, tab_index):
+        """Filter lineage channels based on the current tab."""
+        if tab_index == 0:  # Time Series tab
+            return [ch for ch in lineage if "time-series" in ch.tags or ch.step == 0]
+        elif tab_index == 1:  # Spectrogram tab
+            return [ch for ch in lineage if "spectrogram" in ch.tags]
+        elif tab_index == 2:  # Bar Chart tab (updated index after removing scatter)
+            return [ch for ch in lineage if "bar-chart" in ch.tags]
+        else:
+            # Default: show all channels
+            return lineage
+
+    def _update_plot(self):
+        """Update the plot with the current channel data."""
+        active_channel = self.get_active_channel_info()
+        if not active_channel:
+            return
+
+        # Get all channels in the lineage
+        lineage_dict = self.channel_manager.get_channels_by_lineage(active_channel.lineage_id)
+        
+        # Collect all channels from the lineage (parents, children, siblings)
+        all_lineage_channels = []
+        all_lineage_channels.extend(lineage_dict.get('parents', []))
+        all_lineage_channels.extend(lineage_dict.get('children', []))
+        all_lineage_channels.extend(lineage_dict.get('siblings', []))
+        
+        # Filter by file_id and sort by step
+        lineage = [ch for ch in all_lineage_channels if ch.file_id == active_channel.file_id]
+        lineage.sort(key=lambda ch: ch.step)
+        
+        # If no lineage found, get all channels from the same file and lineage_id
+        if not lineage:
+            file_channels = self.channel_manager.get_channels_by_file(active_channel.file_id)
+            lineage = [ch for ch in file_channels if ch.lineage_id == active_channel.lineage_id]
+            lineage.sort(key=lambda ch: ch.step)
+        
+        # Determine which tab to update based on current active tab
+        current_tab = self.tab_widget.currentWidget()
+        tab_index = self.tab_widget.indexOf(current_tab)
+        
+        if tab_index == 1:  # Spectrogram tab
+            self._update_spectrogram_plot(lineage, active_channel)
+        elif tab_index == 2:  # Bar Chart tab (updated index after removing scatter)
+            self._update_bar_chart_plot(lineage, active_channel)
+        else:  # Time Series tab
+            self._update_time_series_plot(lineage, active_channel)
+
+    def _update_time_series_plot(self, lineage, active_channel):
+        """Update the time series plot."""
+        # Filter for time series channels and RAW channels (which should also display in time series)
+        channels = [ch for ch in lineage if "time-series" in ch.tags or ch.step == 0]
+        
+        # Clear the plot
+        self.ax.clear()
+        
+        # Plot each channel using stored style properties
+        for ch in channels:
+            if ch.show:  # Only plot visible channels
+                # Use stored style properties from channel
+                color = getattr(ch, 'color', '#1f77b4')
+                linestyle = getattr(ch, 'style', '-')
+                marker = getattr(ch, 'marker', 'None')
+                
+                # Convert "None" strings to None for matplotlib
+                linestyle = None if linestyle == "None" else linestyle
+                marker = None if marker == "None" else marker
+                
+                # Check if data exists
+                if hasattr(ch, 'xdata') and hasattr(ch, 'ydata') and ch.xdata is not None and ch.ydata is not None:
+                    self.ax.plot(ch.xdata, ch.ydata, 
+                               color=color, 
+                               linestyle=linestyle, 
+                               marker=marker, 
+                               label=ch.legend_label)
+
+        # Set title and update
+        self.ax.set_title(f"File: {active_channel.filename}")
+        self.ax.legend().set_visible(False)
+        self.canvas.draw()
+
+    def _update_spectrogram_plot(self, lineage, active_channel):
+        """Update the spectrogram plot."""
+        channels = [ch for ch in lineage if "spectrogram" in ch.tags]
+
+        # Clear the figure and recreate axes
+        self.spectrogram_figure.clf()
+        self.spectrogram_ax = self.spectrogram_figure.add_subplot(111)
+
+        # Remove any colorbar references
+        if hasattr(self.spectrogram_figure, '_colorbar_list'):
+            self.spectrogram_figure._colorbar_list = []
+
+        for channel in channels:
+            if channel.show and hasattr(channel, 'metadata') and 'Zxx' in channel.metadata:
+                Zxx = channel.metadata['Zxx'].copy()  # Make a copy to avoid modifying original
+                colormap = channel.metadata.get('colormap', 'viridis')
+                
+                # Apply logarithmic scaling if enabled
+                if self.log_scale_checkbox.isChecked():
+                    # Convert to dB scale with small epsilon to avoid log(0)
+                    epsilon = np.finfo(float).eps
+                    Zxx_display = 10 * np.log10(Zxx + epsilon)
+                    cbar_label = "Power (dB)"
+                else:
+                    Zxx_display = Zxx
+                    cbar_label = "Power"
+                
+                # Apply downsampling if enabled
+                if self.downsample_checkbox.isChecked():
+                    # Downsample if spectrogram is too large for efficient plotting
+                    max_display_size = (200, 1000)  # (freq_bins, time_bins)
+                    freq_bins, time_bins = Zxx_display.shape
+                    
+                    if freq_bins > max_display_size[0] or time_bins > max_display_size[1]:
+                        # Calculate zoom factors
+                        freq_zoom = min(1.0, max_display_size[0] / freq_bins)
+                        time_zoom = min(1.0, max_display_size[1] / time_bins)
+                        
+                        # Downsample the spectrogram
+                        Zxx_display = zoom(Zxx_display, (freq_zoom, time_zoom), order=1)
+                        
+                        # Downsample corresponding axes
+                        if len(channel.ydata) > 1:
+                            freq_indices = np.linspace(0, len(channel.ydata)-1, Zxx_display.shape[0], dtype=int)
+                            ydata_display = channel.ydata[freq_indices]
+                        else:
+                            ydata_display = channel.ydata
+                            
+                        if len(channel.xdata) > 1:
+                            time_indices = np.linspace(0, len(channel.xdata)-1, Zxx_display.shape[1], dtype=int)
+                            xdata_display = channel.xdata[time_indices]
+                        else:
+                            xdata_display = channel.xdata
+                    else:
+                        xdata_display = channel.xdata
+                        ydata_display = channel.ydata
+                else:
+                    xdata_display = channel.xdata
+                    ydata_display = channel.ydata
+                
+                # Intelligent color limits using percentiles
+                if self.log_scale_checkbox.isChecked():
+                    # For dB scale, use percentiles to avoid extreme values
+                    vmin, vmax = np.percentile(Zxx_display[np.isfinite(Zxx_display)], [5, 95])
+                    # Ensure reasonable dB range
+                    if vmax - vmin < 20:  # Less than 20 dB range
+                        vmax = vmin + 40  # Expand to 40 dB range
+                else:
+                    # For linear scale, use percentiles but ensure non-negative
+                    vmin, vmax = np.percentile(Zxx_display, [1, 99])
+                    vmin = max(0, vmin)  # Ensure non-negative for linear scale
+                
+                # Plot the spectrogram
+                im = self.spectrogram_ax.pcolormesh(xdata_display, ydata_display, Zxx_display, 
+                                                 shading='gouraud', cmap=colormap, vmin=vmin, vmax=vmax)
+                
+                if 'colormap' not in channel.metadata:
+                    channel.metadata['colormap'] = colormap
+                    
+                self.spectrogram_ax.set_ylabel(channel.ylabel)
+                self.spectrogram_ax.set_xlabel(channel.xlabel)
+                self.spectrogram_ax.set_yscale('log')
+                
+                # Set axis limits
+                if len(ydata_display) > 0:
+                    y_min = min(ydata_display)
+                    y_max = max(ydata_display)
+                    if y_min <= 0:
+                        y_min = y_max * 0.01
+                    y_min = y_min * 0.9
+                    y_max = y_max * 1.1
+                    self.spectrogram_ax.set_ylim(y_min, y_max)
+                    
+                if len(xdata_display) > 0:
+                    x_min = min(xdata_display)
+                    x_max = max(xdata_display)
+                    x_min = x_min - (x_max - x_min) * 0.02
+                    x_max = x_max + (x_max - x_min) * 0.02
+                    self.spectrogram_ax.set_xlim(x_min, x_max)
+                
+                # Add colorbar below the plot, closer and thinner
+                cbar = self.spectrogram_figure.colorbar(im, ax=self.spectrogram_ax, 
+                                                      orientation='horizontal', pad=0.05, aspect=30)
+                cbar.set_label(cbar_label)
+                
+                if hasattr(self.spectrogram_figure, '_colorbar_list'):
+                    self.spectrogram_figure._colorbar_list.append(cbar)
+                    
+        self.spectrogram_ax.set_title(f"File: {active_channel.filename}")
+        self.spectrogram_figure.tight_layout(rect=[0, 0.08, 1, 1])  # leave space for colorbar
+        self.spectrogram_canvas.draw()
+
+    def _update_bar_chart_plot(self, lineage, active_channel):
+        """Update the bar chart plot."""
+        channels = [ch for ch in lineage if "bar-chart" in ch.tags]
+
+        # Clear the plot
+        self.bar_chart_ax.clear()
+
+        # Plot each channel using stored style properties
+        for ch in channels:
+            if ch.show:  # Only plot visible channels
+                # Use stored style properties from channel
+                color = getattr(ch, 'color', '#1f77b4')
+                
+                # Create bar chart
+                if hasattr(ch, 'xdata') and hasattr(ch, 'ydata'):
+                    self.bar_chart_ax.bar(ch.xdata, ch.ydata, 
+                                        color=color, 
+                                        label=ch.legend_label,
+                                        alpha=0.7)
+
+        # Set title and labels
+        self.bar_chart_ax.set_title(f"File: {active_channel.filename}")
+        if channels and channels[0].show:
+            # Use labels from the first visible channel
+            visible_channel = next((ch for ch in channels if ch.show), None)
+            if visible_channel:
+                self.bar_chart_ax.set_xlabel(getattr(visible_channel, 'xlabel', 'X'))
+                self.bar_chart_ax.set_ylabel(getattr(visible_channel, 'ylabel', 'Y'))
+        
+        self.bar_chart_ax.legend().set_visible(False)
+        self.bar_chart_figure.tight_layout()
+        self.bar_chart_canvas.draw()
+
+    def _on_tab_changed(self, index):
+        """Handle tab change event."""
+        # Store current figure sizes
+        spectrogram_size = self.spectrogram_figure.get_size_inches()
+        bar_chart_size = self.bar_chart_figure.get_size_inches()
+        
+        # Update the data
+        self._update_step_table()
+        self._update_plot()
+        
+        # Restore figure sizes
+        self.spectrogram_figure.set_size_inches(spectrogram_size)
+        self.bar_chart_figure.set_size_inches(bar_chart_size)
+        
+        # Ensure spectrogram layout is maintained
+        self.spectrogram_figure.subplots_adjust(right=0.85, left=0.1, top=0.9, bottom=0.1)
+        
+        # Redraw all canvases to ensure proper display
+        self.spectrogram_canvas.draw()
+        self.bar_chart_canvas.draw()
+        self.canvas.draw()
+
+    def _on_file_selected(self, index):
+        """Handle file selection change."""
+        if index < 0:
+            return
+            
+        # Update channel selector when file changes
+        self._update_channel_selector()
+        
+        # Update table and plot
+        self._update_step_table()
+        self._update_plot()
+
+    def _on_channel_selected(self, index):
+        """Handle channel selection change."""
+        if index < 0:
+            print("[ProcessWizard] Channel selection: invalid index")
+            return
+            
+        # Get the selected channel
+        selected_channel = self.channel_selector.currentData()
+        if not selected_channel:
+            print("[ProcessWizard] Channel selection: no channel data")
+            return
+        
+        # Don't override input_ch if we're in the middle of adding a filter
+        if self._adding_filter:
+            return
+        
+        # Always update input_ch when user explicitly changes the dropdown selection
+        # This ensures the table and plot update to show the selected channel's lineage
+        self.input_ch = selected_channel
+        
+        # Update both table and plot
+        self._update_step_table()
+        self._update_plot()
+        self._update_input_channel_display()
+
+    def _on_show_changed(self, channel, state):
+        """Handle show checkbox state change."""
+        channel.show = bool(state)
+        self._update_plot()
+
+    def _on_input_step_selected(self, channel):
+        """Handle radio input selection for processing."""
+        # When user selects a step as input, update the plots
+        self._update_plot()
+
+    def _on_add_filter(self):
+        # Set flag to prevent dropdown interference
+        self._adding_filter = True
+
+        # Ensure we use the radio-button-selected channel as the parent
+        parent_channel = self.get_active_channel_info()
+        if not parent_channel:
+            self._adding_filter = False
+            return
+
+        parent_id = parent_channel.channel_id
+        lineage_id = parent_channel.lineage_id
+
+        new_channel = self.wizard_manager.apply_pending_step()
+        if not new_channel:
+            self._adding_filter = False
+            return
+
+        # CRITICAL: Set the new channel as the input for next step BEFORE any UI updates
+        self.input_ch = new_channel
+
+        # Update selectors to include new channels (but dropdown won't override input_ch due to flag)
+        self._update_file_selector()
+        self._update_channel_selector()
+
+        # Switch to appropriate tab based on created channel type
+        if new_channel and hasattr(new_channel, 'tags'):
+            if "spectrogram" in new_channel.tags:
+                self.tab_widget.setCurrentIndex(1)  # Switch to spectrogram tab
+            elif "bar-chart" in new_channel.tags:
+                self.tab_widget.setCurrentIndex(2)  # Switch to bar chart tab
+        # Fallback to old logic for special cases like stft_filter
+        elif hasattr(self.wizard_manager, 'pending_step') and self.wizard_manager.pending_step:
+            if self.wizard_manager.pending_step.name == "stft_filter":
+                self.tab_widget.setCurrentIndex(1)  # Switch to spectrogram tab
+
+        # Update step table and plot with the new channel properly selected
+        self._update_step_table()  # This should show the new channel selected
+        
+        # Clear the flag after all updates are complete
+        self._adding_filter = False
+        
+        self._update_plot()
+        self._update_input_channel_display()
+        
+        # Force redraw of all canvases
+        self.canvas.draw()
+        self.spectrogram_canvas.draw()
+        self.bar_chart_canvas.draw()
+
+
+            
+
+
+    def _on_console_input(self):
+        """Handle console input submission."""
+        # Collect parameters from table
+        params = {}
+        for row in range(self.param_table.rowCount()):
+            key_item = self.param_table.item(row, 0)
+            if key_item:
+                key = key_item.text().strip()
+                if key:
+                    # Check if the value cell contains a widget (dropdown) or text item
+                    widget = self.param_table.cellWidget(row, 1)
+                    if widget:
+                        # It's a QComboBox dropdown
+                        if isinstance(widget, QComboBox):
+                            val = widget.currentText().strip()
+                        else:
+                            val = ""
+                    else:
+                        # It's a regular text item
+                        val_item = self.param_table.item(row, 1)
+                        val = val_item.text().strip() if val_item else ""
+                    
+                    if val:
+                        # Try to convert to appropriate type
+                        try:
+                            if '.' in val:
+                                params[key] = float(val)
+                            else:
+                                params[key] = int(val)
+                        except ValueError:
+                            params[key] = val  # Keep as string if conversion fails
+        
+        self.wizard_manager.on_input_submitted(params)
+        self._update_step_table()
+        self._update_plot()
+
+    def _populate_category_filter(self):
+        """Populate the category dropdown with unique categories from all steps."""
+        categories = set()
+        
+        for step_name in self.all_filters:
+            step_cls = self.process_registry.get(step_name)
+            if step_cls and hasattr(step_cls, 'category'):
+                categories.add(step_cls.category)
+        
+        # Sort categories alphabetically and add to dropdown
+        sorted_categories = sorted(categories)
+        for category in sorted_categories:
+            self.category_filter.addItem(category)
+
+    def _on_category_filter_changed(self, category_text):
+        """Handle category filter change."""
+        self._apply_filters()
+
+    def _on_filter_search(self, text):
+        """Handle filter search functionality."""
+        self._apply_filters()
+
+    def _apply_filters(self):
+        """Apply both search and category filters to the filter list."""
+        search_text = self.filter_search.text().strip().lower()
+        selected_category = self.category_filter.currentText()
+        
+        # Clear the current list
+        self.filter_list.clear()
+        
+        # Start with all filters
+        filtered_steps = []
+        
+        for step_name in self.all_filters:
+            # Get the step class to access its metadata
+            step_cls = self.process_registry.get(step_name)
+            if not step_cls:
+                continue
+            
+            # Apply category filter
+            if selected_category != "All Categories":
+                step_category = getattr(step_cls, 'category', '')
+                if step_category != selected_category:
+                    continue  # Skip this step if it doesn't match the selected category
+            
+            # Apply search filter
+            if search_text:
+                # Search in multiple fields for better matches
+                searchable_text = " ".join([
+                    step_name.lower(),
+                    step_cls.category.lower() if hasattr(step_cls, 'category') else "",
+                    step_cls.description.lower() if hasattr(step_cls, 'description') else "",
+                    " ".join(step_cls.tags).lower() if hasattr(step_cls, 'tags') else ""
+                ])
+                
+                # Check if search text matches any part
+                if search_text not in searchable_text:
+                    continue  # Skip this step if it doesn't match the search
+            
+            # If we get here, the step passed both filters
+            filtered_steps.append(step_name)
+        
+        # Add filtered results to the list
+        self.filter_list.addItems(filtered_steps)
+        
+        # If only one result, auto-select it
+        if len(filtered_steps) == 1:
+            self.filter_list.setCurrentRow(0)
+
+    def _on_spectrogram_settings_changed(self):
+        """Handle spectrogram settings change."""
+        # Only update if we're on the spectrogram tab
+        if self.tab_widget.currentIndex() == 1:  # Spectrogram tab
+            self._update_plot()
+
+    # Action methods for the Actions column
+    def _toggle_channel_visibility(self, channel_id: str):
+        """Toggle visibility of a channel and update UI"""
+        channel = self.channel_manager.get_channel(channel_id)
+        if channel:
+            # Toggle visibility
+            new_state = not channel.show
+            self.channel_manager.set_channel_visibility(channel_id, new_state)
+            self.console_output.append(f"📊 {'Showing' if new_state else 'Hiding'}: {channel.ylabel}")
+            
+            # Refresh the step table to update button appearance
+            self._update_step_table()
+            self._update_plot()
+
+    def _handle_gear_button_clicked(self, channel_id: str):
+        """Handle gear button click for channel settings"""
+        channel = self.channel_manager.get_channel(channel_id)
+        if channel:
+            # Open the line wizard for channel styling
+            from line_wizard import LineWizard
+            wizard = LineWizard(channel, self)
+            wizard.exec()
+            self.console_output.append(f"⚙️ Updated styling for: {channel.ylabel}")
+            self._update_step_table()
+            self._update_plot()
+
+    def _show_channel_info(self, channel_id: str):
+        """Show detailed information about a channel using the metadata wizard"""
+        channel = self.channel_manager.get_channel(channel_id)
+        if channel:
+            # Open the comprehensive metadata wizard
+            from metadata_wizard import MetadataWizard
+            wizard = MetadataWizard(channel, self)
+            wizard.exec()
+            self.console_output.append(f"ℹ️ Viewed metadata for: {channel.ylabel}")
+
+    def _inspect_channel_data(self, channel_id: str):
+        """Open the data inspection wizard for this channel"""
+        channel = self.channel_manager.get_channel(channel_id)
+        if channel:
+            # Open the data inspection wizard
+            from inspection_wizard import InspectionWizard
+            wizard = InspectionWizard(channel, self)
+            wizard.data_updated.connect(self._handle_channel_data_updated)
+            wizard.exec()
+            self.console_output.append(f"🔍 Inspected data: {channel.ylabel}")
+
+    def _transform_channel_data(self, channel_id: str):
+        """Open the data transformation wizard for this channel"""
+        channel = self.channel_manager.get_channel(channel_id)
+        if channel:
+            # Open the data transformation wizard
+            from transform_wizard import TransformWizard
+            wizard = TransformWizard(channel, self)
+            wizard.data_updated.connect(self._handle_channel_data_updated)
+            wizard.exec()
+            self.console_output.append(f"🔨 Transformed data: {channel.ylabel}")
+
+    def _delete_channel(self, channel_id: str):
+        """Delete a channel with confirmation"""
+        channel = self.channel_manager.get_channel(channel_id)
+        if channel:
+            from PySide6.QtWidgets import QMessageBox
+            reply = QMessageBox.question(
+                self, 
+                "Delete Channel", 
+                f"Delete channel '{channel.ylabel}'?",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if reply == QMessageBox.Yes:
+                self.channel_manager.remove_channel(channel_id)
+                self._update_step_table()
+                self._update_plot()
+                self.console_output.append(f"🗑️ Deleted channel: {channel.ylabel}")
+
+    def _handle_channel_data_updated(self, channel_id: str):
+        """Handle when channel data is updated via inspection/transform wizards"""
+        channel = self.channel_manager.get_channel(channel_id)
+        if channel:
+            # Refresh all UI components immediately
+            self._update_step_table()  # Update step table with new statistics
+            self._update_plot()  # Update plot canvas
+            
+            # Force plot canvas to redraw immediately
+            self.canvas.draw()
+            self.spectrogram_canvas.draw()
+            self.bar_chart_canvas.draw()
+            
+            self.console_output.append(f"📊 Updated channel data: {channel.ylabel}")
+
+    def _on_row_selection_changed(self):
+        """Handle row selection change in the step table."""
+        selected_items = self.step_table.selectedIndexes()
+        if not selected_items:
+            return
+
+        selected_row = selected_items[0].row()
+        
+        # Get the channel from the cached lineage based on the selected row
+        if hasattr(self, '_cached_lineage') and self._cached_lineage and selected_row < len(self._cached_lineage):
+            selected_channel = self._cached_lineage[selected_row]
+            self.input_ch = selected_channel
+            self._update_input_channel_display()
+            self._update_plot()
+
+    def _update_input_channel_display(self):
+        """Update the input channel display label."""
+        if self.input_ch:
+            channel_name = self.input_ch.legend_label or self.input_ch.ylabel or f"Step {self.input_ch.step}"
+            self.input_channel_label.setText(f"Selected: {channel_name}")
+            self.input_channel_label.setStyleSheet("color: #333; font-weight: bold;")
+        else:
+            self.input_channel_label.setText("No channel selected")
+            self.input_channel_label.setStyleSheet("color: #666; font-style: italic;")
+        
+        # Also update the step table selection to match the current input channel
+        self._update_step_table_selection()
+
+    def _update_step_table_selection(self):
+        """Update the step table selection to highlight the current input channel."""
+        if not hasattr(self, '_cached_lineage') or not self._cached_lineage or not self.input_ch:
+            return
+        
+        # Find the row index of the current input channel
+        for i, channel in enumerate(self._cached_lineage):
+            if channel.channel_id == self.input_ch.channel_id:
+                # Select the row without triggering the selection changed signal
+                self.step_table.blockSignals(True)
+                self.step_table.selectRow(i)
+                self.step_table.blockSignals(False)
+                return
+
+    def showEvent(self, event):
+        """Handle when the wizard window is shown."""
+        super().showEvent(event)
+        # Update the step table selection when the wizard is first shown
+        self._update_step_table_selection()
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = ProcessWizardWindow(FileManager(), ChannelManager())
+    window.show()
+    sys.exit(app.exec())
