@@ -12,11 +12,37 @@ import pandas as pd
 import time
 from typing import Dict, List, Optional
 
+# Import comparison methods from the new comparison folder
+try:
+    from comparison.comparison_registry import ComparisonRegistry, load_all_comparisons
+    from comparison.base_comparison import BaseComparison
+    COMPARISON_AVAILABLE = True
+    print("[ComparisonWizardManager] Comparison registry imported successfully")
+except ImportError as e:
+    print(f"[ComparisonWizardManager] Warning: Could not import comparison registry: {e}")
+    COMPARISON_AVAILABLE = False
+    
+    # Create dummy classes if comparison module is not available
+    class ComparisonRegistry:
+        @staticmethod
+        def all_comparisons():
+            return ["correlation", "bland_altman", "residual", "statistical"]
+        
+        @staticmethod
+        def get(name):
+            return None
+    
+    def load_all_comparisons(directory):
+        print(f"[ComparisonWizardManager] Warning: Comparison module not available")
+    
+    class BaseComparison:
+        pass
+
 class ComparisonWizardManager(QObject):
     """
     Manager for the comparison wizard that handles:
     - Data alignment between channels
-    - Statistical calculations
+    - Statistical calculations using comparison methods
     - Plot generation
     - State management and progress tracking
     """
@@ -47,6 +73,9 @@ class ComparisonWizardManager(QObject):
         self.pair_statistics = {}    # pair_name -> statistics
         self._access_counts = {}     # pair_name -> access_count
         
+        # Initialize comparison methods
+        self._initialize_comparison_methods()
+        
         # Validate initialization
         if not self._validate_managers():
             raise ValueError("Required managers not available for ComparisonWizardManager")
@@ -67,7 +96,129 @@ class ComparisonWizardManager(QObject):
         
         # Log initialization
         self._log_state_change("Manager initialized successfully")
-        
+    
+    def _initialize_comparison_methods(self):
+        """Initialize comparison methods from the comparison folder"""
+        try:
+            if COMPARISON_AVAILABLE:
+                load_all_comparisons("comparison")
+                self.comparison_registry = ComparisonRegistry
+                self._log_state_change("Comparison methods loaded successfully")
+            else:
+                self._log_state_change("Comparison methods not available - using basic calculations only")
+        except Exception as e:
+            print(f"[ComparisonWizardManager] Warning: Could not load comparison methods: {e}")
+            self._log_state_change("Failed to load comparison methods - using fallback")
+    
+    def get_available_comparison_methods(self):
+        """Get list of available comparison methods"""
+        if COMPARISON_AVAILABLE:
+            try:
+                return self.comparison_registry.all_comparisons()
+            except:
+                pass
+        return ["correlation", "bland_altman", "residual", "statistical"]
+    
+    def apply_comparison_method(self, method_name, ref_data, test_data, parameters=None):
+        """Apply a specific comparison method to the data using the new comparison folder"""
+        try:
+            if not COMPARISON_AVAILABLE:
+                return self._fallback_comparison(method_name, ref_data, test_data)
+            
+            # Map method names to comparison types
+            method_mapping = {
+                'Correlation Analysis': 'correlation',
+                'Bland-Altman': 'bland_altman', 
+                'Residual Analysis': 'residual',
+                'Statistical Tests': 'statistical'
+            }
+            
+            comparison_type = method_mapping.get(method_name, method_name.lower())
+            
+            # Get the comparison method class
+            comparison_cls = self.comparison_registry.get(comparison_type)
+            if not comparison_cls:
+                print(f"[ComparisonWizardManager] Comparison method '{method_name}' ({comparison_type}) not found")
+                return self._fallback_comparison(method_name, ref_data, test_data)
+            
+            # Convert and prepare parameters
+            converted_params = {}
+            if parameters:
+                for key, value in parameters.items():
+                    if key == "Confidence Level":
+                        converted_params['confidence_level'] = float(value)
+                    elif key == "Method":
+                        converted_params['method'] = value.lower()
+                    elif key == "Agreement Limits":
+                        converted_params['agreement_limits'] = float(value)
+                    elif key == "Show CI":
+                        converted_params['show_ci'] = value.lower() == 'true'
+                    elif key == "Alpha Level":
+                        converted_params['alpha'] = float(value)
+                    elif key == "Normality Test":
+                        converted_params['normality_test'] = value.lower()
+                    elif key == "Outlier Detection":
+                        converted_params['outlier_method'] = value.lower()
+                    elif key == "Test Type":
+                        converted_params['test_type'] = value.lower()
+            
+            # Create instance with converted parameters
+            comparison_instance = comparison_cls(**converted_params)
+            
+            # Apply the comparison
+            result = comparison_instance.compare(ref_data, test_data)
+            
+            return result
+            
+        except Exception as e:
+            print(f"[ComparisonWizardManager] Error applying comparison method '{method_name}': {e}")
+            return self._fallback_comparison(method_name, ref_data, test_data)
+    
+    def _fallback_comparison(self, method_name, ref_data, test_data):
+        """Fallback comparison calculations when comparison module is not available"""
+        try:
+            if method_name == "correlation":
+                r, p = scipy_stats.pearsonr(ref_data, test_data)
+                return {
+                    'correlation': r,
+                    'p_value': p,
+                    'r_squared': r**2,
+                    'method': 'pearson'
+                }
+            elif method_name == "bland_altman":
+                differences = test_data - ref_data
+                means = (ref_data + test_data) / 2
+                mean_diff = np.mean(differences)
+                std_diff = np.std(differences)
+                return {
+                    'mean_bias': mean_diff,
+                    'std_bias': std_diff,
+                    'limits_of_agreement': (mean_diff - 1.96*std_diff, mean_diff + 1.96*std_diff),
+                    'means': means,
+                    'differences': differences
+                }
+            elif method_name == "residual":
+                residuals = test_data - ref_data
+                return {
+                    'residuals': residuals,
+                    'mean_residual': np.mean(residuals),
+                    'std_residual': np.std(residuals),
+                    'rmse': np.sqrt(np.mean(residuals**2))
+                }
+            elif method_name == "statistical":
+                differences = test_data - ref_data
+                return {
+                    'mean_difference': np.mean(differences),
+                    'std_difference': np.std(differences),
+                    'rmse': np.sqrt(np.mean(differences**2)),
+                    'mae': np.mean(np.abs(differences)),
+                    'sample_size': len(ref_data)
+                }
+            else:
+                return {'error': f'Unknown comparison method: {method_name}'}
+        except Exception as e:
+            return {'error': f'Fallback comparison failed: {str(e)}'}
+
     def _validate_managers(self) -> bool:
         """Validate that required managers are available and functional"""
         if not self.file_manager:
@@ -344,8 +495,6 @@ class ComparisonWizardManager(QObject):
         
     def _on_plot_generated(self, plot_config):
         """Handle plot generation request from step 2"""
-        print(f"[ComparisonWizard] Generating plot: {plot_config['plot_type']}")
-        
         # Get checked pairs with marker types
         checked_pairs = plot_config.get('checked_pairs', [])
         
@@ -354,17 +503,40 @@ class ComparisonWizardManager(QObject):
                               "Please select at least one pair to generate a plot.")
             return
         
-        print(f"[ComparisonWizard] Plotting {len(checked_pairs)} pairs")
+        # Determine plot type from comparison method of first pair
+        plot_type = self._determine_plot_type_from_pairs(checked_pairs)
+        plot_config['plot_type'] = plot_type
+        
+        print(f"[ComparisonWizard] Generating {plot_type} plot for {len(checked_pairs)} pairs")
         
         # Generate the plot with multiple pairs
         self._generate_multi_pair_plot(checked_pairs, plot_config)
+    
+    def _determine_plot_type_from_pairs(self, checked_pairs):
+        """Determine appropriate plot type based on comparison methods"""
+        if not checked_pairs:
+            return 'scatter'
+        
+        # Get the comparison method from the first pair
+        first_pair = checked_pairs[0]
+        comparison_method = first_pair.get('comparison_method', 'Correlation Analysis')
+        
+        # Map comparison methods to plot types
+        method_to_plot_type = {
+            'Correlation Analysis': 'scatter',
+            'Bland-Altman': 'bland_altman',
+            'Residual Analysis': 'residual',
+            'Statistical Tests': 'scatter'
+        }
+        
+        return method_to_plot_type.get(comparison_method, 'scatter')
         
     def _generate_multi_pair_plot(self, checked_pairs, plot_config):
         """Generate plot with multiple pairs using different markers"""
-        if not hasattr(self.window, 'canvas2') or not self.window.canvas2:
+        if not hasattr(self.window, 'canvas') or not self.window.canvas:
             return
             
-        fig = self.window.canvas2.figure
+        fig = self.window.canvas.figure
         fig.clear()
         ax = fig.add_subplot(111)
         
@@ -465,7 +637,7 @@ class ComparisonWizardManager(QObject):
                     fig.subplots_adjust(left=0.1, bottom=0.1, right=0.85, top=0.9)
                 except Exception:
                     pass  # If both fail, continue without layout adjustment
-            self.window.canvas2.draw()
+            self.window.canvas.draw()
             return
         
         # Convert to arrays for overall statistics
@@ -828,7 +1000,7 @@ class ComparisonWizardManager(QObject):
             except Exception as fallback_error:
                 print(f"[ComparisonWizard] Layout adjustment fallback also failed: {fallback_error}")
         
-        self.window.canvas2.draw()
+        self.window.canvas.draw()
     
     def _clear_preview_plot(self):
         """Clear the preview plot"""
@@ -909,10 +1081,14 @@ class ComparisonWizardManager(QObject):
             if len(ref_data) == 0 or len(test_data) == 0:
                 raise ValueError("Channel data is empty")
             
-            # Validate configuration
-            mode = config.get('mode', 'truncate')
+            # Validate configuration - handle both old and new config formats
+            mode = config.get('mode', 'custom')  # Default to custom for new format
             if mode not in ['truncate', 'custom']:
-                raise ValueError(f"Invalid alignment mode: {mode}")
+                mode = 'custom'  # Fallback to custom for compatibility
+            
+            # For new format, always use custom mode with provided parameters
+            if 'start_index' in config or 'end_index' in config:
+                mode = 'custom'
             
             if mode == 'truncate':
                 # Truncate to shortest length
@@ -927,7 +1103,12 @@ class ComparisonWizardManager(QObject):
             else:
                 # Custom range with validation
                 start_idx = config.get('start_index', 0)
-                end_idx = config.get('end_index', min(len(ref_data), len(test_data)) - 1)
+                end_idx = config.get('end_index', 500)  # Use default from new window
+                
+                # Ensure end_idx doesn't exceed data length
+                max_idx = min(len(ref_data), len(test_data)) - 1
+                if end_idx > max_idx:
+                    end_idx = max_idx
                 
                 # Validate indices
                 max_ref_idx = len(ref_data) - 1
@@ -1045,8 +1226,10 @@ class ComparisonWizardManager(QObject):
             if offset != 0.0:
                 test_x = test_x + offset
                 
-            # Determine time range
-            if config['mode'] == 'overlap':
+            # Determine time range - handle both old and new config formats
+            mode = config.get('mode', 'custom')  # Default to custom if not specified
+            
+            if mode == 'overlap':
                 # Find overlapping time range
                 start_time = max(ref_x.min(), test_x.min())
                 end_time = min(ref_x.max(), test_x.max())
@@ -1054,9 +1237,9 @@ class ComparisonWizardManager(QObject):
                 if start_time >= end_time:
                     raise ValueError("No overlapping time range found between channels")
             else:
-                # Custom time window
+                # Custom time window - use parameters from new config format
                 start_time = config.get('start_time', 0.0)
-                end_time = config.get('end_time', 12.5)
+                end_time = config.get('end_time', 10.0)  # Updated default to match new window
                 
                 # Validate custom time range
                 ref_range = (ref_x.min(), ref_x.max())
@@ -1864,10 +2047,10 @@ class ComparisonWizardManager(QObject):
         
     def _generate_plot(self, aligned_data, plot_config):
         """Generate the requested plot type in step 2"""
-        if not hasattr(self.window, 'canvas2') or not self.window.canvas2:
+        if not hasattr(self.window, 'canvas') or not self.window.canvas:
             return
             
-        fig = self.window.canvas2.figure
+        fig = self.window.canvas.figure
         fig.clear()
         
         plot_type = plot_config['plot_type']
@@ -1887,7 +2070,7 @@ class ComparisonWizardManager(QObject):
                 fig.subplots_adjust(left=0.1, bottom=0.1, right=0.85, top=0.9)
             except Exception:
                 pass  # If both fail, continue without layout adjustment
-        self.window.canvas2.draw()
+        self.window.canvas.draw()
     
     def _create_density_plot(self, ax, x_data, y_data, density_type, bin_size, kde_bandwidth):
         """Create density-based visualization with proper coloring"""
@@ -2130,8 +2313,17 @@ class ComparisonWizardManager(QObject):
         stats_text = self._format_cumulative_stats(cumulative_stats, len(checked_pairs))
         self.window.update_cumulative_stats(stats_text)
         
-        # Update preview plot with checked pairs
-        self._generate_cumulative_preview(checked_pairs)
+        # Generate plot based on comparison method (not just cumulative preview)
+        plot_type = self._determine_plot_type_from_pairs(checked_pairs)
+        plot_config = {
+            'plot_type': plot_type,
+            'show_grid': True,
+            'show_legend': True,
+            'checked_pairs': checked_pairs
+        }
+        
+        # Use the same plot generation as the Generate Plot button
+        self._generate_multi_pair_plot(checked_pairs, plot_config)
 
     def _update_step2_cumulative_display(self):
         """Update cumulative statistics display for step 2"""
