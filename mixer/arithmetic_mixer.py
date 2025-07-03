@@ -14,7 +14,7 @@ class ArithmeticMixer(BaseMixer):
     description = "Performs arithmetic operations between two signals."
     tags = ["composed", "arithmetic"]
     params = [
-        {"name": "operation", "type": "str", "default": "add", "help": "add, sub, mul, div"},
+        {"name": "operation", "type": "str", "default": "add", "help": "add, sub, mul, div, mod"},
         {"name": "label", "type": "str", "default": "C", "help": "Output channel label"}
     ]
 
@@ -39,6 +39,9 @@ class ArithmeticMixer(BaseMixer):
         elif op == "div":
             y = np.divide(a, b, out=np.zeros_like(a), where=(b != 0))
             expr = f"{label} = A / B"
+        elif op == "mod":
+            y = np.mod(a, b, out=np.zeros_like(a), where=(b != 0))
+            expr = f"{label} = A % B"
         else:
             raise ValueError(f"Unknown operation '{op}'")
 

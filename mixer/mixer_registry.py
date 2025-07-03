@@ -1,7 +1,7 @@
 import os
 import importlib
 import inspect
-from typing import Type, Dict, List
+from typing import Type, Dict, List, Tuple, Optional
 from mixer.base_mixer import BaseMixer  # Adjust if your folder structure differs
 
 class _MixerRegistry:
@@ -21,6 +21,33 @@ class _MixerRegistry:
 
     def all_mixers(self) -> List[str]:
         return list(self._registry.keys())
+    
+    def get_all_templates(self) -> List[Tuple[str, str]]:
+        """Get all templates from the template registry."""
+        try:
+            from mixer.template_registry import TemplateRegistry
+            return TemplateRegistry.get_templates_for_ui()
+        except ImportError:
+            print("[MixerRegistry] Warning: Template registry not available")
+            return []
+    
+    def get_templates_by_category(self, category: str) -> List[Tuple[str, str]]:
+        """Get templates for a specific category."""
+        try:
+            from mixer.template_registry import TemplateRegistry
+            return TemplateRegistry.get_templates_for_ui(category)
+        except ImportError:
+            print("[MixerRegistry] Warning: Template registry not available")
+            return []
+    
+    def get_all_categories(self) -> List[str]:
+        """Get all available template categories."""
+        try:
+            from mixer.template_registry import TemplateRegistry
+            return TemplateRegistry.get_all_categories()
+        except ImportError:
+            print("[MixerRegistry] Warning: Template registry not available")
+            return []
 
 # Global instance
 MixerRegistry = _MixerRegistry()

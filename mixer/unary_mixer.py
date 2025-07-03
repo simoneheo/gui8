@@ -13,7 +13,7 @@ class UnaryMixer(BaseMixer):
     description = "Applies unary operations to a single signal."
     tags = ["composed", "unary"]
     params = [
-        {"name": "operation", "type": "str", "default": "abs", "help": "abs, normalize, zscore, invert"},
+        {"name": "operation", "type": "str", "default": "abs", "help": "abs, normalize, zscore, invert, square, sqrt"},
         {"name": "label", "type": "str", "default": "C", "help": "Output channel label"}
     ]
 
@@ -29,14 +29,21 @@ class UnaryMixer(BaseMixer):
             result = np.abs(y)
             expr = f"{label} = abs(A)"
         elif op == "normalize":
-            result = (y - np.min(y)) / (np.max(y) - np.min(y))
-            expr = f"{label} = normalize(A)"
+            max_val = np.max(np.abs(y))
+            result = y / max_val if max_val != 0 else y
+            expr = f"{label} = A / max(abs(A))"
         elif op == "zscore":
             result = (y - np.mean(y)) / np.std(y)
             expr = f"{label} = zscore(A)"
         elif op == "invert":
             result = -y
             expr = f"{label} = -A"
+        elif op == "square":
+            result = y ** 2
+            expr = f"{label} = A**2"
+        elif op == "sqrt":
+            result = np.sqrt(np.abs(y))
+            expr = f"{label} = sqrt(abs(A))"
         else:
             raise ValueError(f"Unknown unary operation '{op}'")
 
@@ -89,4 +96,4 @@ class UnaryMixer(BaseMixer):
                 "Power signal: A**2",
                 "DC removal: A - mean(A)"
             ]
-        }
+        } 

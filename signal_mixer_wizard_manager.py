@@ -512,25 +512,29 @@ class SignalMixerWizardManager:
         return None, None
 
     def get_mixer_templates(self):
-        """Get available mixer templates."""
-        mixer_names = MixerRegistry.all_mixers()
-        
-        # Add expression templates if ExpressionMixer is available
+        """Get available mixer templates from the template registry."""
         try:
-            expression_mixer = MixerRegistry.get("expression")
-            if expression_mixer and hasattr(expression_mixer, 'get_expression_templates'):
-                templates = expression_mixer.get_expression_templates()
-                return mixer_names + templates
-        except (KeyError, AttributeError):
-            print("[SignalMixerWizardManager] ExpressionMixer not available for templates")
-        
-        return mixer_names
+            # Get templates from the centralized template registry
+            templates = MixerRegistry.get_all_templates()
+            print(f"[SignalMixerWizardManager] Retrieved {len(templates)} templates from registry")
+            return templates
+        except Exception as e:
+            print(f"[SignalMixerWizardManager] Error getting templates: {e}")
+            
+            # Fallback to mixer names if template registry fails
+            try:
+                mixer_names = MixerRegistry.all_mixers()
+                print(f"[SignalMixerWizardManager] Fallback: using {len(mixer_names)} mixer names")
+                return [(name, "mixed") for name in mixer_names]
+            except Exception as e2:
+                print(f"[SignalMixerWizardManager] Fallback also failed: {e2}")
+                return []
 
     def generate_next_label(self, current_row_count):
         """Generate the next available label (C, D, E, etc.)."""
         return chr(ord('A') + current_row_count)
 
-    def process_mixer_expression(self, expression, channel_context):
+    def process_mixer_expression(self, expression, channel_context, channel_name=None):
         """Process a mixer expression and return the result."""
         try:
             print(f"[SignalMixerWizardManager] Processing expression: {expression}")
@@ -578,6 +582,24 @@ class SignalMixerWizardManager:
             # Use the actual label from the expression (e.g., "Z" from "Z = A * B", "DOG" from "DOG = C/E")
             new_channel.step_table_label = label
             
+            # Set the channel name separately from the expression label
+            if channel_name:
+                # Use the provided channel name for display purposes
+                new_channel.legend_label = channel_name
+                print(f"[SignalMixerWizardManager] Set channel name to: {channel_name}")
+            else:
+                # Fallback to generating a name based on the mixer operation
+                mixer_name = self._get_mixer_name_from_class(mixer_cls)
+                if hasattr(new_channel, 'legend_label') and new_channel.legend_label:
+                    original_name = new_channel.legend_label
+                else:
+                    original_name = new_channel.channel_id
+                
+                new_channel.legend_label = f"{original_name} - {mixer_name}"
+                print(f"[SignalMixerWizardManager] Generated channel name: {new_channel.legend_label}")
+            
+            print(f"[SignalMixerWizardManager] Channel can be referenced in expressions as: {label}")
+            
             # Check if a channel with this label already exists
             existing_index = None
             for i, existing_channel in enumerate(self.mixed_channels):
@@ -585,17 +607,6 @@ class SignalMixerWizardManager:
                     existing_index = i
                     print(f"[SignalMixerWizardManager] Found existing channel with label {label}, will overwrite")
                     break
-            
-            # Update channel name to include mixer step
-            mixer_name = self._get_mixer_name_from_class(mixer_cls)
-            if hasattr(new_channel, 'legend_label') and new_channel.legend_label:
-                original_name = new_channel.legend_label
-            else:
-                original_name = new_channel.channel_id
-            
-            new_channel.legend_label = f"{original_name} - {mixer_name}"
-            print(f"[SignalMixerWizardManager] Updated channel name to: {new_channel.legend_label}")
-            print(f"[SignalMixerWizardManager] Channel can be referenced as: {label}")
 
             # Register new channel
             self.channel_manager.add_channel(new_channel)
@@ -647,7 +658,9 @@ class SignalMixerWizardManager:
             print("[SignalMixerWizardManager] ExpressionMixer not available for parameter parsing")
         
         # Legacy simple operation parsing for other mixers
-        if '+' in formula_clean:
+        if '%' in formula_clean:
+            params['operation'] = 'mod'
+        elif '+' in formula_clean:
             params['operation'] = 'add'
         elif '-' in formula_clean:
             params['operation'] = 'sub'
@@ -665,9 +678,13 @@ class SignalMixerWizardManager:
         # First check if this should use ExpressionMixer
         try:
             expression_mixer = MixerRegistry.get("expression")
-            if expression_mixer and hasattr(expression_mixer, 'parse_expression_for_mixer') and expression_mixer.parse_expression_for_mixer(formula):
-                print(f"[SignalMixerWizardManager] Using ExpressionMixer for complex formula: {formula}")
-                return expression_mixer
+            if expression_mixer:
+                # For any formula containing functions or complex expressions, use ExpressionMixer
+                if (hasattr(expression_mixer, 'parse_expression_for_mixer') and 
+                    expression_mixer.parse_expression_for_mixer(formula)) or \
+                   any(func in formula_clean for func in ['sqrt', 'sin', 'cos', 'abs', 'exp', 'log', 'mean', 'sum', 'np.', '**', '(', ')']):
+                    print(f"[SignalMixerWizardManager] Using ExpressionMixer for formula: {formula}")
+                    return expression_mixer
         except (KeyError, AttributeError):
             print("[SignalMixerWizardManager] ExpressionMixer not available, using fallback logic")
         
@@ -821,7 +838,7 @@ class SignalMixerWizardManager:
         
         return aligned_channel
 
-    def process_mixer_expression_with_alignment(self, expression, channel_context, alignment_params=None):
+    def process_mixer_expression_with_alignment(self, expression, channel_context, alignment_params=None, channel_name=None):
         """Process mixer expression with alignment applied to channels with different dimensions."""
         try:
             # Log the expression processing
@@ -857,7 +874,7 @@ class SignalMixerWizardManager:
                     return None, "Channels have different dimensions but no alignment parameters provided"
             
             # Process the expression with (potentially aligned) channels
-            return self.process_mixer_expression(expression, channel_context)
+            return self.process_mixer_expression(expression, channel_context, channel_name)
             
         except Exception as e:
             error_msg = f"Error processing mixer expression with alignment: {str(e)}"
@@ -1107,19 +1124,20 @@ class SignalMixerWizardManager:
         aligned_channel = Channel(
             filename=original_channel.filename,
             file_id=original_channel.file_id,
-            file_path=original_channel.file_path,
             channel_id=original_channel.channel_id,
             xlabel=original_channel.xlabel,
             ylabel=original_channel.ylabel,
             step=original_channel.step,
-            origin=original_channel.origin,
             xdata=time_data if time_data is not None else np.arange(len(aligned_data)),
             ydata=aligned_data,
-            show=original_channel.show,
             legend_label=original_channel.legend_label,
-            raw_data=original_channel.raw_data,
-            sample_rate=getattr(original_channel, 'sampling_rate', None)
+            description=original_channel.description,
+            tags=original_channel.tags,
+            metadata=original_channel.metadata
         )
+        
+        # Set show property after creation (it defaults to True in constructor)
+        aligned_channel.show = original_channel.show
         
         return aligned_channel
 
