@@ -202,6 +202,109 @@ class SignalMixerWizardManager:
             return False, "Cannot mix a channel with itself"
         
         return True, f"Channels are compatible (length: {len(channel_a.ydata)})"
+    
+    def validate_channels_for_mixing_with_alignment(self, channel_a, channel_b, alignment_config):
+        """Validate that two channels can be mixed together with alignment options."""
+        if not channel_a or not channel_b:
+            return False, "Both channels must be selected", {}
+        
+        if channel_a.ydata is None or channel_b.ydata is None:
+            return False, "Both channels must have data", {}
+        
+        if channel_a.channel_id == channel_b.channel_id:
+            return False, "Cannot mix a channel with itself", {}
+        
+        len_a = len(channel_a.ydata)
+        len_b = len(channel_b.ydata)
+        
+        # Check if alignment is needed
+        if len_a == len_b:
+            # Same length - no alignment needed
+            return True, f"Channels are compatible (length: {len_a})", {'needs_alignment': False}
+        
+        # Different lengths - check if alignment can handle this
+        alignment_method = alignment_config.get('alignment_method', 'index')
+        
+        if alignment_method == 'index':
+            # Index-based alignment
+            mode = alignment_config.get('mode', 'truncate')
+            if mode == 'truncate':
+                min_length = min(len_a, len_b)
+                return True, f"Channels compatible with alignment (will truncate to {min_length})", {
+                    'needs_alignment': True,
+                    'alignment_message': f"Will truncate to {min_length} samples"
+                }
+            else:  # custom
+                start_idx = alignment_config.get('start_index', 0)
+                end_idx = alignment_config.get('end_index', 500)
+                max_possible = min(len_a, len_b) - 1
+                
+                if start_idx >= max_possible or end_idx >= max_possible:
+                    return False, f"Index range exceeds data bounds (max: {max_possible})", {}
+                
+                if start_idx >= end_idx:
+                    return False, "Invalid index range: start >= end", {}
+                
+                aligned_length = end_idx - start_idx + 1
+                return True, f"Channels compatible with alignment (will use {aligned_length} samples)", {
+                    'needs_alignment': True,
+                    'alignment_message': f"Will align to {aligned_length} samples"
+                }
+        
+        else:  # time-based
+            # Check if channels have time data
+            has_time_a = hasattr(channel_a, 'xdata') and channel_a.xdata is not None
+            has_time_b = hasattr(channel_b, 'xdata') and channel_b.xdata is not None
+            
+            if not has_time_a or not has_time_b:
+                # Try to create time data
+                if self._can_create_time_data(channel_a, channel_b):
+                    return True, "Channels compatible with alignment (will create time data)", {
+                        'needs_alignment': True,
+                        'alignment_message': "Will create time data and align"
+                    }
+                else:
+                    return False, "Time-based alignment requires time data or sampling rate", {}
+            
+            # Both have time data - check if alignment is possible
+            mode = alignment_config.get('mode', 'overlap')
+            if mode == 'overlap':
+                # Check for overlapping time ranges
+                time_a_range = (channel_a.xdata.min(), channel_a.xdata.max())
+                time_b_range = (channel_b.xdata.min(), channel_b.xdata.max())
+                
+                overlap_start = max(time_a_range[0], time_b_range[0])
+                overlap_end = min(time_a_range[1], time_b_range[1])
+                
+                if overlap_start >= overlap_end:
+                    return False, "No overlapping time range found", {}
+                
+                return True, f"Channels compatible with alignment (overlap {overlap_start:.3f}s to {overlap_end:.3f}s)", {
+                    'needs_alignment': True,
+                    'alignment_message': f"Will align to overlap region ({overlap_start:.3f}s to {overlap_end:.3f}s)"
+                }
+            else:  # custom
+                start_time = alignment_config.get('start_time', 0.0)
+                end_time = alignment_config.get('end_time', 10.0)
+                
+                if start_time >= end_time:
+                    return False, "Invalid time range: start >= end", {}
+                
+                return True, f"Channels compatible with alignment (custom time range)", {
+                    'needs_alignment': True,
+                    'alignment_message': f"Will align to custom time range ({start_time:.3f}s to {end_time:.3f}s)"
+                }
+    
+    def _can_create_time_data(self, channel_a, channel_b):
+        """Check if time data can be created for channels that don't have it."""
+        for channel in [channel_a, channel_b]:
+            if not hasattr(channel, 'xdata') or channel.xdata is None:
+                # Check if channel has sampling rate
+                if hasattr(channel, 'sampling_rate') and channel.sampling_rate is not None and channel.sampling_rate > 0:
+                    continue
+                else:
+                    return False
+        return True
 
     def suggest_channel_pairs(self):
         """Suggest good channel pairs for mixing."""
@@ -719,38 +822,306 @@ class SignalMixerWizardManager:
         return aligned_channel
 
     def process_mixer_expression_with_alignment(self, expression, channel_context, alignment_params=None):
-        """Process a mixer expression with optional alignment parameters."""
-        if alignment_params:
-            # Update stored aligned channels
-            self.update_aligned_channels(
-                channel_context.get('A'), 
-                channel_context.get('B'), 
-                alignment_params
-            )
+        """Process mixer expression with alignment applied to channels with different dimensions."""
+        try:
+            # Log the expression processing
+            self._log_state_change(f"Processing mixer expression with alignment: {expression}")
             
-            # Use stored aligned channels for processing
-            aligned_context = {
-                'A': self.aligned_channels['A'] or channel_context.get('A'),
-                'B': self.aligned_channels['B'] or channel_context.get('B'),
+            # Get channels A and B from context
+            channel_a = channel_context.get('A')
+            channel_b = channel_context.get('B')
+            
+            if not channel_a or not channel_b:
+                return None, "Channels A and B must be available in context"
+            
+            # Apply alignment if different dimensions or if alignment is explicitly requested
+            len_a = len(channel_a.ydata)
+            len_b = len(channel_b.ydata)
+            
+            if len_a != len_b or (alignment_params and alignment_params.get('alignment_method')):
+                if alignment_params:
+                    aligned_result = self._align_channels(channel_a, channel_b, alignment_params)
+                    if aligned_result is None:
+                        return None, "Failed to align channels"
+                    
+                    # Create new channel objects with aligned data
+                    aligned_a = self._create_aligned_channel(channel_a, aligned_result.get('ref_data'), aligned_result.get('time_data'))
+                    aligned_b = self._create_aligned_channel(channel_b, aligned_result.get('test_data'), aligned_result.get('time_data'))
+                    
+                    # Update context with aligned channels
+                    channel_context['A'] = aligned_a
+                    channel_context['B'] = aligned_b
+                    
+                    self._log_state_change(f"Aligned channels: A={len(aligned_a.ydata)}, B={len(aligned_b.ydata)}")
+                else:
+                    return None, "Channels have different dimensions but no alignment parameters provided"
+            
+            # Process the expression with (potentially aligned) channels
+            return self.process_mixer_expression(expression, channel_context)
+            
+        except Exception as e:
+            error_msg = f"Error processing mixer expression with alignment: {str(e)}"
+            self._log_state_change(error_msg)
+            import traceback
+            traceback.print_exc()
+            return None, error_msg
+    
+    def _align_channels(self, ref_channel, test_channel, config):
+        """Align channels based on configuration (adapted from comparison wizard)."""
+        alignment_method = config.get('alignment_method', 'index')
+        
+        if alignment_method == 'index':
+            return self._align_by_index(ref_channel, test_channel, config)
+        else:  # time-based
+            return self._align_by_time(ref_channel, test_channel, config)
+    
+    def _align_by_index(self, ref_channel, test_channel, config):
+        """Align channels by index (adapted from comparison wizard)."""
+        try:
+            # Validate input data
+            if not hasattr(ref_channel, 'ydata') or not hasattr(test_channel, 'ydata'):
+                raise ValueError("Channels missing data arrays")
+            
+            ref_data = ref_channel.ydata
+            test_data = test_channel.ydata
+            
+            if ref_data is None or test_data is None:
+                raise ValueError("Channel data is None")
+            
+            if len(ref_data) == 0 or len(test_data) == 0:
+                raise ValueError("Channel data is empty")
+            
+            # Get configuration parameters
+            mode = config.get('mode', 'truncate')
+            
+            if mode == 'truncate':
+                # Truncate to shortest length
+                min_length = min(len(ref_data), len(test_data))
+                if min_length == 0:
+                    raise ValueError("No data points available for alignment")
+                
+                ref_aligned = ref_data[:min_length].copy()
+                test_aligned = test_data[:min_length].copy()
+                actual_range = (0, min_length - 1)
+                
+            else:  # custom
+                # Custom range with validation
+                start_idx = config.get('start_index', 0)
+                end_idx = config.get('end_index', 500)
+                
+                # Ensure end_idx doesn't exceed data length
+                max_idx = min(len(ref_data), len(test_data)) - 1
+                if end_idx > max_idx:
+                    end_idx = max_idx
+                
+                # Validate indices
+                if start_idx < 0:
+                    start_idx = 0
+                if end_idx < 0:
+                    end_idx = 0
+                    
+                if start_idx > max_idx:
+                    raise ValueError(f"Start index {start_idx} exceeds data length")
+                
+                if start_idx >= end_idx:
+                    raise ValueError(f"Invalid index range: start ({start_idx}) >= end ({end_idx})")
+                
+                ref_aligned = ref_data[start_idx:end_idx+1].copy()
+                test_aligned = test_data[start_idx:end_idx+1].copy()
+                actual_range = (start_idx, end_idx)
+                
+            # Apply offset if specified
+            offset = config.get('offset', 0)
+            if offset != 0:
+                if offset > 0:
+                    # Positive offset: shift test data forward, truncate ref data
+                    if offset >= len(test_aligned):
+                        raise ValueError(f"Positive offset ({offset}) too large for test data length ({len(test_aligned)})")
+                    test_aligned = test_aligned[offset:]
+                    ref_aligned = ref_aligned[:len(test_aligned)]
+                else:
+                    # Negative offset: shift ref data forward, truncate test data
+                    offset_abs = abs(offset)
+                    if offset_abs >= len(ref_aligned):
+                        raise ValueError(f"Negative offset magnitude ({offset_abs}) too large for ref data length ({len(ref_aligned)})")
+                    ref_aligned = ref_aligned[offset_abs:]
+                    test_aligned = test_aligned[:len(ref_aligned)]
+            
+            # Final validation
+            if len(ref_aligned) != len(test_aligned):
+                raise ValueError("Aligned data arrays have different lengths")
+            
+            if len(ref_aligned) == 0:
+                raise ValueError("No data points remaining after alignment")
+            
+            return {
+                'ref_data': ref_aligned,
+                'test_data': test_aligned,
+                'alignment_method': 'index',
+                'index_range': actual_range,
+                'n_points': len(ref_aligned),
+                'offset_applied': offset
             }
             
-            # Note: mixed channels (C, D, E, etc.) will be added inside process_mixer_expression
-            # so we don't need to add them here
+        except Exception as e:
+            error_msg = f"Index alignment failed: {str(e)}"
+            self._log_state_change(error_msg)
+            raise
+    
+    def _align_by_time(self, ref_channel, test_channel, config):
+        """Align channels by time (adapted from comparison wizard)."""
+        try:
+            # Validate and create time data if needed
+            if not self._validate_and_create_time_data(ref_channel, test_channel):
+                raise ValueError("Could not create or validate time data")
             
-            print(f"[SignalMixerWizardManager] Using aligned channels: A={len(aligned_context['A'].ydata) if aligned_context['A'] and aligned_context['A'].ydata is not None else 'None'}, B={len(aligned_context['B'].ydata) if aligned_context['B'] and aligned_context['B'].ydata is not None else 'None'}")
+            ref_x = ref_channel.xdata.copy()
+            ref_y = ref_channel.ydata.copy()
+            test_x = test_channel.xdata.copy()
+            test_y = test_channel.ydata.copy()
             
-            return self.process_mixer_expression(expression, aligned_context)
-        else:
-            # Use stored aligned channels if available, otherwise use original context
-            if self.aligned_channels['A'] or self.aligned_channels['B']:
-                context_with_aligned = {
-                    'A': self.aligned_channels['A'] or channel_context.get('A'),
-                    'B': self.aligned_channels['B'] or channel_context.get('B'),
-                }
-                # Note: mixed channels will be added inside process_mixer_expression
-                return self.process_mixer_expression(expression, context_with_aligned)
+            # Clean and sort data by time
+            ref_x, ref_y = self._clean_and_sort_time_data(ref_x, ref_y)
+            test_x, test_y = self._clean_and_sort_time_data(test_x, test_y)
+            
+            # Apply time offset if specified
+            offset = config.get('offset', 0.0)
+            if offset != 0.0:
+                test_x = test_x + offset
+                
+            # Determine time range
+            mode = config.get('mode', 'overlap')
+            
+            if mode == 'overlap':
+                # Find overlapping time range
+                start_time = max(ref_x.min(), test_x.min())
+                end_time = min(ref_x.max(), test_x.max())
+                
+                if start_time >= end_time:
+                    raise ValueError("No overlapping time range found between channels")
+            else:  # custom
+                start_time = config.get('start_time', 0.0)
+                end_time = config.get('end_time', 10.0)
+                
+            # Create time grid
+            round_to = config.get('round_to', 0.01)
+            if round_to <= 0:
+                raise ValueError("Round-to value must be positive")
+            
+            time_grid = np.arange(start_time, end_time + round_to/2, round_to)
+            
+            if len(time_grid) == 0:
+                raise ValueError("Generated time grid is empty")
+            
+            # Interpolate both channels to common time grid
+            interp_method = config.get('interpolation', 'linear')
+            
+            ref_interp = self._interpolate_channel(ref_x, ref_y, time_grid, interp_method, 'reference')
+            test_interp = self._interpolate_channel(test_x, test_y, time_grid, interp_method, 'test')
+            
+            # Final validation
+            if len(ref_interp) != len(test_interp) or len(ref_interp) != len(time_grid):
+                raise ValueError("Interpolated data length mismatch")
+            
+            # Check for excessive NaN values
+            valid_mask = ~(np.isnan(ref_interp) | np.isnan(test_interp))
+            valid_ratio = np.sum(valid_mask) / len(valid_mask)
+            
+            if valid_ratio < 0.1:
+                raise ValueError(f"Too many invalid values after interpolation ({valid_ratio*100:.1f}% valid)")
+            
+            return {
+                'ref_data': ref_interp,
+                'test_data': test_interp,
+                'time_data': time_grid,
+                'alignment_method': 'time',
+                'valid_ratio': valid_ratio,
+                'time_range': (start_time, end_time),
+                'n_points': len(time_grid),
+                'round_to_used': round_to
+            }
+            
+        except Exception as e:
+            error_msg = f"Time alignment failed: {str(e)}"
+            self._log_state_change(error_msg)
+            raise
+    
+    def _validate_and_create_time_data(self, ref_channel, test_channel):
+        """Validate and create time data if needed."""
+        try:
+            for channel in [ref_channel, test_channel]:
+                if not hasattr(channel, 'xdata') or channel.xdata is None:
+                    # Try to create time data
+                    if hasattr(channel, 'sampling_rate') and channel.sampling_rate is not None and channel.sampling_rate > 0:
+                        n_samples = len(channel.ydata)
+                        dt = 1.0 / channel.sampling_rate
+                        channel.xdata = np.arange(n_samples) * dt
+                    else:
+                        # Fallback to indices as time
+                        channel.xdata = np.arange(len(channel.ydata))
+            return True
+        except Exception as e:
+            self._log_state_change(f"Error creating time data: {e}")
+            return False
+    
+    def _clean_and_sort_time_data(self, x_data, y_data):
+        """Clean and sort time data."""
+        # Remove NaN values
+        valid_mask = ~(np.isnan(x_data) | np.isnan(y_data))
+        x_clean = x_data[valid_mask]
+        y_clean = y_data[valid_mask]
+        
+        # Sort by time
+        sort_indices = np.argsort(x_clean)
+        return x_clean[sort_indices], y_clean[sort_indices]
+    
+    def _interpolate_channel(self, x_data, y_data, time_grid, method, channel_name):
+        """Interpolate channel data to time grid."""
+        try:
+            from scipy.interpolate import interp1d
+            
+            if method == 'linear':
+                f = interp1d(x_data, y_data, kind='linear', bounds_error=False, fill_value=np.nan)
+            elif method == 'nearest':
+                f = interp1d(x_data, y_data, kind='nearest', bounds_error=False, fill_value=np.nan)
+            elif method == 'cubic':
+                if len(x_data) >= 4:  # cubic requires at least 4 points
+                    f = interp1d(x_data, y_data, kind='cubic', bounds_error=False, fill_value=np.nan)
+                else:
+                    # Fallback to linear if not enough points
+                    f = interp1d(x_data, y_data, kind='linear', bounds_error=False, fill_value=np.nan)
             else:
-                return self.process_mixer_expression(expression, channel_context)
+                raise ValueError(f"Unsupported interpolation method: {method}")
+            
+            return f(time_grid)
+            
+        except Exception as e:
+            self._log_state_change(f"Error interpolating {channel_name} channel: {e}")
+            raise
+    
+    def _create_aligned_channel(self, original_channel, aligned_data, time_data=None):
+        """Create a new channel with aligned data."""
+        from channel import Channel
+        
+        # Create new channel with aligned data
+        aligned_channel = Channel(
+            filename=original_channel.filename,
+            file_id=original_channel.file_id,
+            file_path=original_channel.file_path,
+            channel_id=original_channel.channel_id,
+            xlabel=original_channel.xlabel,
+            ylabel=original_channel.ylabel,
+            step=original_channel.step,
+            origin=original_channel.origin,
+            xdata=time_data if time_data is not None else np.arange(len(aligned_data)),
+            ydata=aligned_data,
+            show=original_channel.show,
+            legend_label=original_channel.legend_label,
+            raw_data=original_channel.raw_data,
+            sample_rate=getattr(original_channel, 'sampling_rate', None)
+        )
+        
+        return aligned_channel
 
     def update_aligned_channels(self, channel_a, channel_b, alignment_params):
         """Update the aligned A and B channels with current alignment parameters."""

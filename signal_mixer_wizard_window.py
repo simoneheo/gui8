@@ -143,6 +143,9 @@ class SignalMixerWizardWindow(QMainWindow):
         # Channel Selection Group
         self._build_channel_selection_group(left_layout)
         
+        # Alignment Controls Group
+        self._build_alignment_controls_group(left_layout)
+        
         # Mixing Operations Group
         self._build_mixing_operations_group(left_layout)
         
@@ -196,6 +199,106 @@ class SignalMixerWizardWindow(QMainWindow):
         self.suggest_btn = QPushButton("🎯 Auto-Suggest Pair")
         self.suggest_btn.clicked.connect(self._on_suggest_pair)
         group_layout.addWidget(self.suggest_btn)
+        
+        layout.addWidget(group)
+    
+    def _build_alignment_controls_group(self, layout):
+        """Build alignment controls for handling channels of different dimensions"""
+        group = QGroupBox("Data Alignment")
+        group_layout = QVBoxLayout(group)
+        
+        # Alignment mode selection
+        mode_layout = QHBoxLayout()
+        mode_layout.addWidget(QLabel("Alignment Mode:"))
+        self.alignment_mode_combo = QComboBox()
+        self.alignment_mode_combo.addItems(["Index-Based", "Time-Based"])
+        self.alignment_mode_combo.currentTextChanged.connect(self._on_alignment_mode_changed)
+        mode_layout.addWidget(self.alignment_mode_combo)
+        group_layout.addLayout(mode_layout)
+        
+        # Index-based options
+        self.index_group = QGroupBox("Index Options")
+        index_layout = QFormLayout(self.index_group)
+        
+        # Index mode
+        self.index_mode_combo = QComboBox()
+        self.index_mode_combo.addItems(["Truncate to Shortest", "Custom Range"])
+        self.index_mode_combo.currentTextChanged.connect(self._on_index_mode_changed)
+        index_layout.addRow("Mode:", self.index_mode_combo)
+        
+        # Custom range controls
+        self.start_index_spin = QSpinBox()
+        self.start_index_spin.setRange(0, 999999)
+        self.start_index_spin.setValue(0)
+        index_layout.addRow("Start Index:", self.start_index_spin)
+        
+        self.end_index_spin = QSpinBox()
+        self.end_index_spin.setRange(0, 999999)
+        self.end_index_spin.setValue(500)
+        index_layout.addRow("End Index:", self.end_index_spin)
+        
+        # Index offset
+        self.index_offset_spin = QSpinBox()
+        self.index_offset_spin.setRange(-999999, 999999)
+        self.index_offset_spin.setValue(0)
+        self.index_offset_spin.setToolTip("Positive: shift Channel B forward, Negative: shift Channel A forward")
+        index_layout.addRow("Offset:", self.index_offset_spin)
+        
+        group_layout.addWidget(self.index_group)
+        
+        # Time-based options
+        self.time_group = QGroupBox("Time Options")
+        time_layout = QFormLayout(self.time_group)
+        
+        # Time mode
+        self.time_mode_combo = QComboBox()
+        self.time_mode_combo.addItems(["Overlap Region", "Custom Range"])
+        self.time_mode_combo.currentTextChanged.connect(self._on_time_mode_changed)
+        time_layout.addRow("Mode:", self.time_mode_combo)
+        
+        # Custom time range
+        self.start_time_spin = QDoubleSpinBox()
+        self.start_time_spin.setRange(-999999.0, 999999.0)
+        self.start_time_spin.setValue(0.0)
+        self.start_time_spin.setDecimals(3)
+        time_layout.addRow("Start Time:", self.start_time_spin)
+        
+        self.end_time_spin = QDoubleSpinBox()
+        self.end_time_spin.setRange(-999999.0, 999999.0)
+        self.end_time_spin.setValue(10.0)
+        self.end_time_spin.setDecimals(3)
+        time_layout.addRow("End Time:", self.end_time_spin)
+        
+        # Time offset
+        self.time_offset_spin = QDoubleSpinBox()
+        self.time_offset_spin.setRange(-999999.0, 999999.0)
+        self.time_offset_spin.setValue(0.0)
+        self.time_offset_spin.setDecimals(3)
+        self.time_offset_spin.setToolTip("Time offset to apply to Channel B")
+        time_layout.addRow("Time Offset:", self.time_offset_spin)
+        
+        # Interpolation method
+        self.interpolation_combo = QComboBox()
+        self.interpolation_combo.addItems(["linear", "nearest", "cubic"])
+        time_layout.addRow("Interpolation:", self.interpolation_combo)
+        
+        # Time grid resolution
+        self.round_to_spin = QDoubleSpinBox()
+        self.round_to_spin.setRange(0.0001, 1.0)
+        self.round_to_spin.setValue(0.01)
+        self.round_to_spin.setDecimals(4)
+        self.round_to_spin.setToolTip("Time grid resolution (smaller = more points)")
+        time_layout.addRow("Grid Resolution:", self.round_to_spin)
+        
+        group_layout.addWidget(self.time_group)
+        
+        # Alignment status
+        self.alignment_status_label = QLabel("No alignment needed")
+        self.alignment_status_label.setStyleSheet("color: #666; font-size: 10px; padding: 5px;")
+        group_layout.addWidget(self.alignment_status_label)
+        
+        # Show/hide appropriate groups (call after all widgets are created)
+        self._on_alignment_mode_changed("Index-Based")
         
         layout.addWidget(group)
     
@@ -514,6 +617,36 @@ class SignalMixerWizardWindow(QMainWindow):
         
         self._log_message(f"Suggested pair {next_index + 1}/{len(suggestions)}")
 
+    def _on_alignment_mode_changed(self, mode):
+        """Handle alignment mode change"""
+        if mode == "Index-Based":
+            self.index_group.setVisible(True)
+            self.time_group.setVisible(False)
+        else:  # Time-Based
+            self.index_group.setVisible(False)
+            self.time_group.setVisible(True)
+        
+        # Update compatibility check
+        self._update_compatibility()
+        
+    def _on_index_mode_changed(self, mode):
+        """Handle index mode change"""
+        enable_custom = (mode == "Custom Range")
+        self.start_index_spin.setEnabled(enable_custom)
+        self.end_index_spin.setEnabled(enable_custom)
+        
+        # Update compatibility check
+        self._update_compatibility()
+        
+    def _on_time_mode_changed(self, mode):
+        """Handle time mode change"""
+        enable_custom = (mode == "Custom Range")
+        self.start_time_spin.setEnabled(enable_custom)
+        self.end_time_spin.setEnabled(enable_custom)
+        
+        # Update compatibility check
+        self._update_compatibility()
+
     def _on_operation_filter_changed(self, category):
         """Handle operation filter change"""
         self._filter_operations(category)
@@ -712,6 +845,9 @@ class SignalMixerWizardWindow(QMainWindow):
             self._log_message("❌ Please select both channels A and B")
             return
         
+        # Get alignment configuration
+        alignment_config = self._get_alignment_config()
+        
         # Create channel context
         channel_context = {'A': channel_a, 'B': channel_b}
         
@@ -721,8 +857,10 @@ class SignalMixerWizardWindow(QMainWindow):
             label = chr(ord('C') + i)
             channel_context[label] = mixed_channel
         
-        # Process expression
-        new_channel, message = self.manager.process_mixer_expression(expression, channel_context)
+        # Process expression with alignment
+        new_channel, message = self.manager.process_mixer_expression_with_alignment(
+            expression, channel_context, alignment_config
+        )
         
         if new_channel:
             self.expression_input.clear()
@@ -756,20 +894,81 @@ class SignalMixerWizardWindow(QMainWindow):
             self._log_message("All mixed channels cleared")
 
     def _update_compatibility(self):
-        """Update compatibility status between selected channels"""
+        """Update compatibility status between selected channels with alignment options"""
+        # Check if required UI elements exist (defensive programming for initialization)
+        if not hasattr(self, 'channel_a_combo') or not hasattr(self, 'channel_b_combo'):
+            return
+        if not hasattr(self, 'compatibility_label') or not hasattr(self, 'alignment_status_label'):
+            return
+            
         channel_a = self.channel_a_combo.currentData()
         channel_b = self.channel_b_combo.currentData()
         
-        is_valid, message = self.manager.validate_channels_for_mixing(channel_a, channel_b)
+        if not channel_a or not channel_b:
+            self.compatibility_label.setText("Select both channels")
+            self.compatibility_label.setStyleSheet("color: #666; font-weight: normal;")
+            self.alignment_status_label.setText("No alignment needed")
+            if hasattr(self, 'create_btn'):
+                self.create_btn.setEnabled(False)
+            return
+            
+        # Get alignment configuration
+        alignment_config = self._get_alignment_config()
+        
+        # Check compatibility with alignment
+        is_valid, message, alignment_info = self.manager.validate_channels_for_mixing_with_alignment(
+            channel_a, channel_b, alignment_config
+        )
         
         if is_valid:
             self.compatibility_label.setText(f"✅ {message}")
             self.compatibility_label.setStyleSheet("color: green; font-weight: bold;")
-            self.create_btn.setEnabled(True)
+            
+            # Update alignment status
+            if alignment_info.get('needs_alignment', False):
+                align_msg = alignment_info.get('alignment_message', 'Alignment will be applied')
+                self.alignment_status_label.setText(f"🔧 {align_msg}")
+                self.alignment_status_label.setStyleSheet("color: orange; font-size: 10px; padding: 5px;")
+            else:
+                self.alignment_status_label.setText("✅ Channels compatible as-is")
+                self.alignment_status_label.setStyleSheet("color: green; font-size: 10px; padding: 5px;")
+                
+            # Enable/disable based on expression too (only if create button exists)
+            if hasattr(self, 'create_btn') and hasattr(self, 'expression_input'):
+                has_expression = bool(self.expression_input.text().strip())
+                self.create_btn.setEnabled(has_expression)
         else:
             self.compatibility_label.setText(f"❌ {message}")
             self.compatibility_label.setStyleSheet("color: red; font-weight: bold;")
-            self.create_btn.setEnabled(False)
+            self.alignment_status_label.setText("❌ Cannot align channels")
+            self.alignment_status_label.setStyleSheet("color: red; font-size: 10px; padding: 5px;")
+            if hasattr(self, 'create_btn'):
+                self.create_btn.setEnabled(False)
+    
+    def _get_alignment_config(self):
+        """Get current alignment configuration from UI controls"""
+        mode = self.alignment_mode_combo.currentText()
+        
+        if mode == "Index-Based":
+            index_mode = self.index_mode_combo.currentText()
+            return {
+                'alignment_method': 'index',
+                'mode': 'truncate' if index_mode == "Truncate to Shortest" else 'custom',
+                'start_index': self.start_index_spin.value() if index_mode == "Custom Range" else 0,
+                'end_index': self.end_index_spin.value() if index_mode == "Custom Range" else 500,
+                'offset': self.index_offset_spin.value()
+            }
+        else:  # Time-Based
+            time_mode = self.time_mode_combo.currentText()
+            return {
+                'alignment_method': 'time',
+                'mode': 'overlap' if time_mode == "Overlap Region" else 'custom',
+                'start_time': self.start_time_spin.value() if time_mode == "Custom Range" else 0.0,
+                'end_time': self.end_time_spin.value() if time_mode == "Custom Range" else 10.0,
+                'offset': self.time_offset_spin.value(),
+                'interpolation': self.interpolation_combo.currentText(),
+                'round_to': self.round_to_spin.value()
+            }
 
     def _update_button_states(self):
         """Update button enabled/disabled states"""

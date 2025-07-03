@@ -1,4 +1,5 @@
 from PySide6.QtWidgets import QTableWidgetItem, QComboBox
+from PySide6.QtCore import Qt
 import time
 import itertools
 from typing import Dict, Optional, Any, Callable
@@ -105,6 +106,8 @@ class ProcessWizardManager:
         self.ui.console_output.setPlainText(info)
         
 
+        # Update channel name entry with default name
+        self._update_channel_name_entry(step_name)
 
         # Populate parameter table with dynamic values for special parameters
         current_channel = self.channel_lookup()
@@ -129,8 +132,9 @@ class ProcessWizardManager:
             # Add row to table
             self.ui.param_table.insertRow(i)
             
-            # Create parameter name item with tooltip
+            # Create parameter name item with tooltip (uneditable)
             param_name_item = QTableWidgetItem(param_name)
+            param_name_item.setFlags(param_name_item.flags() & ~Qt.ItemIsEditable)  # Make uneditable
             help_text = p.get("help", "")
             if help_text:
                 tooltip = f"{param_name}: {help_text}"
@@ -160,6 +164,29 @@ class ProcessWizardManager:
                 self.ui.param_table.setItem(i, 1, param_value_item)
         
         print(f"[ProcessWizardManager] Populated parameter table with {len(params)} parameters")
+    
+    def _update_channel_name_entry(self, step_name: str):
+        """Update the channel name entry with a default name based on current channel and step."""
+        try:
+            # Get the current input channel
+            current_channel = self.channel_lookup()
+            if not current_channel:
+                # Fallback to generic name if no channel selected
+                default_name = f"New {step_name}"
+            else:
+                # Generate name based on current channel and step
+                base_name = current_channel.legend_label or current_channel.ylabel or "Signal"
+                # Clean up the step name (remove underscores, capitalize)
+                clean_step = step_name.replace('_', ' ').title()
+                default_name = f"{base_name} - {clean_step}"
+            
+            # Set the default name in the UI entry field
+            if hasattr(self.ui, 'channel_name_entry'):
+                self.ui.channel_name_entry.setText(default_name)
+                print(f"[ProcessWizardManager] Set default channel name: {default_name}")
+            
+        except Exception as e:
+            print(f"[ProcessWizardManager] Error updating channel name entry: {e}")
     
     def on_input_submitted(self, user_input_dict: dict):
         """Handle input submission with parameters from table."""
@@ -247,6 +274,14 @@ class ProcessWizardManager:
                 # Set parent ID
                 new_channel.parent_ids = [parent_channel.channel_id]
                 
+                # Apply custom channel name from entry field if provided
+                if (hasattr(self.ui, 'channel_name_entry') and 
+                    self.ui.channel_name_entry.text().strip()):
+                    custom_name = self.ui.channel_name_entry.text().strip()
+                    new_channel.legend_label = custom_name
+                    new_channel.ylabel = custom_name
+                    print(f"[ProcessWizardManager] Applied custom name: {custom_name}")
+                
                 # Assign a unique color to the new channel based on existing channels in the file
                 if not hasattr(new_channel, 'color') or new_channel.color is None:
                     # Get all channels from the same file to count existing colors
@@ -284,10 +319,14 @@ class ProcessWizardManager:
             # Store step name before clearing pending_step
             step_name = self.pending_step.name if self.pending_step else "Unknown step"
             
-            # Clear the pending step
+            # Clear the pending step and channel name entry
             self.pending_step = None
             self.ui.param_table.setRowCount(0)
             self.ui.console_output.clear()
+            
+            # Clear the channel name entry for next use
+            if hasattr(self.ui, 'channel_name_entry'):
+                self.ui.channel_name_entry.clear()
             
         except Exception as e:
             # Update failure statistics
@@ -311,7 +350,27 @@ class ProcessWizardManager:
         self.ui._update_step_table()
         self.ui._update_plot()
 
-
+        print(f"[ProcessWizardManager] Created {len(new_channels)} new channel(s)")
+        
+        if len(new_channels) == 1:
+            self.ui.console_output.setPlainText(
+                f"Step applied successfully.\nNew channel: {new_channels[0].channel_id}"
+            )
+        else:
+            channel_list = ", ".join([ch.channel_id for ch in new_channels])
+            self.ui.console_output.setPlainText(
+                f"Step applied successfully.\nCreated {len(new_channels)} channels: {channel_list}"
+            )
+        
+        # Clear the channel name entry for next use
+        if hasattr(self.ui, 'channel_name_entry'):
+            self.ui.channel_name_entry.clear()
+        
+        # Clear the parameter table and pending step
+        self.ui.param_table.setRowCount(0)
+        self.pending_step = None
+        
+        return new_channels[-1] if new_channels else None  # Return the last channel for UI consistency
 
     def apply_pending_step(self):
         if not self.pending_step:
@@ -414,6 +473,14 @@ class ProcessWizardManager:
             for new_channel in valid_channels:
                 new_channel.step = parent_channel.step + 1
                 
+                # Apply custom channel name from entry field if provided
+                if (hasattr(self.ui, 'channel_name_entry') and 
+                    self.ui.channel_name_entry.text().strip()):
+                    custom_name = self.ui.channel_name_entry.text().strip()
+                    new_channel.legend_label = custom_name
+                    new_channel.ylabel = custom_name
+                    print(f"[ProcessWizardManager] Applied custom name: {custom_name}")
+                
                 # Assign a unique color to the new channel based on existing channels in the file
                 if not hasattr(new_channel, 'color') or new_channel.color is None:
                     # Get all channels from the same file to count existing colors
@@ -456,20 +523,45 @@ class ProcessWizardManager:
             self.ui.console_output.setPlainText(f"Step execution failed: {e}")
             return None
 
-        print(f"[ProcessWizardManager] Created {len(new_channels)} new channel(s) - letting UI handle input_ch assignment")
+        # Set the most recent new channel as the input for next step
+        if new_channels:
+            self.ui.input_ch = new_channels[-1]  # Use the last created channel
+            print(f"[ProcessWizardManager] Set input_ch to new channel: {new_channels[-1].channel_id}")
+        
+        print(f"[ProcessWizardManager] Created {len(new_channels)} new channel(s)")
+        
+        # Get the step name for the console message
+        step_name = self.pending_step.name if self.pending_step else "Unknown step"
+        # Clean up the step name for display
+        display_step_name = step_name.replace('_', ' ').title()
         
         if len(new_channels) == 1:
+            # Get the channel name for display
+            channel_name = new_channels[0].legend_label or new_channels[0].ylabel or f"Channel {new_channels[0].channel_id}"
             self.ui.console_output.setPlainText(
-                f"Step applied successfully.\nNew channel: {new_channels[0].channel_id}"
+                f"Filter Applied: {display_step_name}\n"
+                f"New Channel: {channel_name}"
             )
         else:
-            channel_list = ", ".join([ch.channel_id for ch in new_channels])
+            # For multiple channels, show names if available
+            channel_names = []
+            for ch in new_channels:
+                name = ch.legend_label or ch.ylabel or f"Channel {ch.channel_id}"
+                channel_names.append(name)
+            channel_list = ", ".join(channel_names)
             self.ui.console_output.setPlainText(
-                f"Step applied successfully.\nCreated {len(new_channels)} channels: {channel_list}"
+                f"Filter Applied: {display_step_name}\n"
+                f"Created {len(new_channels)} channels: {channel_list}"
             )
         
+        # Clear the channel name entry for next use
+        if hasattr(self.ui, 'channel_name_entry'):
+            self.ui.channel_name_entry.clear()
+        
+        # Clear the parameter table and pending step
         self.ui.param_table.setRowCount(0)
         self.pending_step = None
+        
         return new_channels[-1] if new_channels else None  # Return the last channel for UI consistency
 
     def can_undo(self) -> bool:

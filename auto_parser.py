@@ -182,11 +182,13 @@ class AutoParser:
     def _is_metadata_key_value(self, line: str) -> bool:
         """
         Check if line looks like metadata key-value pair.
+        Enhanced for non-ASCII metadata.
         """
         # Patterns like "Subject: John", "Sampling Rate = 100 Hz", "Device :: AB123"
+        # Updated patterns to handle non-ASCII characters
         kv_patterns = [
-            r'^[A-Za-z\s]{1,30}[:=]{1,2}\s*.+$',  # Key: Value or Key = Value
-            r'^[A-Za-z\s]{1,30}::\s*.+$'          # Key :: Value
+            r'^[A-Za-z\s\u00C0-\u024F\u1E00-\u1EFF\u4E00-\u9FFF\u0400-\u04FF]{1,30}[:=]{1,2}\s*.+$',  # Key: Value or Key = Value (with Unicode)
+            r'^[A-Za-z\s\u00C0-\u024F\u1E00-\u1EFF\u4E00-\u9FFF\u0400-\u04FF]{1,30}::\s*.+$'          # Key :: Value (with Unicode)
         ]
         
         for pattern in kv_patterns:
@@ -195,6 +197,19 @@ class AutoParser:
                 key_part = line.split(':', 1)[0].strip() if ':' in line else line.split('=', 1)[0].strip()
                 if key_part and not key_part.replace('.', '').replace('-', '').isdigit():
                     return True
+        
+        # Additional check for non-ASCII metadata (common in international files)
+        if self._unicode_ratio(line) > 0.3:
+            # Check if it has a key-value structure even with non-ASCII characters
+            if ':' in line or '=' in line:
+                parts = line.split(':' if ':' in line else '=', 1)
+                if len(parts) == 2:
+                    key, value = parts
+                    key = key.strip()
+                    value = value.strip()
+                    # Key should be reasonably short and not purely numeric
+                    if len(key) < 50 and value and not key.replace('.', '').replace('-', '').isdigit():
+                        return True
         
         return False
     
@@ -294,12 +309,27 @@ class AutoParser:
             first_line = clean_lines[0]
             second_line = clean_lines[1]
             
+            # Enhanced header detection for single column
+            first_is_numeric = self._is_likely_numeric(first_line)
+            second_is_numeric = self._is_likely_numeric(second_line)
+            
             # Check if first line looks like header and second like data
-            if (not self._is_likely_numeric(first_line) and 
-                self._is_likely_numeric(second_line)):
+            if not first_is_numeric and second_is_numeric:
                 has_header = True
                 data_start_row = 1  # This is correct for single column - skip first line
                 headers = [first_line]
+            # Additional check for non-ASCII headers
+            elif not first_is_numeric and self._unicode_ratio(first_line) > 0.3:
+                # Check if multiple following lines are numeric
+                next_lines_numeric = 0
+                for i in range(1, min(4, len(clean_lines))):
+                    if self._is_likely_numeric(clean_lines[i]):
+                        next_lines_numeric += 1
+                
+                if next_lines_numeric >= 2:  # At least 2 of next 3 lines are numeric
+                    has_header = True
+                    data_start_row = 1
+                    headers = [first_line]
         
         # Determine column type
         data_lines = clean_lines[data_start_row:]
@@ -463,6 +493,13 @@ class AutoParser:
         except ValueError:
             return False
     
+    def _unicode_ratio(self, text: str) -> float:
+        """
+        Calculate the ratio of non-ASCII characters in text.
+        Used for detecting non-ASCII headers in multilingual files.
+        """
+        return sum(1 for c in text if ord(c) > 127) / len(text) if text else 0
+    
     def _detect_header(self, token_matrix: List[List[str]], column_types: Dict[int, str]) -> Dict:
         """
         Detect if there's a header row and where data starts.
@@ -490,10 +527,11 @@ class AutoParser:
                                token_matrix: List[List[str]], column_types: Dict[int, str]) -> float:
         """
         Calculate how likely a row is to be a header.
+        Enhanced for non-ASCII headers and multilingual support.
         """
         score = 0.0
         
-        # Check for header keywords
+        # Check for header keywords (reduced English bias)
         header_keywords = [
             'time', 'date', 'timestamp', 'datetime', 'seconds', 'ms', 'milliseconds',
             'signal', 'channel', 'sensor', 'value', 'data', 'measurement',
@@ -507,8 +545,16 @@ class AutoParser:
             if any(keyword in token_lower for keyword in header_keywords):
                 keyword_matches += 1
         
+        # Reduced weight for English keyword matching to reduce bias
         if keyword_matches > 0:
-            score += 0.4 * (keyword_matches / len(row))
+            score += 0.2 * (keyword_matches / len(row))  # Reduced from 0.4
+        
+        # Unicode ratio detection for non-ASCII headers
+        unicode_ratio = np.mean([self._unicode_ratio(token) for token in row])
+        if unicode_ratio > 0.5:
+            score += 0.2  # Boost for non-ASCII headers
+        elif unicode_ratio > 0.2:
+            score += 0.1  # Smaller boost for mixed content
         
         # Check if non-numeric in numeric columns
         numeric_mismatches = 0
@@ -521,10 +567,31 @@ class AutoParser:
         if numeric_cols > 0:
             score += 0.3 * (numeric_mismatches / numeric_cols)
         
+        # All-text vs numeric-next-row bonus
+        current_row_numeric_count = sum(1 for token in row if self._is_likely_numeric(token))
+        current_row_numeric_ratio = current_row_numeric_count / len(row) if row else 0
+        
+        # If current row is entirely non-numeric, check if next rows are numeric
+        if current_row_numeric_ratio == 0 and row_idx < len(token_matrix) - 1:
+            next_rows_numeric_ratios = []
+            for next_row_idx in range(row_idx + 1, min(row_idx + 4, len(token_matrix))):  # Check next 3 rows
+                next_row = token_matrix[next_row_idx]
+                if next_row:
+                    next_numeric_count = sum(1 for token in next_row if self._is_likely_numeric(token))
+                    next_numeric_ratio = next_numeric_count / len(next_row)
+                    next_rows_numeric_ratios.append(next_numeric_ratio)
+            
+            if next_rows_numeric_ratios:
+                avg_next_numeric_ratio = np.mean(next_rows_numeric_ratios)
+                if avg_next_numeric_ratio > 0.7:  # Next rows are mostly numeric
+                    score += 0.25  # Strong boost for all-text header followed by numeric data
+                elif avg_next_numeric_ratio > 0.4:
+                    score += 0.15  # Moderate boost
+        
         # Check uniqueness compared to following rows
         if row_idx < len(token_matrix) - 1:
             uniqueness = self._calculate_row_uniqueness(row, token_matrix[row_idx+1:])
-            score += 0.3 * uniqueness
+            score += 0.2 * uniqueness  # Reduced from 0.3 to balance with new features
         
         return min(score, 1.0)
     
@@ -712,9 +779,15 @@ class AutoParser:
             elif col_str in ['t', 'x', 'index', 'idx', 'sample', 'n']:
                 score += 200
             
-            # First column bonus (but lower priority than name matching)
+            # Safe first column bonus with conditions
             if col == df.columns[0]:
-                score += 15
+                # Only apply bonus for multi-column files
+                if len(df.columns) > 1:
+                    # Don't apply if already high score from name matching (500+)
+                    if score < 500:
+                        # Don't apply if column appears to be categorical
+                        if not self._is_categorical_column(df[col]):
+                            score += 15
             
             if score > 0:
                 candidates.append({'column_name': col, 'score': score, 'method': 'header_name'})
@@ -723,7 +796,19 @@ class AutoParser:
         for col in df.columns:
             if not any(c['column_name'] == col for c in candidates):
                 if self._could_be_datetime_data(df[col]):
-                    candidates.append({'column_name': col, 'score': 120, 'method': 'datetime_data'})
+                    score = 120
+                    
+                    # Safe first column bonus with conditions
+                    if col == df.columns[0]:
+                        # Only apply bonus for multi-column files
+                        if len(df.columns) > 1:
+                            # Don't apply if already high score
+                            if score < 500:
+                                # Don't apply if column appears to be categorical
+                                if not self._is_categorical_column(df[col]):
+                                    score += 15
+                    
+                    candidates.append({'column_name': col, 'score': score, 'method': 'datetime_data'})
         
         # Strategy 4: Numeric time-like properties (lowest priority)
         for col in df.columns:
@@ -733,6 +818,17 @@ class AutoParser:
                     if time_score > 40:
                         # Cap the score so it can't beat header name detection
                         time_score = min(time_score, 100)
+                        
+                        # Safe first column bonus with conditions
+                        if col == df.columns[0]:
+                            # Only apply bonus for multi-column files
+                            if len(df.columns) > 1:
+                                # Don't apply if already high score
+                                if time_score < 500:
+                                    # Don't apply if column appears to be categorical
+                                    if not self._is_categorical_column(df[col]):
+                                        time_score += 15
+                        
                         candidates.append({'column_name': col, 'score': time_score, 'method': 'numeric_time'})
         
         # Select best candidate

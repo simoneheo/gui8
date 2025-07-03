@@ -2,7 +2,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QComboBox,
     QLabel, QLineEdit, QPushButton, QListWidget, QTableWidget, QTableWidgetItem,
     QSplitter, QTextEdit, QCheckBox, QFrame, QTabWidget, QRadioButton, QButtonGroup,
-    QGroupBox
+    QGroupBox, QSpinBox, QHeaderView
 )
 from PySide6.QtCore import Qt, QEvent
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -77,7 +77,6 @@ class ProcessWizardWindow(QMainWindow):
         # Update UI state
         self._update_file_selector()
         self._update_channel_selector()
-        self._update_input_channel_display()
         
         # Log initialization
         self._log_state_change("Process wizard initialized successfully")
@@ -137,49 +136,81 @@ class ProcessWizardWindow(QMainWindow):
         }
         
     def _build_left_panel(self, main_splitter):
-        """Build the left panel with processing controls"""
-        # Left Panel with grouped widgets
+        """Build the left panel with two vertical columns"""
+        # Left Panel with two columns
         self.left_panel = QWidget()
-        left_layout = QVBoxLayout(self.left_panel)
+        left_layout = QHBoxLayout(self.left_panel)
+        
+        # Left Column - Filters Section only
+        left_column = QWidget()
+        left_column_layout = QVBoxLayout(left_column)
         
         # Filters Group
         filters_group = QGroupBox("Filters")
         filter_layout = QVBoxLayout(filters_group)
         
-        # Filter controls layout (search + category dropdown)
-        filter_controls_layout = QHBoxLayout()
-        
+        # Filter search
         self.filter_search = QLineEdit()
         self.filter_search.setPlaceholderText("Search filters...")
         self.filter_search.textChanged.connect(self._on_filter_search)
         
+        # Category filter
         self.category_filter = QComboBox()
         self.category_filter.addItem("All Categories")
         self.category_filter.currentTextChanged.connect(self._on_category_filter_changed)
         
-        filter_controls_layout.addWidget(self.filter_search, 2)  # Give search box more space
-        filter_controls_layout.addWidget(self.category_filter, 1)  # Category dropdown smaller
-        
+        # Filter list (scrollable)
         self.filter_list = QListWidget()
         
-
-        
-        filter_buttons_layout = QHBoxLayout()
-        self.add_filter_btn = QPushButton("Add Filter")
-        self.add_filter_btn.clicked.connect(self._on_add_filter)
-        filter_buttons_layout.addWidget(self.add_filter_btn)
-        
-        filter_layout.addLayout(filter_controls_layout)
+        filter_layout.addWidget(self.filter_search)
+        filter_layout.addWidget(self.category_filter)
         filter_layout.addWidget(self.filter_list)
-        filter_layout.addLayout(filter_buttons_layout)
+        
+        left_column_layout.addWidget(filters_group)
+        
+        # Right Column - Control Section stacked top-down
+        right_column = QWidget()
+        right_column_layout = QVBoxLayout(right_column)
+        
+        # File/Channel dropdowns (moved from right panel)
+        file_channel_group = QGroupBox("File Selection")
+        file_channel_layout = QVBoxLayout(file_channel_group)
+        
+        # File selector
+        file_layout = QHBoxLayout()
+        file_label = QLabel("File:")
+        self.file_selector = QComboBox()
+        self.file_selector.currentIndexChanged.connect(self._on_file_selected)
+        file_layout.addWidget(file_label)
+        file_layout.addWidget(self.file_selector)
+        
+        # Channel selector
+        channel_layout = QHBoxLayout()
+        channel_label = QLabel("Channel:")
+        self.channel_selector = QComboBox()
+        self.channel_selector.currentIndexChanged.connect(self._on_channel_selected)
+        channel_layout.addWidget(channel_label)
+        channel_layout.addWidget(self.channel_selector)
+        
+        file_channel_layout.addLayout(file_layout)
+        file_channel_layout.addLayout(channel_layout)
         
         # Input Channel Display
         input_channel_group = QGroupBox("Input Channel")
-        input_channel_layout = QHBoxLayout(input_channel_group)
+        input_channel_layout = QVBoxLayout(input_channel_group)
+                
+        # Create a horizontal layout for the channel selector
+        input_channel_control_layout = QHBoxLayout()
         
-        self.input_channel_label = QLabel("No channel selected")
-        self.input_channel_label.setStyleSheet("color: #666; font-style: italic;")
-        input_channel_layout.addWidget(self.input_channel_label)
+        # Replace spinbox with combobox to show channel names directly
+        self.input_channel_combobox = QComboBox()
+        self.input_channel_combobox.setMinimumWidth(200)  # Make it wider to show channel names
+        self.input_channel_combobox.currentIndexChanged.connect(self._on_input_channel_changed)
+        
+        input_channel_control_layout.addWidget(self.input_channel_combobox)
+        input_channel_control_layout.addStretch()  # Push everything to the left
+        
+        input_channel_layout.addLayout(input_channel_control_layout)
         
         # Console Group
         console_group = QGroupBox("Console")
@@ -188,91 +219,85 @@ class ProcessWizardWindow(QMainWindow):
         self.console_output = QTextEdit()
         self.console_output.setPlaceholderText("Output will appear here...")
         self.console_output.setReadOnly(True)
+        
+        # Parameter table
         self.param_table = QTableWidget(0, 2)
         self.param_table.setHorizontalHeaderLabels(["Parameter", "Value"])
         self.param_table.verticalHeader().setVisible(False)
         self.param_table.horizontalHeader().setStretchLastSection(True)
         self.param_table.setEditTriggers(QTableWidget.AllEditTriggers)
         self.param_table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.param_table.setFixedHeight(120)  # Adjust as needed
+        self.param_table.setFixedHeight(250)  # Adjust as needed
+        
+        # Set column resize modes
+        param_header = self.param_table.horizontalHeader()
+        param_header.setSectionResizeMode(0, QHeaderView.Fixed)  # Parameter column - fixed width
+        param_header.setSectionResizeMode(1, QHeaderView.Stretch)  # Value column - stretches
+        self.param_table.setColumnWidth(0, 120)  # Parameter column width
         
         console_layout.addWidget(self.console_output)
         console_layout.addWidget(self.param_table)
         
-        # Add groups to left panel
-        left_layout.addWidget(filters_group)
-        left_layout.addWidget(input_channel_group)
-        left_layout.addWidget(console_group)
+        # Channel Name Entry (above Add Filter button)
+        channel_name_layout = QHBoxLayout()
+        channel_name_label = QLabel("Channel Name:")
+        self.channel_name_entry = QLineEdit()
+        self.channel_name_entry.setPlaceholderText("Enter custom channel name...")
+        self.channel_name_entry.setToolTip("Custom name for the new channel that will be created")
+        channel_name_layout.addWidget(channel_name_label)
+        channel_name_layout.addWidget(self.channel_name_entry)
+        
+        console_layout.addLayout(channel_name_layout)
+        
+        # Add Filter button
+        self.add_filter_btn = QPushButton("Add Filter")
+        self.add_filter_btn.clicked.connect(self._on_add_filter)
+        
+        # Add groups to right column
+        right_column_layout.addWidget(file_channel_group)
+        right_column_layout.addWidget(input_channel_group)
+        right_column_layout.addWidget(console_group)
+        right_column_layout.addWidget(self.add_filter_btn)
+        
+        # Add columns to left panel using splitter for better size control
+        left_splitter = QSplitter(Qt.Horizontal)
+        left_splitter.addWidget(left_column)
+        left_splitter.addWidget(right_column)
+        left_splitter.setSizes([350, 500])  # left column smaller, right column wider
+        left_layout.addWidget(left_splitter)
 
         # Right Panel with vertical layout
         self.right_panel = QWidget()
         right_layout = QVBoxLayout(self.right_panel)
         
-        # TopBar with file/channel dropdowns
-        topbar_layout = QHBoxLayout()
-        
-        # File selector
-        file_label = QLabel("File:")
-        self.file_selector = QComboBox()
-        self.file_selector.currentIndexChanged.connect(self._on_file_selected)
-        topbar_layout.addWidget(file_label)
-        topbar_layout.addWidget(self.file_selector)
-        
-        # Channel selector
-        channel_label = QLabel("Channel:")
-        self.channel_selector = QComboBox()
-        self.channel_selector.currentIndexChanged.connect(self._on_channel_selected)
-        topbar_layout.addWidget(channel_label)
-        topbar_layout.addWidget(self.channel_selector)
-        
-        topbar_layout.addStretch()
-        right_layout.addLayout(topbar_layout)
-        
-        # Step Table - small height, scrollable
-        self.step_table = QTableWidget(0, 3)  # 3 columns
-        self.step_table.setHorizontalHeaderLabels(["Line", "Channel Name", "Actions"])
+        # Step Table - styled like main window channel table
+        self.step_table = QTableWidget(0, 6)  # 6 columns like main window
+        self.step_table.setHorizontalHeaderLabels(["Show", "Style", "Channel Name", "Shape", "fs (Hz)", "Actions"])
         self.step_table.verticalHeader().setVisible(False)
-        self.step_table.horizontalHeader().setStretchLastSection(True)
+        
+        # Set column resize modes for better layout (same as main window)
+        header = self.step_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.Fixed)     # Show column - fixed width
+        header.setSectionResizeMode(1, QHeaderView.Fixed)     # Style - fixed width
+        header.setSectionResizeMode(2, QHeaderView.Stretch)   # Channel Name - stretches
+        header.setSectionResizeMode(3, QHeaderView.Fixed)     # Shape - fixed width
+        header.setSectionResizeMode(4, QHeaderView.Fixed)     # fs (Hz) - fixed width
+        header.setSectionResizeMode(5, QHeaderView.Fixed)     # Actions - fixed width
+        
+        # Set specific column widths (same as main window)
+        self.step_table.setColumnWidth(0, 60)   # Show checkbox
+        self.step_table.setColumnWidth(1, 80)   # Style preview
+        self.step_table.setColumnWidth(3, 80)   # Shape column
+        self.step_table.setColumnWidth(4, 100)  # fs (Hz) column
+        self.step_table.setColumnWidth(5, 180)  # Actions buttons
+        
         self.step_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.step_table.setSelectionMode(QTableWidget.SingleSelection)
         self.step_table.setSelectionBehavior(QTableWidget.SelectRows)
-        # Custom selection style - thick box outline around entire row
-        self.step_table.setStyleSheet("""
-            QTableWidget { 
-                border: none; 
-                selection-background-color: transparent;
-                selection-color: black;
-                gridline-color: transparent;
-            }
-            QTableWidget::item:selected {
-                background-color: transparent;
-                border: none;
-            }
-            QTableWidget::item {
-                padding: 2px;
-                border: none;
-            }
-            QTableWidget::item:selected:first {
-                border-left: 3px solid #0078d4;
-                border-top: 3px solid #0078d4;
-                border-bottom: 3px solid #0078d4;
-            }
-            QTableWidget::item:selected:last {
-                border-right: 3px solid #0078d4;
-                border-top: 3px solid #0078d4;
-                border-bottom: 3px solid #0078d4;
-            }
-            QTableWidget::item:selected:!first:!last {
-                border-top: 3px solid #0078d4;
-                border-bottom: 3px solid #0078d4;
-            }
-        """)
         self.step_table.setMaximumHeight(150)  # Small height
         self.step_table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         right_layout.addWidget(self.step_table)
 
-        # Connect row selection signal
-        self.step_table.itemSelectionChanged.connect(self._on_row_selection_changed)
+
 
         # Create tab widget for plot area
         self.tab_widget = QTabWidget()
@@ -353,7 +378,7 @@ class ProcessWizardWindow(QMainWindow):
         main_splitter.addWidget(self.right_panel)
         
         # Set splitter proportions (left panel smaller, right panel larger)
-        main_splitter.setSizes([300, 800])  # Left: 300px, Right: 800px
+        main_splitter.setSizes([500, 800])  # Left: 300px, Right: 800px
 
         # Load steps and setup wizard manager
         load_all_steps("steps")
@@ -377,9 +402,7 @@ class ProcessWizardWindow(QMainWindow):
         self._update_file_selector()
         self._update_channel_selector()
 
-        # Initialize input_ch to the first available channel
-        if self.channel_selector.count() > 0:
-            self.input_ch = self.channel_selector.itemData(0)
+        # Initialize input_ch will be set when dropdown is populated
 
         # Initial update of tables and plots
         self._update_step_table()
@@ -471,11 +494,22 @@ class ProcessWizardWindow(QMainWindow):
 
     def get_active_channel_info(self):
         """Get the currently selected channel info."""
-        # First check if we have a radio button selection
-        if self.input_ch:
+        # During filter addition, preserve the explicitly set input_ch
+        if (hasattr(self, '_adding_filter') and self._adding_filter and 
+            hasattr(self, 'input_ch') and self.input_ch):
             return self.input_ch
-
-        # Fallback to dropdown selection
+        
+        # Use the explicitly set input_ch if available
+        if hasattr(self, 'input_ch') and self.input_ch:
+            return self.input_ch
+        
+        # Use the input channel combobox selection
+        if (hasattr(self, '_cached_lineage') and self._cached_lineage and 
+            self.input_channel_combobox.currentIndex() >= 0 and 
+            self.input_channel_combobox.currentIndex() < len(self._cached_lineage)):
+            return self._cached_lineage[self.input_channel_combobox.currentIndex()]
+        
+        # Fallback to main channel selector
         if self.channel_selector.currentIndex() < 0:
             return None
             
@@ -554,8 +588,11 @@ class ProcessWizardWindow(QMainWindow):
         current_tab_index = self.tab_widget.currentIndex()
         filtered_lineage = self._filter_lineage_by_tab(lineage, current_tab_index)
         
-        # Cache lineage for radio button logic
+        # Cache lineage for dropdown logic
         self._cached_lineage = filtered_lineage
+        
+        # Update input channel combobox
+        self._update_input_channel_combobox()
 
 
             
@@ -564,59 +601,62 @@ class ProcessWizardWindow(QMainWindow):
         self.step_table.setRowCount(len(filtered_lineage))
 
         for i, channel in enumerate(filtered_lineage):
-
-
-
-            # Colored line indicator (similar to main window)
+            # Column 0: Show (checkbox for visibility toggle)
+            show_checkbox = QCheckBox()
+            show_checkbox.setChecked(channel.show)
+            show_checkbox.stateChanged.connect(lambda state, ch_id=channel.channel_id: self._toggle_channel_visibility(ch_id))
+            
+            # Center the checkbox in the cell
+            checkbox_widget = QWidget()
+            checkbox_layout = QHBoxLayout(checkbox_widget)
+            checkbox_layout.addWidget(show_checkbox)
+            checkbox_layout.setAlignment(Qt.AlignCenter)
+            checkbox_layout.setContentsMargins(0, 0, 0, 0)
+            self.step_table.setCellWidget(i, 0, checkbox_widget)
+            
+            # Column 1: Style (visual preview widget)
             from plot_manager import StylePreviewWidget
-            
-            # Get channel properties
-            channel_color = getattr(channel, 'color', '#1f77b4')
-            channel_style = getattr(channel, 'style', '-')
-            channel_marker = getattr(channel, 'marker', None)
-            
-            # Use the same StylePreviewWidget as the main window
-            line_widget = StylePreviewWidget(
-                color=channel_color,
-                style=channel_style,
-                marker=channel_marker
+            style_widget = StylePreviewWidget(
+                color=channel.color or '#1f77b4',
+                style=channel.style or '-',
+                marker=channel.marker if channel.marker != "None" else None
             )
-            line_widget.setFixedSize(60, 20)
-            line_widget.setToolTip(f"Channel style: {channel_style}, Color: {channel_color}, Marker: {channel_marker}")
-            self.step_table.setCellWidget(i, 0, line_widget)
-
-            # Channel Name
+            self.step_table.setCellWidget(i, 1, style_widget)
+            
+            # Column 2: Channel Name (legend label)
             channel_name = channel.legend_label or channel.ylabel or f"Step {channel.step}"
-            self.step_table.setItem(i, 1, QTableWidgetItem(channel_name))
-
-            # Actions column (same as main window)
+            self.step_table.setItem(i, 2, QTableWidgetItem(channel_name))
+            
+            # Column 3: Shape (data shape/length)
+            if channel.xdata is not None and channel.ydata is not None:
+                shape_str = f"({len(channel.xdata)}, 2)"
+            elif channel.ydata is not None:
+                shape_str = f"({len(channel.ydata)},)"
+            else:
+                shape_str = "No data"
+            self.step_table.setItem(i, 3, QTableWidgetItem(shape_str))
+            
+            # Column 4: fs (Hz) - sampling frequency (median ± std)
+            if hasattr(channel, 'fs_median') and channel.fs_median:
+                if hasattr(channel, 'fs_std') and channel.fs_std:
+                    fs_str = f"{channel.fs_median:.1f}±{channel.fs_std:.1f}"
+                else:
+                    fs_str = f"{channel.fs_median:.1f}"
+            else:
+                fs_str = "N/A"
+            self.step_table.setItem(i, 4, QTableWidgetItem(fs_str))
+            
+            # Column 5: Actions (info, inspect, styling, transform, delete)
             actions_widget = QWidget()
             actions_layout = QHBoxLayout(actions_widget)
             actions_layout.setContentsMargins(2, 2, 2, 2)
             actions_layout.setSpacing(2)
             
-            # Plot toggle button (colored/greyed based on visibility)
-            plot_button = QPushButton("📊")
-            plot_button.setMaximumWidth(25)
-            plot_button.setMaximumHeight(25)
-            if channel.show:
-                plot_button.setStyleSheet("QPushButton { background-color: #e8f5e8; }")  # Green background when visible
-            else:
-                plot_button.setStyleSheet("QPushButton { background-color: #f5f5f5; color: #aaa; }")  # Greyed when hidden
-            plot_button.clicked.connect(lambda checked=False, ch_id=channel.channel_id: self._toggle_channel_visibility(ch_id))
-            actions_layout.addWidget(plot_button)
-            
-            # Gear button (settings)
-            gear_button = QPushButton("⚙")
-            gear_button.setMaximumWidth(25)
-            gear_button.setMaximumHeight(25)
-            gear_button.clicked.connect(lambda checked=False, ch_id=channel.channel_id: self._handle_gear_button_clicked(ch_id))
-            actions_layout.addWidget(gear_button)
-            
-            # Exclamation button (warnings/info)
+            # Info button (channel information)
             info_button = QPushButton("❗")
             info_button.setMaximumWidth(25)
             info_button.setMaximumHeight(25)
+            info_button.setToolTip("Channel information and metadata")
             info_button.clicked.connect(lambda checked=False, ch_id=channel.channel_id: self._show_channel_info(ch_id))
             actions_layout.addWidget(info_button)
             
@@ -628,6 +668,14 @@ class ProcessWizardWindow(QMainWindow):
             zoom_button.clicked.connect(lambda checked=False, ch_id=channel.channel_id: self._inspect_channel_data(ch_id))
             actions_layout.addWidget(zoom_button)
             
+            # Paint brush button (styling)
+            style_button = QPushButton("🎨")
+            style_button.setMaximumWidth(25)
+            style_button.setMaximumHeight(25)
+            style_button.setToolTip("Channel styling and appearance settings")
+            style_button.clicked.connect(lambda checked=False, ch_id=channel.channel_id: self._handle_gear_button_clicked(ch_id))
+            actions_layout.addWidget(style_button)
+            
             # Tool button (transform data)
             tool_button = QPushButton("🔨")
             tool_button.setMaximumWidth(25)
@@ -636,7 +684,7 @@ class ProcessWizardWindow(QMainWindow):
             tool_button.clicked.connect(lambda checked=False, ch_id=channel.channel_id: self._transform_channel_data(ch_id))
             actions_layout.addWidget(tool_button)
             
-            # Trash button (delete)
+            # Trash button (delete) - always last
             delete_button = QPushButton("🗑️")
             delete_button.setMaximumWidth(25)
             delete_button.setMaximumHeight(25)
@@ -651,7 +699,7 @@ class ProcessWizardWindow(QMainWindow):
             
             actions_layout.addWidget(delete_button)
             
-            self.step_table.setCellWidget(i, 2, actions_widget)
+            self.step_table.setCellWidget(i, 5, actions_widget)
 
             # Enhanced tooltip with parameters and parent step information
             tooltip_parts = []
@@ -689,16 +737,17 @@ class ProcessWizardWindow(QMainWindow):
                 item = self.step_table.item(i, col)
                 if item:
                     item.setToolTip(tooltip)
-                # Also set tooltip on widgets (radio and checkbox)
+                # Also set tooltip on widgets
                 widget = self.step_table.cellWidget(i, col)
-                if widget and col != 2:  # Don't override the color tooltip for line widget
+                if widget and col != 1:  # Don't override the style widget tooltip
                     widget.setToolTip(tooltip)
         
-        # Verify final radio button state
-        selected_count = sum(1 for ch in filtered_lineage if self.input_ch and ch.channel_id == self.input_ch.channel_id)
-        
-        # Update the table selection to highlight the current input channel
-        self._update_step_table_selection()
+        # Ensure column widths are maintained after table refresh (same as main window)
+        self.step_table.setColumnWidth(0, 60)   # Show checkbox
+        self.step_table.setColumnWidth(1, 80)   # Style preview
+        self.step_table.setColumnWidth(3, 80)   # Shape column
+        self.step_table.setColumnWidth(4, 100)  # fs (Hz) column
+        self.step_table.setColumnWidth(5, 180)  # Actions buttons
 
     def _filter_lineage_by_tab(self, lineage, tab_index):
         """Filter lineage channels based on the current tab."""
@@ -932,7 +981,7 @@ class ProcessWizardWindow(QMainWindow):
         spectrogram_size = self.spectrogram_figure.get_size_inches()
         bar_chart_size = self.bar_chart_figure.get_size_inches()
         
-        # Update the data
+        # Update the data (this will maintain the current input channel selection)
         self._update_step_table()
         self._update_plot()
         
@@ -953,10 +1002,17 @@ class ProcessWizardWindow(QMainWindow):
         if index < 0:
             return
             
+        # Don't override input_ch if we're in the middle of adding a filter
+        if self._adding_filter:
+            return
+            
+        # Clear input_ch so we auto-select the most recent channel in the new file
+        self.input_ch = None
+        
         # Update channel selector when file changes
         self._update_channel_selector()
         
-        # Update table and plot
+        # Update table and plot (this will auto-select the most recent channel)
         self._update_step_table()
         self._update_plot()
 
@@ -976,14 +1032,13 @@ class ProcessWizardWindow(QMainWindow):
         if self._adding_filter:
             return
         
-        # Always update input_ch when user explicitly changes the dropdown selection
-        # This ensures the table and plot update to show the selected channel's lineage
-        self.input_ch = selected_channel
+        # Clear input_ch so we auto-select the most recent channel in the new lineage
+        # This ensures we show the most recent channel in the selected lineage
+        self.input_ch = None
         
-        # Update both table and plot
+        # Update both table and plot (this will auto-select the most recent channel in the lineage)
         self._update_step_table()
         self._update_plot()
-        self._update_input_channel_display()
 
     def _on_show_changed(self, channel, state):
         """Handle show checkbox state change."""
@@ -1015,6 +1070,15 @@ class ProcessWizardWindow(QMainWindow):
 
         # CRITICAL: Set the new channel as the input for next step BEFORE any UI updates
         self.input_ch = new_channel
+        print(f"[ProcessWizard] New channel created: {new_channel.channel_id} - {new_channel.legend_label or new_channel.ylabel} (step {new_channel.step})")
+        print(f"[ProcessWizard] Set input_ch to: {new_channel.channel_id}")
+        print(f"[ProcessWizard] _adding_filter flag is: {self._adding_filter}")
+        
+        # Verify the new channel is in the channel manager
+        if self.channel_manager.has_channel(new_channel.channel_id):
+            print(f"[ProcessWizard] Confirmed: New channel {new_channel.channel_id} is in channel manager")
+        else:
+            print(f"[ProcessWizard] WARNING: New channel {new_channel.channel_id} not found in channel manager!")
 
         # Update selectors to include new channels (but dropdown won't override input_ch due to flag)
         self._update_file_selector()
@@ -1031,14 +1095,33 @@ class ProcessWizardWindow(QMainWindow):
             if self.wizard_manager.pending_step.name == "stft_filter":
                 self.tab_widget.setCurrentIndex(1)  # Switch to spectrogram tab
 
+        # Debug: Check input_ch before updating UI
+        if hasattr(self, 'input_ch') and self.input_ch:
+            print(f"[ProcessWizard] input_ch before UI update: {self.input_ch.channel_id} - {self.input_ch.legend_label or self.input_ch.ylabel}")
+        else:
+            print(f"[ProcessWizard] input_ch not set before UI update")
+        
         # Update step table and plot with the new channel properly selected
         self._update_step_table()  # This should show the new channel selected
+        
+        # Verify the combobox was updated correctly
+        current_index = self.input_channel_combobox.currentIndex()
+        if current_index >= 0 and hasattr(self, '_cached_lineage') and self._cached_lineage:
+            if current_index < len(self._cached_lineage):
+                selected_channel = self._cached_lineage[current_index]
+                if selected_channel.channel_id == new_channel.channel_id:
+                    print(f"[ProcessWizard] SUCCESS: Combobox correctly shows new channel: {selected_channel.legend_label or selected_channel.ylabel}")
+                else:
+                    print(f"[ProcessWizard] WARNING: Combobox shows different channel: {selected_channel.channel_id} instead of {new_channel.channel_id}")
+            else:
+                print(f"[ProcessWizard] WARNING: Combobox index {current_index} is out of range for lineage size {len(self._cached_lineage)}")
+        else:
+            print(f"[ProcessWizard] WARNING: Combobox not properly updated after new channel creation")
         
         # Clear the flag after all updates are complete
         self._adding_filter = False
         
         self._update_plot()
-        self._update_input_channel_display()
         
         # Force redraw of all canvases
         self.canvas.draw()
@@ -1250,53 +1333,84 @@ class ProcessWizardWindow(QMainWindow):
             
             self.console_output.append(f"📊 Updated channel data: {channel.ylabel}")
 
-    def _on_row_selection_changed(self):
-        """Handle row selection change in the step table."""
-        selected_items = self.step_table.selectedIndexes()
-        if not selected_items:
-            return
 
-        selected_row = selected_items[0].row()
+
+    def _update_input_channel_combobox(self):
+        """Update the input channel combobox with all channels in the steps table."""
+        print(f"[ProcessWizard] Updating input channel combobox...")
         
-        # Get the channel from the cached lineage based on the selected row
-        if hasattr(self, '_cached_lineage') and self._cached_lineage and selected_row < len(self._cached_lineage):
-            selected_channel = self._cached_lineage[selected_row]
-            self.input_ch = selected_channel
-            self._update_input_channel_display()
-            self._update_plot()
-
-    def _update_input_channel_display(self):
-        """Update the input channel display label."""
-        if self.input_ch:
-            channel_name = self.input_ch.legend_label or self.input_ch.ylabel or f"Step {self.input_ch.step}"
-            self.input_channel_label.setText(f"Selected: {channel_name}")
-            self.input_channel_label.setStyleSheet("color: #333; font-weight: bold;")
+        # Debug: Check what input_ch is currently set to
+        if hasattr(self, 'input_ch') and self.input_ch:
+            print(f"[ProcessWizard] input_ch is currently: {self.input_ch.channel_id} - {self.input_ch.legend_label or self.input_ch.ylabel}")
         else:
-            self.input_channel_label.setText("No channel selected")
-            self.input_channel_label.setStyleSheet("color: #666; font-style: italic;")
+            print(f"[ProcessWizard] input_ch is not set")
         
-        # Also update the step table selection to match the current input channel
-        self._update_step_table_selection()
-
-    def _update_step_table_selection(self):
-        """Update the step table selection to highlight the current input channel."""
-        if not hasattr(self, '_cached_lineage') or not self._cached_lineage or not self.input_ch:
+        if not hasattr(self, '_cached_lineage') or not self._cached_lineage:
+            print(f"[ProcessWizard] No cached lineage available")
+            self.input_channel_combobox.clear()
+            self.input_channel_combobox.addItem("No channels available")
             return
+            
+        print(f"[ProcessWizard] Cached lineage has {len(self._cached_lineage)} channels")
+        for i, ch in enumerate(self._cached_lineage):
+            print(f"[ProcessWizard]   {i}: {ch.channel_id} - {ch.legend_label or ch.ylabel} (step {ch.step})")
+            
+        # Priority 1: Use the explicitly set input_ch (most recently created/selected channel)
+        target_channel_id = None
+        if hasattr(self, 'input_ch') and self.input_ch:
+            target_channel_id = self.input_ch.channel_id
+            print(f"[ProcessWizard] Using input_ch: {target_channel_id}")
         
-        # Find the row index of the current input channel
-        for i, channel in enumerate(self._cached_lineage):
-            if channel.channel_id == self.input_ch.channel_id:
-                # Select the row without triggering the selection changed signal
-                self.step_table.blockSignals(True)
-                self.step_table.selectRow(i)
-                self.step_table.blockSignals(False)
-                return
+        # Priority 2: Use current combobox selection if input_ch is not set
+        if not target_channel_id and self.input_channel_combobox.currentIndex() >= 0 and self.input_channel_combobox.currentIndex() < len(self._cached_lineage):
+            target_channel_id = self._cached_lineage[self.input_channel_combobox.currentIndex()].channel_id
+            print(f"[ProcessWizard] Using current combobox selection: {target_channel_id}")
+        
+        # Clear and populate combobox with channel names
+        self.input_channel_combobox.clear()
+        for channel in self._cached_lineage:
+            channel_name = channel.legend_label or channel.ylabel or f"Step {channel.step}"
+            self.input_channel_combobox.addItem(channel_name)
+        
+        # Set selection based on target channel
+        selection_made = False
+        if target_channel_id:
+            for i, channel in enumerate(self._cached_lineage):
+                if channel.channel_id == target_channel_id:
+                    self.input_channel_combobox.setCurrentIndex(i)
+                    self.input_ch = channel
+                    selection_made = True
+                    print(f"[ProcessWizard] Successfully selected channel {i}: {channel.legend_label or channel.ylabel}")
+                    break
+            
+            if not selection_made:
+                print(f"[ProcessWizard] WARNING: Target channel {target_channel_id} not found in cached lineage!")
+        
+        # Fallback: Select the most recent channel (highest step number)
+        if not selection_made and len(self._cached_lineage) > 0:
+            # Find the channel with the highest step number (most recently created)
+            most_recent_channel = max(self._cached_lineage, key=lambda ch: ch.step)
+            for i, channel in enumerate(self._cached_lineage):
+                if channel.channel_id == most_recent_channel.channel_id:
+                    self.input_channel_combobox.setCurrentIndex(i)
+                    self.input_ch = channel
+                    print(f"[ProcessWizard] Auto-selected most recent channel {i}: {channel.legend_label or channel.ylabel} (step {channel.step})")
+                    break
+
+    def _on_input_channel_changed(self, index):
+        """Handle input channel combobox selection change."""
+        if (index < 0 or not hasattr(self, '_cached_lineage') or 
+            not self._cached_lineage or index >= len(self._cached_lineage)):
+            return
+            
+        selected_channel = self._cached_lineage[index]
+        if selected_channel:
+            self.input_ch = selected_channel
+            self._update_plot()
 
     def showEvent(self, event):
         """Handle when the wizard window is shown."""
         super().showEvent(event)
-        # Update the step table selection when the wizard is first shown
-        self._update_step_table_selection()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

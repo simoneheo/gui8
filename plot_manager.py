@@ -123,10 +123,8 @@ class PlotCanvas(FigureCanvas):
         self.ax_left = self.fig.add_subplot(111)
         self.ax_right = self.ax_left.twinx()
         
-        # Configure axes
-        self.ax_left.set_xlabel('Time')
-        self.ax_left.set_ylabel('Left Axis', color='blue')
-        self.ax_right.set_ylabel('Right Axis', color='red')
+        # Configure axes (no labels for preview)
+        # Labels removed for cleaner preview interface
         
         # Track plotted lines
         self.plotted_lines = {}  # channel_id -> line object
@@ -148,10 +146,7 @@ class PlotCanvas(FigureCanvas):
         self.plotted_lines.clear()
         self.channel_axes.clear()
         
-        # Reset axis labels
-        self.ax_left.set_xlabel('Time')
-        self.ax_left.set_ylabel('Left Axis', color='blue')
-        self.ax_right.set_ylabel('Right Axis', color='red')
+        # No axis labels for preview
         
         self.fig.canvas.draw()
     
