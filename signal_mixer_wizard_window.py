@@ -770,26 +770,13 @@ class SignalMixerWizardWindow(QMainWindow):
         self._log_message(f"Template: {template}")
         self._log_message(f"Expression Label: {next_label} (for referencing in other expressions)")
         
-        # Get available channels for context
-        available_channels = []
-        
-        # Add input channels A and B
-        channel_a = self.channel_a_combo.currentData()
-        channel_b = self.channel_b_combo.currentData()
-        if channel_a:
-            available_channels.append("A")
-        if channel_b:
-            available_channels.append("B")
-        
-        # Add existing mixed channels that have compatible dimensions
-        mixed_channels = self.manager.get_mixed_channels()
-        for channel in mixed_channels:
-            label = getattr(channel, 'step_table_label', None)
-            if label and self._is_channel_compatible_for_expression(channel, channel_a, channel_b):
-                available_channels.append(label)
+        # Get available channels with shape validation
+        available_channels = self._get_available_channels_with_validation()
         
         if available_channels:
-            self._log_message(f"Available for expressions: {', '.join(available_channels)}")
+            self._log_message(f"Available Channels: {', '.join(available_channels)}")
+        else:
+            self._log_message("Available Channels: None (select channels A and B first)")
         
         # Provide simple usage tip based on template type
         self._log_simple_template_tip(template)
@@ -963,7 +950,7 @@ class SignalMixerWizardWindow(QMainWindow):
 
     def _is_channel_compatible_for_expression(self, mixed_channel, channel_a, channel_b):
         """Check if a mixed channel has compatible dimensions with channels A and B for expressions"""
-        if not mixed_channel or not mixed_channel.ydata:
+        if not mixed_channel or mixed_channel.ydata is None or len(mixed_channel.ydata) == 0:
             return False
         
         # If neither A nor B is selected, can't determine compatibility
@@ -973,13 +960,13 @@ class SignalMixerWizardWindow(QMainWindow):
         mixed_length = len(mixed_channel.ydata)
         
         # Check compatibility with channel A
-        if channel_a and channel_a.ydata:
+        if channel_a and channel_a.ydata is not None and len(channel_a.ydata) > 0:
             a_length = len(channel_a.ydata)
             if mixed_length == a_length:
                 return True
         
         # Check compatibility with channel B
-        if channel_b and channel_b.ydata:
+        if channel_b and channel_b.ydata is not None and len(channel_b.ydata) > 0:
             b_length = len(channel_b.ydata)
             if mixed_length == b_length:
                 return True
@@ -1005,6 +992,76 @@ class SignalMixerWizardWindow(QMainWindow):
                 return hasattr(mixed_channel, 'xdata') and mixed_channel.xdata is not None
         
         return False
+
+    def _get_available_channels_with_validation(self):
+        """Get available channels with shape validation - only channels with compatible dimensions"""
+        available_channels = []
+        
+        # Get input channels A and B
+        channel_a = self.channel_a_combo.currentData()
+        channel_b = self.channel_b_combo.currentData()
+        
+        # Determine the reference shape for validation
+        reference_shape = None
+        reference_channel = None
+        
+        # Use channel A as reference if available
+        if channel_a and channel_a.ydata is not None and len(channel_a.ydata) > 0:
+            reference_shape = len(channel_a.ydata)
+            reference_channel = channel_a
+            available_channels.append("A")
+        
+        # Check channel B compatibility
+        if channel_b and channel_b.ydata is not None and len(channel_b.ydata) > 0:
+            if reference_shape is None:
+                # B becomes the reference if A is not available
+                reference_shape = len(channel_b.ydata)
+                reference_channel = channel_b
+                available_channels.append("B")
+            elif len(channel_b.ydata) == reference_shape:
+                # B is compatible with A
+                available_channels.append("B")
+            else:
+                # B has different shape - check if alignment can make them compatible
+                if self._can_channels_be_aligned(channel_a, channel_b):
+                    available_channels.append("B")
+        
+        # Add mixed channels that have compatible dimensions
+        mixed_channels = self.manager.get_mixed_channels()
+        for channel in mixed_channels:
+            label = getattr(channel, 'step_table_label', None)
+            if label and channel.ydata is not None and len(channel.ydata) > 0:
+                if reference_shape is None:
+                    # First valid channel becomes reference
+                    reference_shape = len(channel.ydata)
+                    available_channels.append(label)
+                elif len(channel.ydata) == reference_shape:
+                    # Compatible with reference shape
+                    available_channels.append(label)
+                elif reference_channel and self._can_channels_be_aligned(reference_channel, channel):
+                    # Can be aligned with reference
+                    available_channels.append(label)
+        
+        return available_channels
+
+    def _can_channels_be_aligned(self, channel_a, channel_b):
+        """Check if two channels can be aligned using current alignment settings"""
+        if not channel_a or not channel_b:
+            return False
+        
+        # Get current alignment configuration
+        alignment_config = self._get_alignment_config()
+        if not alignment_config:
+            return False
+        
+        # Use the manager's validation method to check if alignment is possible
+        try:
+            is_valid, _, _ = self.manager.validate_channels_for_mixing_with_alignment(
+                channel_a, channel_b, alignment_config
+            )
+            return is_valid
+        except Exception:
+            return False
 
     def _generate_descriptive_name(self, template, label):
         """Generate a descriptive channel name based on the template"""
