@@ -522,16 +522,16 @@ class SignalMixerWizardWindow(QMainWindow):
             else:
                 # Fallback to basic templates if mixer folder not available
                 print("[SignalMixerWizard] Mixer folder not available, using fallback templates")
-                self.all_operations = {
-                    "Arithmetic": [
-                        ("A + B", "add"),
-                        ("A - B", "subtract"), 
-                        ("A * B", "multiply"),
-                        ("A / B", "divide"),
-                    ],
-                    "Expression": [
-                        ("A**2 + B**2", "expression"),
-                        ("sqrt(A**2 + B**2)", "expression"),
+        self.all_operations = {
+            "Arithmetic": [
+                ("A + B", "add"),
+                ("A - B", "subtract"), 
+                ("A * B", "multiply"),
+                ("A / B", "divide"),
+            ],
+            "Expression": [
+                ("A**2 + B**2", "expression"),
+                ("sqrt(A**2 + B**2)", "expression"),
                     ]
                 }
                 
@@ -544,8 +544,8 @@ class SignalMixerWizardWindow(QMainWindow):
                     ("A - B", "subtract"), 
                     ("A * B", "multiply"),
                     ("A / B", "divide"),
-                ]
-            }
+            ]
+        }
         
         # Initially show all operations
         self._filter_operations("All")
@@ -1274,7 +1274,7 @@ class SignalMixerWizardWindow(QMainWindow):
         
         # Keep create button enabled based only on having expression and channel name
         if hasattr(self, 'create_btn') and hasattr(self, 'expression_input') and hasattr(self, 'channel_name_input'):
-            has_expression = bool(self.expression_input.text().strip())
+                has_expression = bool(self.expression_input.text().strip())
             has_channel_name = bool(self.channel_name_input.text().strip())
             self.create_btn.setEnabled(has_expression and has_channel_name)
     
@@ -1341,7 +1341,7 @@ class SignalMixerWizardWindow(QMainWindow):
                 if has_time_a:
                     start_time = float(channel_a.xdata[0]) if len(channel_a.xdata) > 0 else 0.0
                     end_time = float(channel_a.xdata[-1]) if len(channel_a.xdata) > 0 else 10.0
-                else:
+        else:
                     start_time = float(channel_b.xdata[0]) if len(channel_b.xdata) > 0 else 0.0
                     end_time = float(channel_b.xdata[-1]) if len(channel_b.xdata) > 0 else 10.0
                 
@@ -1425,7 +1425,7 @@ class SignalMixerWizardWindow(QMainWindow):
         
         if channel_a and channel_a.ydata is not None and self._is_channel_visible_in_table("A"):
             if use_x_axis_data:
-                x_data = channel_a.xdata if channel_a.xdata is not None else np.arange(len(channel_a.ydata))
+            x_data = channel_a.xdata if channel_a.xdata is not None else np.arange(len(channel_a.ydata))
             else:
                 x_data = np.arange(len(channel_a.ydata))
             channel_a_line, = self.ax.plot(x_data, channel_a.ydata, 'b-', alpha=0.7, linewidth=1,
@@ -1435,7 +1435,7 @@ class SignalMixerWizardWindow(QMainWindow):
         
         if channel_b and channel_b.ydata is not None and self._is_channel_visible_in_table("B"):
             if use_x_axis_data:
-                x_data = channel_b.xdata if channel_b.xdata is not None else np.arange(len(channel_b.ydata))
+            x_data = channel_b.xdata if channel_b.xdata is not None else np.arange(len(channel_b.ydata))
             else:
                 x_data = np.arange(len(channel_b.ydata))
             channel_b_line, = self.ax.plot(x_data, channel_b.ydata, 'r-', alpha=0.7, linewidth=1,
@@ -1455,7 +1455,7 @@ class SignalMixerWizardWindow(QMainWindow):
                 
                 if is_visible:
                     if use_x_axis_data:
-                        x_data = channel.xdata if channel.xdata is not None else np.arange(len(channel.ydata))
+                    x_data = channel.xdata if channel.xdata is not None else np.arange(len(channel.ydata))
                     else:
                         x_data = np.arange(len(channel.ydata))
                     color = colors[i % len(colors)]

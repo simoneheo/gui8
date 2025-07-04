@@ -28,27 +28,64 @@ class BlandAltmanComparison(BaseComparison):
             'type': float,
             'default': 0.95,
             'min': 0.8,
-            'max': 0.99,
-            'description': 'Confidence level for limits of agreement'
+            'max': 0.999,
+            'description': 'Confidence Level',
+            'tooltip': 'Confidence level for limits of agreement and statistical tests (0.95 = 95%)'
+        },
+        'agreement_multiplier': {
+            'type': float,
+            'default': 1.96,
+            'min': 1.0,
+            'max': 3.0,
+            'description': 'Agreement Multiplier',
+            'tooltip': 'Multiplier for limits of agreement\n1.96 = 95% limits\n2.58 = 99% limits\n1.64 = 90% limits'
         },
         'percentage_difference': {
             'type': bool,
             'default': False,
-            'description': 'Calculate percentage differences instead of absolute differences'
+            'description': 'Percentage Differences',
+            'tooltip': 'Calculate percentage differences instead of absolute differences\nUseful when data magnitude varies widely'
         },
         'log_transform': {
             'type': bool,
             'default': False,
-            'description': 'Apply log transformation before analysis (for proportional bias)'
+            'description': 'Log Transform',
+            'tooltip': 'Apply log transformation before analysis\nUseful for data with proportional bias or skewed distributions'
+        },
+        'show_ci': {
+            'type': bool,
+            'default': True,
+            'description': 'Show Confidence Intervals',
+            'tooltip': 'Display confidence intervals for bias and limits of agreement'
+        },
+        'test_proportional_bias': {
+            'type': bool,
+            'default': True,
+            'description': 'Test Proportional Bias',
+            'tooltip': 'Test whether bias changes with measurement magnitude\nImportant for method comparison studies'
         },
         'outlier_detection': {
             'type': bool,
             'default': True,
-            'description': 'Detect and report outliers beyond limits of agreement'
+            'description': 'Detect Outliers',
+            'tooltip': 'Identify points outside limits of agreement as potential outliers'
+        },
+        'bias_test': {
+            'type': bool,
+            'default': True,
+            'description': 'Test Fixed Bias',
+            'tooltip': 'Test whether the mean bias is significantly different from zero'
+        },
+        'normality_test': {
+            'type': bool,
+            'default': False,
+            'description': 'Test Normality',
+            'tooltip': 'Test whether differences are normally distributed\nBland-Altman assumes normal distribution of differences'
         }
     }
     
     output_types = ["agreement_statistics", "limits_of_agreement", "bias_analysis", "plot_data"]
+    plot_type = "bland_altman"
     
     def compare(self, ref_data: np.ndarray, test_data: np.ndarray, 
                 ref_time: Optional[np.ndarray] = None, 
@@ -275,4 +312,107 @@ class BlandAltmanComparison(BaseComparison):
         else:
             interpretations['overall'] = "Good agreement between methods"
         
-        return interpretations 
+        return interpretations
+    
+    def generate_plot_content(self, ax, ref_data: np.ndarray, test_data: np.ndarray, 
+                             plot_config: Dict[str, Any] = None, 
+                             checked_pairs: list = None) -> None:
+        """Generate Bland-Altman plot content"""
+        try:
+            ref_data = np.array(ref_data)
+            test_data = np.array(test_data)
+            
+            if len(ref_data) == 0:
+                ax.text(0.5, 0.5, 'No valid data for Bland-Altman analysis', 
+                       ha='center', va='center', transform=ax.transAxes)
+                return
+            
+            # Calculate means and differences
+            means = (ref_data + test_data) / 2
+            differences = test_data - ref_data
+            
+            # Calculate bias and limits of agreement
+            bias = np.mean(differences)
+            diff_std = np.std(differences, ddof=1)
+            
+            # Get agreement multiplier from config or use default
+            agreement_multiplier = plot_config.get('agreement_limits', 1.96) if plot_config else 1.96
+            
+            # Calculate limits
+            lower_limit = bias - agreement_multiplier * diff_std
+            upper_limit = bias + agreement_multiplier * diff_std
+            
+            # Add horizontal lines for bias and limits
+            ax.axhline(bias, color='blue', linestyle='-', linewidth=2, label=f'Bias ({bias:.3f})')
+            ax.axhline(upper_limit, color='red', linestyle='--', linewidth=2, 
+                      label=f'Upper LoA ({upper_limit:.3f})')
+            ax.axhline(lower_limit, color='red', linestyle='--', linewidth=2, 
+                      label=f'Lower LoA ({lower_limit:.3f})')
+            
+            # Add confidence intervals if requested
+            show_ci = plot_config.get('confidence_interval', True) if plot_config else True
+            if show_ci:
+                n = len(differences)
+                confidence_level = plot_config.get('confidence_level', 0.95) if plot_config else 0.95
+                
+                # Calculate confidence intervals
+                bias_se = diff_std / np.sqrt(n)
+                t_critical = stats.t.ppf((1 + confidence_level) / 2, n - 1)
+                
+                # Bias CI
+                bias_ci_lower = bias - t_critical * bias_se
+                bias_ci_upper = bias + t_critical * bias_se
+                
+                # Limits CI (approximate)
+                se_limits = diff_std * np.sqrt(3/n)
+                lower_limit_ci_lower = lower_limit - t_critical * se_limits
+                lower_limit_ci_upper = lower_limit + t_critical * se_limits
+                upper_limit_ci_lower = upper_limit - t_critical * se_limits
+                upper_limit_ci_upper = upper_limit + t_critical * se_limits
+                
+                # Plot confidence intervals as shaded areas
+                x_range = [np.min(means), np.max(means)]
+                ax.fill_between(x_range, [bias_ci_lower, bias_ci_lower], [bias_ci_upper, bias_ci_upper], 
+                               alpha=0.2, color='blue', label=f'{confidence_level*100:.0f}% CI (Bias)')
+                ax.fill_between(x_range, [lower_limit_ci_lower, lower_limit_ci_lower], 
+                               [lower_limit_ci_upper, lower_limit_ci_upper], 
+                               alpha=0.2, color='red')
+                ax.fill_between(x_range, [upper_limit_ci_lower, upper_limit_ci_lower], 
+                               [upper_limit_ci_upper, upper_limit_ci_upper], 
+                               alpha=0.2, color='red')
+            
+            # Test for proportional bias if requested
+            proportional_bias = plot_config.get('proportional_bias', False) if plot_config else False
+            if proportional_bias:
+                try:
+                    slope, intercept, r_value, p_value, std_err = stats.linregress(means, differences)
+                    if p_value < 0.05:  # Significant proportional bias
+                        x_line = np.array([np.min(means), np.max(means)])
+                        y_line = slope * x_line + intercept
+                        ax.plot(x_line, y_line, 'g-', linewidth=2, alpha=0.7,
+                               label=f'Proportional bias (p={p_value:.3f})')
+                except:
+                    pass
+            
+            # Add zero line for reference
+            ax.axhline(0, color='black', linestyle='-', alpha=0.3, linewidth=1)
+            
+            # Add statistics text
+            stats_text = f'Bias = {bias:.4f}\n'
+            stats_text += f'SD = {diff_std:.4f}\n'
+            stats_text += f'LoA = [{lower_limit:.3f}, {upper_limit:.3f}]\n'
+            stats_text += f'n = {len(ref_data):,} points'
+            
+            ax.text(0.05, 0.95, stats_text, transform=ax.transAxes, 
+                   bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
+                   verticalalignment='top', fontsize=10)
+            
+            ax.set_xlabel('Mean of Reference and Test')
+            ax.set_ylabel('Difference (Test - Reference)')
+            ax.set_title('Bland-Altman Plot')
+            ax.legend(loc='upper right')
+            
+        except Exception as e:
+            print(f"[BlandAltman] Error in plot generation: {e}")
+            ax.text(0.5, 0.5, f'Error generating Bland-Altman plot: {str(e)}', 
+                   ha='center', va='center', transform=ax.transAxes) 

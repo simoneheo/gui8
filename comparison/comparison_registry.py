@@ -115,6 +115,8 @@ class ComparisonRegistry:
             'version': method_class.version,
             'parameters': method_class.parameters,
             'output_types': method_class.output_types,
+            'plot_type': getattr(method_class, 'plot_type', 'scatter'),
+            'requires_pairs': getattr(method_class, 'requires_pairs', False),
             'class_name': method_class.__name__,
             'module': method_class.__module__
         }

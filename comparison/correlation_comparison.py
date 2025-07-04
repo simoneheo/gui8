@@ -26,32 +26,63 @@ class CorrelationComparison(BaseComparison):
     parameters = {
         'correlation_type': {
             'type': str,
-            'default': 'all',
+            'default': 'pearson',
             'choices': ['pearson', 'spearman', 'kendall', 'all'],
-            'description': 'Type of correlation to compute'
+            'description': 'Correlation Type',
+            'tooltip': 'Pearson: Linear relationships\nSpearman: Monotonic relationships\nKendall: Rank-based, robust to outliers\nAll: Compute all three types'
         },
-        'significance_level': {
+        'confidence_level': {
             'type': float,
-            'default': 0.05,
-            'min': 0.001,
-            'max': 0.5,
-            'description': 'Significance level for hypothesis testing'
+            'default': 0.95,
+            'min': 0.8,
+            'max': 0.999,
+            'description': 'Confidence Level',
+            'tooltip': 'Confidence level for statistical tests and confidence intervals (0.8 = 80%, 0.95 = 95%, etc.)'
         },
         'bootstrap_samples': {
             'type': int,
             'default': 1000,
             'min': 100,
             'max': 10000,
-            'description': 'Number of bootstrap samples for confidence intervals'
+            'description': 'Bootstrap Samples',
+            'tooltip': 'Number of bootstrap resamples for robust confidence intervals\nMore samples = more accurate but slower'
         },
         'compute_confidence_intervals': {
             'type': bool,
             'default': True,
-            'description': 'Whether to compute bootstrap confidence intervals'
+            'description': 'Show Confidence Intervals',
+            'tooltip': 'Calculate and display confidence intervals using bootstrap resampling'
+        },
+        'remove_outliers': {
+            'type': bool,
+            'default': False,
+            'description': 'Remove Outliers',
+            'tooltip': 'Automatically detect and remove outliers before correlation analysis'
+        },
+        'outlier_method': {
+            'type': str,
+            'default': 'iqr',
+            'choices': ['iqr', 'zscore', 'modified_zscore'],
+            'description': 'Outlier Method',
+            'tooltip': 'IQR: Interquartile range method (1.5×IQR)\nZ-score: Standard deviation method (>3σ)\nModified Z-score: Median-based robust method'
+        },
+        'partial_correlation': {
+            'type': bool,
+            'default': False,
+            'description': 'Partial Correlation',
+            'tooltip': 'Calculate partial correlation controlling for linear trends (removes time effects)'
+        },
+        'detrend_method': {
+            'type': str,
+            'default': 'none',
+            'choices': ['none', 'linear', 'polynomial'],
+            'description': 'Detrend Method',
+            'tooltip': 'None: No detrending\nLinear: Remove linear trends\nPolynomial: Remove polynomial trends (degree 2)'
         }
     }
     
     output_types = ["correlation_statistics", "significance_tests", "confidence_intervals", "plot_data"]
+    plot_type = "pearson"
     
     def compare(self, ref_data: np.ndarray, test_data: np.ndarray, 
                 ref_time: Optional[np.ndarray] = None, 
@@ -87,25 +118,25 @@ class CorrelationComparison(BaseComparison):
         }
         
         correlation_type = self.params['correlation_type']
-        significance_level = self.params['significance_level']
+        confidence_level = self.params['confidence_level']
         
         # Compute correlations based on type
         if correlation_type in ['pearson', 'all']:
             results['correlations']['pearson'] = self._compute_pearson(ref_clean, test_clean)
             results['significance_tests']['pearson'] = self._test_significance(
-                results['correlations']['pearson'], len(ref_clean), significance_level
+                results['correlations']['pearson'], len(ref_clean), 1 - confidence_level
             )
         
         if correlation_type in ['spearman', 'all']:
             results['correlations']['spearman'] = self._compute_spearman(ref_clean, test_clean)
             results['significance_tests']['spearman'] = self._test_significance(
-                results['correlations']['spearman'], len(ref_clean), significance_level
+                results['correlations']['spearman'], len(ref_clean), 1 - confidence_level
             )
         
         if correlation_type in ['kendall', 'all']:
             results['correlations']['kendall'] = self._compute_kendall(ref_clean, test_clean)
             results['significance_tests']['kendall'] = self._test_significance(
-                results['correlations']['kendall'], len(ref_clean), significance_level
+                results['correlations']['kendall'], len(ref_clean), 1 - confidence_level
             )
         
         # Compute confidence intervals if requested
@@ -211,7 +242,7 @@ class CorrelationComparison(BaseComparison):
                                     correlation_type: str) -> Dict[str, Dict[str, float]]:
         """Compute bootstrap confidence intervals for correlations."""
         n_bootstrap = self.params['bootstrap_samples']
-        confidence_level = 1 - self.params['significance_level']
+        confidence_level = 1 - self.params['confidence_level']
         
         intervals = {}
         
@@ -317,4 +348,107 @@ class CorrelationComparison(BaseComparison):
             
             interpretations[method] = f"{strength} {direction} correlation (r = {coefficient:.3f})"
         
-        return interpretations 
+        return interpretations
+    
+    def generate_plot_content(self, ax, ref_data: np.ndarray, test_data: np.ndarray, 
+                             plot_config: Dict[str, Any] = None, 
+                             checked_pairs: list = None) -> None:
+        """Generate correlation plot content - scatter plot with correlation statistics"""
+        try:
+            ref_data = np.array(ref_data)
+            test_data = np.array(test_data)
+            
+            if len(ref_data) == 0:
+                ax.text(0.5, 0.5, 'No valid data for correlation analysis', 
+                       ha='center', va='center', transform=ax.transAxes)
+                return
+            
+            # Get correlation type from config
+            correlation_type = plot_config.get('correlation_type', 'pearson') if plot_config else 'pearson'
+            confidence_level = plot_config.get('confidence_level', 0.95) if plot_config else 0.95
+            
+            # Add 1:1 line
+            min_val = min(np.min(ref_data), np.min(test_data))
+            max_val = max(np.max(ref_data), np.max(test_data))
+            ax.plot([min_val, max_val], [min_val, max_val], 'k--', alpha=0.8, 
+                   linewidth=2, label='1:1 line')
+            
+            # Calculate correlation statistics
+            stats_text = ""
+            try:
+                if correlation_type == 'pearson' or correlation_type == 'all':
+                    r_value, p_value = stats.pearsonr(ref_data, test_data)
+                    r2_value = r_value ** 2
+                    stats_text += f'Pearson r = {r_value:.4f}\n'
+                    stats_text += f'R² = {r2_value:.4f}\n'
+                    if not np.isnan(p_value):
+                        stats_text += f'p = {p_value:.2e}\n'
+                    
+                    # Add confidence interval if available
+                    if not np.isnan(p_value) and len(ref_data) > 3:
+                        n = len(ref_data)
+                        # Fisher z-transformation for confidence interval
+                        z_r = 0.5 * np.log((1 + r_value) / (1 - r_value))
+                        se_z = 1 / np.sqrt(n - 3)
+                        alpha = 1 - confidence_level
+                        z_critical = stats.norm.ppf(1 - alpha/2)
+                        
+                        z_lower = z_r - z_critical * se_z
+                        z_upper = z_r + z_critical * se_z
+                        
+                        # Transform back to correlation scale
+                        r_lower = (np.exp(2 * z_lower) - 1) / (np.exp(2 * z_lower) + 1)
+                        r_upper = (np.exp(2 * z_upper) - 1) / (np.exp(2 * z_upper) + 1)
+                        
+                        stats_text += f'{confidence_level*100:.0f}% CI: [{r_lower:.3f}, {r_upper:.3f}]\n'
+                    
+                    # Add best fit line
+                    try:
+                        slope, intercept, _, _, _ = stats.linregress(ref_data, test_data)
+                        if not np.isnan(slope):
+                            x_line = np.array([min_val, max_val])
+                            y_line = slope * x_line + intercept
+                            ax.plot(x_line, y_line, 'r-', linewidth=2, alpha=0.7,
+                                   label=f'Best fit: y = {slope:.3f}x + {intercept:.3f}')
+                    except:
+                        pass
+                
+                # Add other correlation types if requested
+                if correlation_type == 'all':
+                    try:
+                        spearman_r, spearman_p = stats.spearmanr(ref_data, test_data)
+                        kendall_tau, kendall_p = stats.kendalltau(ref_data, test_data)
+                        stats_text += f'Spearman ρ = {spearman_r:.4f}\n'
+                        stats_text += f'Kendall τ = {kendall_tau:.4f}\n'
+                    except:
+                        pass
+                elif correlation_type == 'spearman':
+                    r_value, p_value = stats.spearmanr(ref_data, test_data)
+                    stats_text += f'Spearman ρ = {r_value:.4f}\n'
+                    if not np.isnan(p_value):
+                        stats_text += f'p = {p_value:.2e}\n'
+                elif correlation_type == 'kendall':
+                    r_value, p_value = stats.kendalltau(ref_data, test_data)
+                    stats_text += f'Kendall τ = {r_value:.4f}\n'
+                    if not np.isnan(p_value):
+                        stats_text += f'p = {p_value:.2e}\n'
+                
+                stats_text += f'n = {len(ref_data):,} points'
+                
+            except Exception as e:
+                stats_text = f'Correlation calculation error: {str(e)}'
+            
+            # Add statistics text box
+            ax.text(0.05, 0.95, stats_text, transform=ax.transAxes, 
+                   bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
+                   verticalalignment='top', fontsize=10)
+            
+            ax.set_xlabel('Reference')
+            ax.set_ylabel('Test')
+            ax.set_title(f'{correlation_type.title()} Correlation Analysis')
+            ax.legend(loc='lower right')
+            
+        except Exception as e:
+            print(f"[Correlation] Error in plot generation: {e}")
+            ax.text(0.5, 0.5, f'Error generating correlation plot: {str(e)}', 
+                   ha='center', va='center', transform=ax.transAxes) 

@@ -684,7 +684,7 @@ class SignalMixerWizardManager:
                     expression_mixer.parse_expression_for_mixer(formula)) or \
                    any(func in formula_clean for func in ['sqrt', 'sin', 'cos', 'abs', 'exp', 'log', 'mean', 'sum', 'np.', '**', '(', ')']):
                     print(f"[SignalMixerWizardManager] Using ExpressionMixer for formula: {formula}")
-                    return expression_mixer
+                return expression_mixer
         except (KeyError, AttributeError):
             print("[SignalMixerWizardManager] ExpressionMixer not available, using fallback logic")
         

@@ -2,7 +2,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QComboBox, 
     QCheckBox, QTextEdit, QGroupBox, QFormLayout, QSplitter, QApplication, QListWidget, QSpinBox,
     QTableWidget, QRadioButton, QTableWidgetItem, QDialog, QStackedWidget, QMessageBox, QScrollArea,
-    QTabWidget, QFrame, QButtonGroup
+    QTabWidget, QFrame, QButtonGroup, QDoubleSpinBox
 )
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QTextCursor, QIntValidator, QColor, QFont
@@ -45,11 +45,11 @@ class ComparisonWizardWindow(QMainWindow):
         self._connect_signals()
         self._populate_file_combos()
         
-        # Initialize parameter table
-        self._populate_parameters()
-        
         # Initialize with available data
         self._validate_initialization()
+        
+        # Auto-populate alignment parameters with initial selection
+        self._auto_populate_alignment_parameters()
         
     def _validate_initialization(self):
         """Validate that the wizard has necessary data to function"""
@@ -73,8 +73,8 @@ class ComparisonWizardWindow(QMainWindow):
         print(f"[ComparisonWizard] {message}")
 
     def _init_ui(self):
-        """Initialize the user interface following process/mixer wizard patterns"""
-        self.setWindowTitle("📊 Data Comparison Wizard")
+        """Initialize the user interface following mixer wizard patterns"""
+        self.setWindowTitle("Data Comparison Wizard")
         self.setMinimumSize(1200, 800)
         
         # Create central widget
@@ -82,7 +82,7 @@ class ComparisonWizardWindow(QMainWindow):
         self.setCentralWidget(central_widget)
         
         # Main layout
-        main_layout = QHBoxLayout(central_widget)
+        main_layout = QVBoxLayout(central_widget)
         main_layout.setContentsMargins(10, 10, 10, 10)
         main_layout.setSpacing(10)
         
@@ -94,49 +94,55 @@ class ComparisonWizardWindow(QMainWindow):
         self._build_left_panel(main_splitter)
         self._build_right_panel(main_splitter)
         
-        # Set splitter proportions (30% left, 70% right)
-        main_splitter.setSizes([360, 840])
+        # Set splitter proportions to match mixer wizard
+        main_splitter.setSizes([400, 800])
         
     def _build_left_panel(self, main_splitter):
-        """Build the left control panel following process wizard patterns"""
-        # Create left panel container
-        left_panel = QWidget()
-        left_layout = QVBoxLayout(left_panel)
+        """Build the left panel with two-column layout like mixer wizard"""
+        self.left_panel = QWidget()
+        left_layout = QVBoxLayout(self.left_panel)
         left_layout.setContentsMargins(5, 5, 5, 5)
         left_layout.setSpacing(10)
         
-        # Add title
-        title_label = QLabel("🔧 Comparison Setup")
-        title_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #2c3e50; padding: 5px;")
-        left_layout.addWidget(title_label)
+        # Create horizontal splitter for two columns (like mixer wizard)
+        left_splitter = QSplitter(Qt.Horizontal)
+        left_layout.addWidget(left_splitter)
         
-        # Create scrollable area for controls
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll_widget = QWidget()
-        scroll_layout = QVBoxLayout(scroll_widget)
-        scroll_layout.setContentsMargins(5, 5, 5, 5)
-        scroll_layout.setSpacing(10)
+        # Create left and right column widgets
+        left_col_widget = QWidget()
+        left_col_layout = QVBoxLayout(left_col_widget)
+        left_col_layout.setContentsMargins(5, 5, 5, 5)
+        left_col_layout.setSpacing(10)
         
-        # Add control groups
-        self._create_channel_selection_group(scroll_layout)
-        self._create_comparison_method_group(scroll_layout)
-        self._create_parameters_group(scroll_layout)
-        self._create_pairs_management_group(scroll_layout)
-        self._create_action_buttons_group(scroll_layout)
+        right_col_widget = QWidget()
+        right_col_layout = QVBoxLayout(right_col_widget)
+        right_col_layout.setContentsMargins(5, 5, 5, 5)
+        right_col_layout.setSpacing(10)
         
-        # Add stretch to push everything to top
-        scroll_layout.addStretch()
+        # Left column: Comparison Methods and Method-specific Controls
+        self._create_comparison_method_group(left_col_layout)
+        self._create_method_controls_group(left_col_layout)
         
-        scroll_area.setWidget(scroll_widget)
-        left_layout.addWidget(scroll_area)
+        # Add stretch to left column
+        left_col_layout.addStretch()
         
-        main_splitter.addWidget(left_panel)
+        # Right column: Channel Selection, Alignment, and Actions
+        self._create_channel_selection_group(right_col_layout)
+        self._create_alignment_group(right_col_layout)
+        self._create_pairs_management_group(right_col_layout)
+        
+        # Add stretch to right column
+        right_col_layout.addStretch()
+        
+        # Add columns to splitter
+        left_splitter.addWidget(left_col_widget)
+        left_splitter.addWidget(right_col_widget)
+        
+        main_splitter.addWidget(self.left_panel)
         
     def _create_channel_selection_group(self, layout):
         """Create channel selection group box"""
-        group = QGroupBox("📁 Channel Selection")
+        group = QGroupBox("Channel Selection")
         group.setStyleSheet("QGroupBox { font-weight: bold; }")
         group_layout = QFormLayout(group)
         
@@ -155,192 +161,473 @@ class ComparisonWizardWindow(QMainWindow):
         self.test_channel_combo = QComboBox()
         group_layout.addRow("Test Channel:", self.test_channel_combo)
         
-        # Pair name
-        self.pair_name_input = QLineEdit()
-        self.pair_name_input.setPlaceholderText("Auto-generated from channels")
-        group_layout.addRow("Pair Name:", self.pair_name_input)
-        
         layout.addWidget(group)
         
     def _create_comparison_method_group(self, layout):
         """Create comparison method selection group"""
-        group = QGroupBox("🔬 Comparison Method")
+        group = QGroupBox("Comparison Method")
         group.setStyleSheet("QGroupBox { font-weight: bold; }")
         group_layout = QVBoxLayout(group)
         
-        # Method list (similar to process wizard filter list)
+        # Method list (populated from comparison registry)
         self.method_list = QListWidget()
         self.method_list.setMaximumHeight(120)
-        methods = ["Correlation Analysis", "Bland-Altman", "Residual Analysis", "Statistical Tests"]
-        self.method_list.addItems(methods)
-        self.method_list.setCurrentRow(0)  # Select first method by default
+        self._populate_comparison_methods()
         group_layout.addWidget(self.method_list)
-        
-        # Alignment mode
-        alignment_layout = QHBoxLayout()
-        alignment_layout.addWidget(QLabel("Alignment:"))
-        self.alignment_mode_combo = QComboBox()
-        self.alignment_mode_combo.addItems(["Index-Based", "Time-Based"])
-        alignment_layout.addWidget(self.alignment_mode_combo)
-        group_layout.addLayout(alignment_layout)
         
         layout.addWidget(group)
         
-    def _create_parameters_group(self, layout):
-        """Create parameters configuration group"""
-        group = QGroupBox("⚙️ Parameters")
+    def _populate_comparison_methods(self):
+        """Populate comparison methods from the registry"""
+        try:
+            if hasattr(self, 'comparison_manager') and self.comparison_manager:
+                methods = self.comparison_manager.get_available_comparison_methods()
+            else:
+                # Fallback methods
+                methods = ["Correlation Analysis", "Bland-Altman Analysis", "Residual Analysis", "Statistical Tests"]
+            
+            self.method_list.clear()
+            self.method_list.addItems(methods)
+            if methods:
+                self.method_list.setCurrentRow(0)  # Select first method by default
+                
+        except Exception as e:
+            print(f"[ComparisonWizard] Error populating methods: {e}")
+            # Fallback
+            methods = ["Correlation Analysis", "Bland-Altman Analysis", "Residual Analysis", "Statistical Tests"]
+            self.method_list.clear()
+            self.method_list.addItems(methods)
+            if methods:
+                self.method_list.setCurrentRow(0)
+        
+    def _create_method_controls_group(self, layout):
+        """Create method-specific controls group (replaces parameter table)"""
+        group = QGroupBox("Method Options")
+        group.setStyleSheet("QGroupBox { font-weight: bold; }")
+        self.method_controls_layout = QVBoxLayout(group)
+        
+        # Create stacked widget to hold different method controls
+        self.method_controls_stack = QStackedWidget()
+        self.method_controls_layout.addWidget(self.method_controls_stack)
+        
+        # Create controls for each method
+        self._create_dynamic_method_controls()
+        
+        # Add Generate Plot button
+        self.generate_plot_button = QPushButton("📊 Generate Plot")
+        self.generate_plot_button.clicked.connect(self._on_generate_plot)
+        self.method_controls_layout.addWidget(self.generate_plot_button)
+        
+        layout.addWidget(group)
+        
+    def _create_dynamic_method_controls(self):
+        """Create method controls dynamically from comparison registry"""
+        try:
+            if hasattr(self, 'comparison_manager') and self.comparison_manager:
+                try:
+                    methods = self.comparison_manager.get_available_comparison_methods()
+                    print(f"[ComparisonWizard] Creating dynamic controls for methods: {methods}")
+                    
+                    for method_name in methods:
+                        try:
+                            method_info = self.comparison_manager.get_method_info(method_name)
+                            widget = self._create_controls_for_method(method_name, method_info)
+                            self.method_controls_stack.addWidget(widget)
+                            print(f"[ComparisonWizard] Created controls for {method_name}")
+                        except Exception as method_error:
+                            print(f"[ComparisonWizard] Error creating controls for {method_name}: {method_error}")
+                            # Create a simple placeholder widget for this method
+                            placeholder = QWidget()
+                            placeholder_layout = QVBoxLayout(placeholder)
+                            placeholder_layout.addWidget(QLabel(f"Error loading controls for {method_name}"))
+                            self.method_controls_stack.addWidget(placeholder)
+                    
+                    if len(methods) == 0:
+                        print("[ComparisonWizard] No methods available, using static controls")
+                        self._create_static_method_controls()
+                        
+                except Exception as manager_error:
+                    print(f"[ComparisonWizard] Error accessing comparison manager: {manager_error}")
+                    self._create_static_method_controls()
+            else:
+                print("[ComparisonWizard] No comparison manager available, using static controls")
+                # Fallback: create static controls
+                self._create_static_method_controls()
+                
+        except Exception as e:
+            print(f"[ComparisonWizard] Error creating dynamic controls: {e}")
+            import traceback
+            traceback.print_exc()
+            # Fallback to static controls
+            self._create_static_method_controls()
+            
+    def _create_static_method_controls(self):
+        """Create static method controls as fallback"""
+        self._create_correlation_controls()
+        self._create_bland_altman_controls()
+        self._create_residual_controls()
+        self._create_statistical_controls()
+        
+    def _create_controls_for_method(self, method_name, method_info):
+        """Create controls for a specific comparison method"""
+        widget = QWidget()
+        layout = QFormLayout(widget)
+        
+        parameters = method_info.get('parameters', {})
+        
+        # Store parameter controls for later retrieval
+        if not hasattr(self, '_method_controls'):
+            self._method_controls = {}
+        self._method_controls[method_name] = {}
+        
+        for param_name, param_config in parameters.items():
+            control = self._create_parameter_control(param_name, param_config)
+            if control:
+                # Use the shorter description for the label
+                label_text = param_config.get('description', param_name)
+                layout.addRow(label_text + ":", control)
+                self._method_controls[method_name][param_name] = control
+        
+        # If no parameters, show a message
+        if not parameters:
+            label = QLabel("No configurable parameters for this method")
+            label.setStyleSheet("color: #666; font-style: italic;")
+            layout.addWidget(label)
+        
+        return widget
+    
+    def _create_parameter_control(self, param_name, param_config):
+        """Create appropriate control widget for a parameter"""
+        param_type = param_config.get('type', str)
+        default_value = param_config.get('default')
+        choices = param_config.get('choices')
+        tooltip = param_config.get('tooltip', '')
+        
+        control = None
+        
+        if choices:
+            # Dropdown for choices
+            control = QComboBox()
+            control.addItems([str(choice) for choice in choices])
+            if default_value in choices:
+                control.setCurrentText(str(default_value))
+                
+        elif param_type == bool:
+            # Checkbox for boolean
+            control = QCheckBox()
+            control.setChecked(bool(default_value))
+            
+        elif param_type == int:
+            # Spinbox for integer
+            control = QSpinBox()
+            control.setRange(param_config.get('min', -999999), param_config.get('max', 999999))
+            control.setValue(int(default_value) if default_value is not None else 0)
+            
+        elif param_type == float:
+            # Double spinbox for float
+            control = QDoubleSpinBox()
+            control.setRange(param_config.get('min', -999999.0), param_config.get('max', 999999.0))
+            control.setDecimals(4)
+            control.setValue(float(default_value) if default_value is not None else 0.0)
+            
+        else:
+            # Line edit for string or unknown types
+            control = QLineEdit()
+            if default_value is not None:
+                control.setText(str(default_value))
+        
+        # Set tooltip if available
+        if control and tooltip:
+            control.setToolTip(tooltip)
+            
+        return control
+        
+    def _create_correlation_controls(self):
+        """Create controls for correlation analysis"""
+        widget = QWidget()
+        layout = QFormLayout(widget)
+        
+        # Correlation type
+        self.corr_type_combo = QComboBox()
+        self.corr_type_combo.addItems(["pearson", "spearman", "kendall", "all"])
+        layout.addRow("Correlation Type:", self.corr_type_combo)
+        
+        # Confidence level
+        self.confidence_spin = QDoubleSpinBox()
+        self.confidence_spin.setRange(0.01, 0.99)
+        self.confidence_spin.setValue(0.95)
+        self.confidence_spin.setDecimals(2)
+        layout.addRow("Confidence Level:", self.confidence_spin)
+        
+        # Bootstrap samples
+        self.bootstrap_spin = QSpinBox()
+        self.bootstrap_spin.setRange(100, 10000)
+        self.bootstrap_spin.setValue(1000)
+        layout.addRow("Bootstrap Samples:", self.bootstrap_spin)
+        
+        self.method_controls_stack.addWidget(widget)
+        
+    def _create_bland_altman_controls(self):
+        """Create controls for Bland-Altman analysis"""
+        widget = QWidget()
+        layout = QFormLayout(widget)
+        
+        # Agreement limits
+        self.agreement_spin = QDoubleSpinBox()
+        self.agreement_spin.setRange(1.0, 3.0)
+        self.agreement_spin.setValue(1.96)
+        self.agreement_spin.setDecimals(2)
+        layout.addRow("Agreement Limits:", self.agreement_spin)
+        
+        # Show confidence intervals
+        self.show_ci_checkbox = QCheckBox()
+        self.show_ci_checkbox.setChecked(True)
+        layout.addRow("Show CI:", self.show_ci_checkbox)
+        
+        # Proportional bias
+        self.prop_bias_checkbox = QCheckBox()
+        self.prop_bias_checkbox.setChecked(False)
+        layout.addRow("Proportional Bias:", self.prop_bias_checkbox)
+        
+        self.method_controls_stack.addWidget(widget)
+        
+    def _create_residual_controls(self):
+        """Create controls for residual analysis"""
+        widget = QWidget()
+        layout = QFormLayout(widget)
+        
+        # Normality test
+        self.normality_combo = QComboBox()
+        self.normality_combo.addItems(["shapiro", "kstest", "jarque_bera"])
+        layout.addRow("Normality Test:", self.normality_combo)
+        
+        # Outlier detection
+        self.outlier_combo = QComboBox()
+        self.outlier_combo.addItems(["iqr", "zscore", "modified_zscore"])
+        layout.addRow("Outlier Detection:", self.outlier_combo)
+        
+        self.method_controls_stack.addWidget(widget)
+        
+    def _create_statistical_controls(self):
+        """Create controls for statistical tests"""
+        widget = QWidget()
+        layout = QFormLayout(widget)
+        
+        # Alpha level
+        self.alpha_spin = QDoubleSpinBox()
+        self.alpha_spin.setRange(0.001, 0.1)
+        self.alpha_spin.setValue(0.05)
+        self.alpha_spin.setDecimals(3)
+        layout.addRow("Alpha Level:", self.alpha_spin)
+        
+        # Test suite
+        self.test_suite_combo = QComboBox()
+        self.test_suite_combo.addItems(["basic", "comprehensive", "nonparametric"])
+        layout.addRow("Test Suite:", self.test_suite_combo)
+        
+        # Equal variance
+        self.equal_var_combo = QComboBox()
+        self.equal_var_combo.addItems(["assume_equal", "assume_unequal", "test"])
+        layout.addRow("Equal Variance:", self.equal_var_combo)
+        
+        # Normality assumption
+        self.normality_assume_combo = QComboBox()
+        self.normality_assume_combo.addItems(["assume_normal", "assume_nonnormal", "test"])
+        layout.addRow("Normality:", self.normality_assume_combo)
+        
+        self.method_controls_stack.addWidget(widget)
+        
+    def _create_alignment_group(self, layout):
+        """Create alignment controls group (like mixer wizard alignment section)"""
+        group = QGroupBox("Data Alignment")
         group.setStyleSheet("QGroupBox { font-weight: bold; }")
         group_layout = QVBoxLayout(group)
         
-        # Parameter table (similar to process wizard parameter table)
-        self.param_table = QTableWidget()
-        self.param_table.setColumnCount(2)
-        self.param_table.setHorizontalHeaderLabels(["Parameter", "Value"])
-        self.param_table.horizontalHeader().setStretchLastSection(True)
-        self.param_table.setMaximumHeight(200)
-        self.param_table.setAlternatingRowColors(True)
-        group_layout.addWidget(self.param_table)
+        # Alignment mode selection
+        mode_layout = QHBoxLayout()
+        mode_layout.addWidget(QLabel("Alignment Mode:"))
+        self.alignment_mode_combo = QComboBox()
+        self.alignment_mode_combo.addItems(["Index-Based", "Time-Based"])
+        self.alignment_mode_combo.currentTextChanged.connect(self._on_alignment_mode_changed)
+        mode_layout.addWidget(self.alignment_mode_combo)
+        group_layout.addLayout(mode_layout)
+        
+        # Index-based options
+        self.index_group = QGroupBox("Index Options")
+        index_layout = QFormLayout(self.index_group)
+        
+        # Start index
+        self.start_index_spin = QSpinBox()
+        self.start_index_spin.setRange(0, 999999)
+        self.start_index_spin.setValue(0)
+        index_layout.addRow("Start Index:", self.start_index_spin)
+        
+        # End index
+        self.end_index_spin = QSpinBox()
+        self.end_index_spin.setRange(0, 999999)
+        self.end_index_spin.setValue(500)
+        index_layout.addRow("End Index:", self.end_index_spin)
+        
+        # Index offset
+        self.index_offset_spin = QSpinBox()
+        self.index_offset_spin.setRange(-999999, 999999)
+        self.index_offset_spin.setValue(0)
+        self.index_offset_spin.setToolTip("Positive: shift test channel forward, Negative: shift reference channel forward")
+        index_layout.addRow("Offset:", self.index_offset_spin)
+        
+        group_layout.addWidget(self.index_group)
+        
+        # Time-based options
+        self.time_group = QGroupBox("Time Options")
+        time_layout = QFormLayout(self.time_group)
+        
+        # Start time
+        self.start_time_spin = QDoubleSpinBox()
+        self.start_time_spin.setRange(-999999.0, 999999.0)
+        self.start_time_spin.setValue(0.0)
+        self.start_time_spin.setDecimals(3)
+        time_layout.addRow("Start Time:", self.start_time_spin)
+        
+        # End time
+        self.end_time_spin = QDoubleSpinBox()
+        self.end_time_spin.setRange(-999999.0, 999999.0)
+        self.end_time_spin.setValue(10.0)
+        self.end_time_spin.setDecimals(3)
+        time_layout.addRow("End Time:", self.end_time_spin)
+        
+        # Time offset
+        self.time_offset_spin = QDoubleSpinBox()
+        self.time_offset_spin.setRange(-999999.0, 999999.0)
+        self.time_offset_spin.setValue(0.0)
+        self.time_offset_spin.setDecimals(3)
+        self.time_offset_spin.setToolTip("Time offset to apply to test channel")
+        time_layout.addRow("Time Offset:", self.time_offset_spin)
+        
+        # Interpolation method
+        self.interpolation_combo = QComboBox()
+        self.interpolation_combo.addItems(["linear", "nearest", "cubic"])
+        time_layout.addRow("Interpolation:", self.interpolation_combo)
+        
+        # Time resolution
+        self.round_to_spin = QDoubleSpinBox()
+        self.round_to_spin.setRange(0.0001, 10.0)
+        self.round_to_spin.setValue(1.0)
+        self.round_to_spin.setDecimals(4)
+        self.round_to_spin.setToolTip("Time resolution (smaller = more points)")
+        time_layout.addRow("Time Resolution:", self.round_to_spin)
+        
+        group_layout.addWidget(self.time_group)
+        
+        # Alignment status
+        self.alignment_status_label = QLabel("No alignment needed")
+        self.alignment_status_label.setStyleSheet("color: #666; font-size: 10px; padding: 5px;")
+        group_layout.addWidget(self.alignment_status_label)
+        
+        # Show/hide appropriate groups
+        self._on_alignment_mode_changed("Index-Based")
         
         layout.addWidget(group)
         
     def _create_pairs_management_group(self, layout):
-        """Create pairs management group (just the add button now)"""
-        group = QGroupBox("➕ Add Pair")
+        """Create pairs management group"""
+        group = QGroupBox("Add Pair")
         group.setStyleSheet("QGroupBox { font-weight: bold; }")
         group_layout = QVBoxLayout(group)
         
-        # Add pair button
-        self.add_pair_button = QPushButton("➕ Add Comparison Pair")
-        self.add_pair_button.setStyleSheet("""
-            QPushButton {
-                background-color: #27ae60;
-                color: white;
-                border: none;
-                padding: 12px 24px;
-                border-radius: 6px;
-                font-weight: bold;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background-color: #2ecc71;
-            }
-            QPushButton:pressed {
-                background-color: #229954;
-            }
-        """)
+        # Pair name input with label
+        name_layout = QHBoxLayout()
+        name_layout.addWidget(QLabel("Pair Name:"))
+        self.pair_name_input = QLineEdit()
+        self.pair_name_input.setPlaceholderText("Auto-generated from channels")
+        name_layout.addWidget(self.pair_name_input)
+        group_layout.addLayout(name_layout)
+        
+        # Add pair button (plot updates automatically when clicked)
+        self.add_pair_button = QPushButton("Add Comparison Pair")
         group_layout.addWidget(self.add_pair_button)
         
         layout.addWidget(group)
         
-    def _create_action_buttons_group(self, layout):
-        """Create action buttons group"""
-        group = QGroupBox("🚀 Actions")
-        group.setStyleSheet("QGroupBox { font-weight: bold; }")
-        group_layout = QVBoxLayout(group)
-        
-        # Generate plot button
-        self.generate_plot_button = QPushButton("📊 Generate Plot")
-        self.generate_plot_button.setEnabled(False)
-        self.generate_plot_button.setStyleSheet("""
-            QPushButton {
-                background-color: #3498db;
-                color: white;
-                border: none;
-                padding: 12px 24px;
-                border-radius: 6px;
-                font-weight: bold;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background-color: #5dade2;
-            }
-            QPushButton:pressed {
-                background-color: #2980b9;
-            }
-            QPushButton:disabled {
-                background-color: #bdc3c7;
-                color: #7f8c8d;
-            }
-        """)
-        group_layout.addWidget(self.generate_plot_button)
-        
-        layout.addWidget(group)
-        
     def _build_right_panel(self, main_splitter):
-        """Build the right results panel"""
-        # Create right panel container
-        right_panel = QWidget()
-        right_layout = QVBoxLayout(right_panel)
+        """Build the right panel with table at top and plot at bottom (like mixer wizard)"""
+        self.right_panel = QWidget()
+        right_layout = QVBoxLayout(self.right_panel)
         right_layout.setContentsMargins(5, 5, 5, 5)
         right_layout.setSpacing(10)
         
-        # Add title
-        title_label = QLabel("📈 Results & Visualization")
-        title_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #2c3e50; padding: 5px;")
-        right_layout.addWidget(title_label)
+        # Results table at the top (like mixer wizard)
+        self._build_results_table(right_layout)
         
-        # Active pairs table at the top
-        pairs_group = QGroupBox("📋 Active Comparison Pairs")
-        pairs_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-        pairs_layout = QVBoxLayout(pairs_group)
+        # Plot area at the bottom (like mixer wizard)
+        self._build_plot_area(right_layout)
         
-        # Active pairs table
+        main_splitter.addWidget(self.right_panel)
+        
+    def _build_results_table(self, layout):
+        """Build the results table showing active comparison pairs (like process wizard step table)"""
+        # Active pairs table header
+        layout.addWidget(QLabel("📋 Active Comparison Pairs:"))
+        
+        # Active pairs table (similar to process wizard step table)
         self.active_pair_table = QTableWidget()
-        self.active_pair_table.setColumnCount(5)
-        self.active_pair_table.setHorizontalHeaderLabels(["Show", "Pair Name", "Method", "Correlation", "Status"])
-        self.active_pair_table.horizontalHeader().setStretchLastSection(True)
-        self.active_pair_table.setMaximumHeight(150)
+        self.active_pair_table.setColumnCount(4)
+        self.active_pair_table.setHorizontalHeaderLabels(["Show", "Pair Name", "Style", "Status"])
+        
+        # Set column widths similar to process wizard
+        header = self.active_pair_table.horizontalHeader()
+        header.setStretchLastSection(True)
+        self.active_pair_table.setColumnWidth(0, 60)  # Show column
+        self.active_pair_table.setColumnWidth(1, 200)  # Pair name
+        self.active_pair_table.setColumnWidth(2, 80)   # Style column
+        
+        self.active_pair_table.setMaximumHeight(200)  # Match process wizard table height
         self.active_pair_table.setAlternatingRowColors(True)
         self.active_pair_table.setSelectionBehavior(QTableWidget.SelectRows)
-        pairs_layout.addWidget(self.active_pair_table)
+        self.active_pair_table.setShowGrid(True)
+        self.active_pair_table.setGridStyle(Qt.SolidLine)
         
-        # Pair management buttons
-        button_layout = QHBoxLayout()
-        self.delete_pair_button = QPushButton("🗑️ Delete")
-        self.delete_pair_button.setEnabled(False)
-        self.clear_all_button = QPushButton("🧹 Clear All")
+        # Style similar to process wizard
+        self.active_pair_table.setStyleSheet("""
+            QTableWidget {
+                gridline-color: #ddd;
+                background-color: white;
+                alternate-background-color: #f8f9fa;
+            }
+            QTableWidget::item {
+                padding: 4px;
+                border: none;
+            }
+            QTableWidget::item:selected {
+                background-color: #3498db;
+                color: white;
+            }
+            QHeaderView::section {
+                background-color: #ecf0f1;
+                padding: 4px;
+                border: 1px solid #bdc3c7;
+                font-weight: bold;
+            }
+        """)
         
-        button_layout.addWidget(self.delete_pair_button)
-        button_layout.addWidget(self.clear_all_button)
-        button_layout.addStretch()
-        pairs_layout.addLayout(button_layout)
+        layout.addWidget(self.active_pair_table)
         
-        right_layout.addWidget(pairs_group)
-        
-        # Create tabbed interface for results
+    def _build_plot_area(self, layout):
+        """Build the plot area (like mixer wizard plot area)"""
+        # Create tabbed interface for different views (keeping existing functionality)
         self.tab_widget = QTabWidget()
-        right_layout.addWidget(self.tab_widget)
+        layout.addWidget(self.tab_widget)
         
         # Add tabs
         self._create_comparison_plot_tab()
         self._create_statistics_tab()
         self._create_results_tab()
         
-        main_splitter.addWidget(right_panel)
-        
     def _create_comparison_plot_tab(self):
         """Create the comparison plot tab"""
         plot_tab = QWidget()
         plot_layout = QVBoxLayout(plot_tab)
         
-        # Plot controls (simplified - removed plot type dropdown)
-        controls_frame = QFrame()
-        controls_frame.setFrameStyle(QFrame.StyledPanel)
-        controls_layout = QHBoxLayout(controls_frame)
-        
-        # Plot options
-        self.show_grid_checkbox = QCheckBox("Grid")
-        self.show_grid_checkbox.setChecked(True)
-        self.show_legend_checkbox = QCheckBox("Legend")
-        self.show_legend_checkbox.setChecked(True)
-        
-        controls_layout.addWidget(self.show_grid_checkbox)
-        controls_layout.addWidget(self.show_legend_checkbox)
-        controls_layout.addStretch()
-        
-        plot_layout.addWidget(controls_frame)
-        
-        # Matplotlib canvas
+        # Matplotlib canvas (like process wizard - no plot controls)
         self.figure = plt.figure(figsize=(10, 6))
         self.canvas = FigureCanvas(self.figure)
         self.toolbar = NavigationToolbar(self.canvas, self)
@@ -464,161 +751,62 @@ class ComparisonWizardWindow(QMainWindow):
             self.test_file_combo.setCurrentIndex(0)
 
     def _connect_signals(self):
-        """Connect UI signals following process wizard patterns"""
-        # File and channel selection
+        """Connect UI signals to handlers"""
+        # File selection signals
         self.ref_file_combo.currentTextChanged.connect(self._on_ref_file_changed)
         self.test_file_combo.currentTextChanged.connect(self._on_test_file_changed)
+        
+        # Channel selection signals
         self.ref_channel_combo.currentTextChanged.connect(self._update_default_pair_name)
         self.test_channel_combo.currentTextChanged.connect(self._update_default_pair_name)
+        self.ref_channel_combo.currentTextChanged.connect(self._on_channel_selection_changed)
+        self.test_channel_combo.currentTextChanged.connect(self._on_channel_selection_changed)
         
-        # Method selection
+        # Method selection signal
         self.method_list.itemClicked.connect(self._on_method_selected)
+        
+        # Pair management signals
+        self.add_pair_button.clicked.connect(self._on_add_pair)
+        
+        # Alignment signals
         self.alignment_mode_combo.currentTextChanged.connect(self._on_alignment_mode_changed)
         
-        # Parameter table changes
-        self.param_table.itemChanged.connect(self._trigger_plot_update)
-        
-        # Pair management
-        self.add_pair_button.clicked.connect(self._on_add_pair)
-        self.delete_pair_button.clicked.connect(self._on_delete_selected_pair)
-        self.clear_all_button.clicked.connect(self._on_clear_all_pairs)
-        
-        # Table selection
-        self.active_pair_table.itemSelectionChanged.connect(self._on_pair_selection_changed)
-        
-        # Plot controls
-        self.show_grid_checkbox.stateChanged.connect(self._trigger_plot_update)
-        self.show_legend_checkbox.stateChanged.connect(self._trigger_plot_update)
-        
-        # Action buttons
-        self.generate_plot_button.clicked.connect(self._on_generate_plot)
+        # Update timer for delayed operations
+        self.update_timer = QTimer()
+        self.update_timer.setSingleShot(True)
+        self.update_timer.timeout.connect(self._delayed_update)
+        self.update_delay = 500  # 500ms delay
         
     def _on_alignment_mode_changed(self, text):
-        """Handle alignment mode changes"""
-        # Update parameter table based on alignment mode
-        self._populate_parameters()
+        """Handle alignment mode changes (like mixer wizard)"""
+        print(f"[ComparisonWizard] Alignment mode changed to: {text}")
+        
+        # Show/hide appropriate alignment groups
+        if text == "Index-Based":
+            self.index_group.show()
+            self.time_group.hide()
+        else:  # Time-Based
+            self.index_group.hide()
+            self.time_group.show()
+        
+        # Auto-populate alignment parameters for the new mode
+        self._auto_populate_alignment_parameters()
+        
+        # No automatic plot update - only when Generate Plot button is clicked
         
     def _on_method_selected(self, item):
-        """Handle comparison method selection (similar to process wizard filter selection)"""
+        """Handle method selection change"""
         if not item:
             return
             
+        # Update method controls stack to show controls for selected method
         method_name = item.text()
-        print(f"[ComparisonWizard] Selected method: {method_name}")
+        method_index = self.method_list.row(item)
         
-        # Update parameter table based on selected method
-        self._populate_parameters()
+        if method_index < self.method_controls_stack.count():
+            self.method_controls_stack.setCurrentIndex(method_index)
         
-        # Trigger plot update when method changes
-        self._trigger_plot_update()
-        
-    def _populate_parameters(self):
-        """Populate parameter table based on selected method and alignment mode"""
-        # Get selected method
-        current_item = self.method_list.currentItem()
-        if not current_item:
-            return
-            
-        method_name = current_item.text()
-        alignment_mode = self.alignment_mode_combo.currentText()
-        
-        # Clear existing parameters
-        self.param_table.setRowCount(0)
-        
-        # Add parameters based on method and alignment
-        parameters = self._get_method_parameters(method_name, alignment_mode)
-        
-        self.param_table.setRowCount(len(parameters))
-        for i, (param_name, param_config) in enumerate(parameters.items()):
-            self.param_table.setItem(i, 0, QTableWidgetItem(param_name))
-            
-            # Create appropriate widget based on parameter type
-            if isinstance(param_config, dict) and 'choices' in param_config:
-                # Create dropdown for parameters with choices
-                combo = QComboBox()
-                combo.addItems(param_config['choices'])
-                combo.setCurrentText(str(param_config['default']))
-                combo.currentTextChanged.connect(self._trigger_plot_update)
-                self.param_table.setCellWidget(i, 1, combo)
-            else:
-                # Create regular text item for other parameters
-                value = param_config['default'] if isinstance(param_config, dict) else param_config
-                item = QTableWidgetItem(str(value))
-                self.param_table.setItem(i, 1, item)
-                # Note: itemChanged signal is connected at table level, not item level
-            
-    def _get_method_parameters(self, method_name, alignment_mode):
-        """Get parameters for the selected method and alignment mode"""
-        parameters = {}
-        
-        # Add alignment-specific parameters
-        if alignment_mode == "Index-Based":
-            parameters["Start Index"] = {"default": "0", "type": "int"}
-            parameters["End Index"] = {"default": "500", "type": "int"}
-            parameters["Offset"] = {"default": "0", "type": "int"}
-        else:  # Time-Based
-            parameters["Start Time"] = {"default": "0.0", "type": "float"}
-            parameters["End Time"] = {"default": "10.0", "type": "float"}
-            parameters["Time Resolution"] = {"default": "0.01", "type": "float"}
-            parameters["Interpolation"] = {
-                "default": "linear",
-                "choices": ["linear", "cubic", "nearest", "quadratic"],
-                "type": "str"
-            }
-        
-        # Add method-specific parameters
-        if method_name == "Correlation Analysis":
-            parameters["Correlation Type"] = {
-                "default": "pearson",
-                "choices": ["pearson", "spearman", "kendall", "all"],
-                "type": "str"
-            }
-            parameters["Confidence Level"] = {"default": "0.95", "type": "float"}
-            parameters["Bootstrap Samples"] = {"default": "1000", "type": "int"}
-        elif method_name == "Bland-Altman":
-            parameters["Agreement Limits"] = {"default": "1.96", "type": "float"}
-            parameters["Show CI"] = {
-                "default": "true",
-                "choices": ["true", "false"],
-                "type": "bool"
-            }
-            parameters["Proportional Bias"] = {
-                "default": "false",
-                "choices": ["true", "false"],
-                "type": "bool"
-            }
-        elif method_name == "Residual Analysis":
-            parameters["Normality Test"] = {
-                "default": "shapiro",
-                "choices": ["shapiro", "kstest", "jarque_bera"],
-                "type": "str"
-            }
-            parameters["Outlier Detection"] = {
-                "default": "iqr",
-                "choices": ["iqr", "zscore", "modified_zscore"],
-                "type": "str"
-            }
-        elif method_name == "Statistical Tests":
-            parameters["Alpha Level"] = {"default": "0.05", "type": "float"}
-            parameters["Test Suite"] = {
-                "default": "comprehensive",
-                "choices": ["basic", "comprehensive", "nonparametric"],
-                "type": "str"
-            }
-            parameters["Equal Variance"] = {
-                "default": "test",
-                "choices": ["assume_equal", "assume_unequal", "test"],
-                "type": "str"
-            }
-            parameters["Normality"] = {
-                "default": "test",
-                "choices": ["assume_normal", "assume_nonnormal", "test"],
-                "type": "str"
-            }
-            
-        return parameters
-        
-
+        # No automatic plot update - only when Generate Plot button is clicked
         
     def _trigger_plot_update(self):
         """Trigger a delayed plot update for performance"""
@@ -635,54 +823,116 @@ class ComparisonWizardWindow(QMainWindow):
             self.comparison_manager._update_cumulative_display()
             
     def _on_generate_plot(self):
-        """Handle generate plot button click"""
-        checked_pairs = self.get_checked_pairs()
-        if not checked_pairs:
-            QMessageBox.warning(self, "No Pairs Selected", 
-                              "Please select at least one pair to generate a plot.")
-            return
+        """Generate plot when button is clicked using the selected comparison method"""
+        if hasattr(self, 'comparison_manager') and self.comparison_manager:
+            # Update status for all pairs
+            for row in range(self.active_pair_table.rowCount()):
+                status_item = self.active_pair_table.item(row, 3)
+                if status_item:
+                    status_item.setText("Generating...")
             
-        # Get plot configuration
-        plot_config = self._get_plot_config()
-        
-        # Emit signal to manager
-        self.plot_generated.emit(plot_config)
+            # Get the current method and its parameters
+            current_item = self.method_list.currentItem()
+            if current_item:
+                method_name = current_item.text()
+                method_params = self._get_method_parameters_from_controls()
+                
+                # Update all pairs with the current method and parameters
+                for pair in self.active_pairs:
+                    pair['comparison_method'] = method_name
+                    pair['method_parameters'] = method_params
+                
+                print(f"[ComparisonWizard] Generating plot with method: {method_name}")
+                print(f"[ComparisonWizard] Method parameters: {method_params}")
+            
+            # Get proper plot configuration from the window
+            plot_config = self._get_plot_config()
+            
+            # Generate the plot using the proper plot generation method
+            self.comparison_manager._on_plot_generated(plot_config)
+            
+            # Update status after generation
+            for row in range(self.active_pair_table.rowCount()):
+                status_item = self.active_pair_table.item(row, 3)
+                if status_item:
+                    status_item.setText("Complete")
         
     def _get_plot_config(self):
         """Get current plot configuration"""
-        return {
-            'show_grid': self.show_grid_checkbox.isChecked(),
-            'show_legend': self.show_legend_checkbox.isChecked(),
+        config = {
+            'show_grid': True,  # Default to True since checkbox removed
+            'show_legend': False,  # Remove legend from plot
             'checked_pairs': self.get_checked_pairs()
         }
         
-    def _on_clear_all_pairs(self):
-        """Clear all comparison pairs"""
-        if not self.active_pairs:
-            return
+        # Add method-specific parameters based on current method selection
+        current_item = self.method_list.currentItem()
+        if current_item:
+            method_name = current_item.text()
+            method_params = self._get_method_parameters_from_controls()
             
-        reply = QMessageBox.question(
-            self, 
-            "Clear All Pairs", 
-            f"Are you sure you want to remove all {len(self.active_pairs)} comparison pairs?\n\n"
-            "This action cannot be undone.",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
+            # Get plot type dynamically from comparison manager
+            plot_type = 'scatter'  # default
+            if hasattr(self, 'comparison_manager') and self.comparison_manager:
+                method_info = self.comparison_manager.get_method_info(method_name)
+                if method_info:
+                    plot_type = method_info.get('plot_type', 'scatter')
+            else:
+                # Fallback mapping for when comparison manager is not available
+                method_to_plot_type = {
+                    'Correlation Analysis': 'pearson',
+                    'Bland-Altman Analysis': 'bland_altman', 
+                    'Residual Analysis': 'residual',
+                    'Statistical Tests': 'scatter',
+                    'Lin\'s CCC': 'ccc',
+                    'RMSE': 'rmse',
+                    'Intraclass Correlation Coefficient': 'icc',
+                    'Cross-Correlation': 'cross_correlation',
+                    'Dynamic Time Warping': 'dtw'
+                }
+                plot_type = method_to_plot_type.get(method_name, 'scatter')
+            config['plot_type'] = plot_type
+            
+            # Add method-specific parameters
+            if plot_type == 'bland_altman':
+                config['confidence_interval'] = method_params.get('show_ci', True)
+                config['agreement_limits'] = method_params.get('agreement_limits', 1.96)
+                config['proportional_bias'] = method_params.get('proportional_bias', False)
+            elif plot_type == 'scatter' or plot_type == 'pearson':
+                config['confidence_level'] = method_params.get('confidence_level', 0.95)
+                config['correlation_type'] = method_params.get('correlation_type', 'pearson')
+            elif plot_type == 'residual':
+                config['normality_test'] = method_params.get('normality_test', 'shapiro')
+                config['outlier_detection'] = method_params.get('outlier_detection', 'iqr')
+            elif plot_type == 'ccc':
+                config['confidence_level'] = method_params.get('confidence_level', 0.95)
+                config['bias_correction'] = method_params.get('bias_correction', True)
+            elif plot_type == 'rmse':
+                config['normalize_by'] = method_params.get('normalize_by', 'none')
+                config['percentage_error'] = method_params.get('percentage_error', False)
+            elif plot_type == 'icc':
+                config['icc_type'] = method_params.get('icc_type', 'ICC(2,1)')
+                config['confidence_level'] = method_params.get('confidence_level', 0.95)
+            elif plot_type == 'cross_correlation':
+                config['max_lag'] = method_params.get('max_lag', 50)
+                config['normalize'] = method_params.get('normalize', True)
+            elif plot_type == 'dtw':
+                config['distance_metric'] = method_params.get('distance_metric', 'euclidean')
+                config['window_type'] = method_params.get('window_type', 'sakoe_chiba')
         
-        if reply == QMessageBox.Yes:
-            self.active_pairs.clear()
-            self._update_active_pairs_table()
-            self.pair_deleted.emit()
-            self._log_state_change(f"Cleared all comparison pairs")
+        return config
 
     def _on_ref_file_changed(self, filename):
         """Update reference channel combo when file changes"""
         self._update_channel_combo(filename, self.ref_channel_combo)
+        # Auto-populate alignment parameters after channel list changes
+        self._auto_populate_alignment_parameters()
         
     def _on_test_file_changed(self, filename):
         """Update test channel combo when file changes"""
         self._update_channel_combo(filename, self.test_channel_combo)
+        # Auto-populate alignment parameters after channel list changes
+        self._auto_populate_alignment_parameters()
         
     def _update_channel_combo(self, filename, combo):
         """Update a channel combo box with channels from selected file"""
@@ -729,20 +979,180 @@ class ComparisonWizardWindow(QMainWindow):
         except Exception as e:
             print(f"[ComparisonWizard] Error updating default pair name: {str(e)}")
     
-    def _on_pair_selection_changed(self):
-        """Handle selection changes in the active pairs table"""
+    def _on_channel_selection_changed(self):
+        """Handle channel selection changes to auto-populate alignment parameters"""
         try:
-            selected_rows = set()
-            for item in self.active_pair_table.selectedItems():
-                if item:
-                    selected_rows.add(item.row())
-            
-            # Enable delete button only if exactly one row is selected
-            self.delete_pair_button.setEnabled(len(selected_rows) == 1)
-            
+            self._auto_populate_alignment_parameters()
         except Exception as e:
-            print(f"[ComparisonWizard] Error handling pair selection: {str(e)}")
-            self.delete_pair_button.setEnabled(False)
+            print(f"[ComparisonWizard] Error auto-populating alignment parameters: {str(e)}")
+    
+    def _auto_populate_alignment_parameters(self):
+        """Auto-populate alignment parameters based on selected channels"""
+        # Get selected channels
+        ref_channel = self._get_selected_channel('ref')
+        test_channel = self._get_selected_channel('test')
+        
+        if not ref_channel or not test_channel:
+            # Update status label
+            self.alignment_status_label.setText("Select both channels to configure alignment")
+            self.alignment_status_label.setStyleSheet("color: #666; font-size: 10px; padding: 5px;")
+            return
+        
+        # Always reset offsets to 0 (as requested)
+        self.index_offset_spin.setValue(0)
+        self.time_offset_spin.setValue(0.0)
+        
+        # Get alignment mode
+        alignment_mode = self.alignment_mode_combo.currentText()
+        
+        if alignment_mode == "Index-Based":
+            self._auto_populate_index_parameters(ref_channel, test_channel)
+        else:  # Time-Based
+            self._auto_populate_time_parameters(ref_channel, test_channel)
+    
+    def _get_selected_channel(self, channel_type):
+        """Get the selected channel object (ref or test)"""
+        if channel_type == 'ref':
+            filename = self.ref_file_combo.currentText()
+            channel_name = self.ref_channel_combo.currentText()
+        else:  # test
+            filename = self.test_file_combo.currentText()
+            channel_name = self.test_channel_combo.currentText()
+        
+        if not filename or not channel_name:
+            return None
+        
+        # Find file by filename
+        if not self.file_manager or not self.channel_manager:
+            return None
+            
+        file_info = None
+        for f in self.file_manager.get_all_files():
+            if f.filename == filename:
+                file_info = f
+                break
+        
+        if not file_info:
+            return None
+        
+        # Get channels for this file using file_id
+        channels = self.channel_manager.get_channels_by_file(file_info.file_id)
+        
+        # Find matching channel by legend_label or channel_id
+        for channel in channels:
+            name = channel.legend_label or channel.channel_id
+            if name == channel_name:
+                return channel
+        return None
+    
+    def _auto_populate_index_parameters(self, ref_channel, test_channel):
+        """Auto-populate index-based alignment parameters"""
+        try:
+            # Get data lengths
+            ref_length = len(ref_channel.ydata) if ref_channel.ydata is not None else 0
+            test_length = len(test_channel.ydata) if test_channel.ydata is not None else 0
+            
+            if ref_length == 0 or test_length == 0:
+                self.alignment_status_label.setText("Selected channels have no data")
+                self.alignment_status_label.setStyleSheet("color: #d32f2f; font-size: 10px; padding: 5px;")
+                return
+            
+            # Calculate optimal range
+            start_index = 0  # Always start from 0
+            end_index = min(ref_length - 1, test_length - 1)  # End at the shortest channel's last index
+            
+            # Update spin boxes
+            self.start_index_spin.setValue(start_index)
+            self.end_index_spin.setValue(end_index)
+            
+            # Update maximum values for the spin boxes
+            max_index = min(ref_length - 1, test_length - 1)
+            self.start_index_spin.setMaximum(max_index)
+            self.end_index_spin.setMaximum(max_index)
+            
+            # Update status
+            if ref_length == test_length:
+                self.alignment_status_label.setText(f"✓ Channels aligned (length: {ref_length})")
+                self.alignment_status_label.setStyleSheet("color: #2e7d32; font-size: 10px; padding: 5px;")
+            else:
+                self.alignment_status_label.setText(f"⚠ Length mismatch - Ref: {ref_length}, Test: {test_length}")
+                self.alignment_status_label.setStyleSheet("color: #f57c00; font-size: 10px; padding: 5px;")
+                
+        except Exception as e:
+            print(f"[ComparisonWizard] Error auto-populating index parameters: {str(e)}")
+            self.alignment_status_label.setText("Error configuring index alignment")
+            self.alignment_status_label.setStyleSheet("color: #d32f2f; font-size: 10px; padding: 5px;")
+    
+    def _auto_populate_time_parameters(self, ref_channel, test_channel):
+        """Auto-populate time-based alignment parameters"""
+        try:
+            # Check if channels have time data
+            ref_has_time = hasattr(ref_channel, 'xdata') and ref_channel.xdata is not None and len(ref_channel.xdata) > 0
+            test_has_time = hasattr(test_channel, 'xdata') and test_channel.xdata is not None and len(test_channel.xdata) > 0
+            
+            if ref_has_time and test_has_time:
+                # Both channels have time data
+                ref_start = float(ref_channel.xdata[0])
+                ref_end = float(ref_channel.xdata[-1])
+                test_start = float(test_channel.xdata[0])
+                test_end = float(test_channel.xdata[-1])
+                
+                # Calculate overlap region
+                overlap_start = max(ref_start, test_start)
+                overlap_end = min(ref_end, test_end)
+                
+                if overlap_start < overlap_end:
+                    # Valid overlap exists
+                    self.start_time_spin.setValue(overlap_start)
+                    self.end_time_spin.setValue(overlap_end)
+                    
+                    # Update ranges
+                    min_time = min(ref_start, test_start)
+                    max_time = max(ref_end, test_end)
+                    self.start_time_spin.setRange(min_time, max_time)
+                    self.end_time_spin.setRange(min_time, max_time)
+                    
+                    # Update status
+                    self.alignment_status_label.setText(f"✓ Time overlap: {overlap_start:.3f}s to {overlap_end:.3f}s")
+                    self.alignment_status_label.setStyleSheet("color: #2e7d32; font-size: 10px; padding: 5px;")
+                else:
+                    # No overlap
+                    self.alignment_status_label.setText("⚠ No time overlap between channels")
+                    self.alignment_status_label.setStyleSheet("color: #f57c00; font-size: 10px; padding: 5px;")
+                    
+            elif ref_has_time or test_has_time:
+                # Only one channel has time data - use its range
+                if ref_has_time:
+                    start_time = float(ref_channel.xdata[0])
+                    end_time = float(ref_channel.xdata[-1])
+                    channel_name = "reference"
+                else:
+                    start_time = float(test_channel.xdata[0])
+                    end_time = float(test_channel.xdata[-1])
+                    channel_name = "test"
+                
+                self.start_time_spin.setValue(start_time)
+                self.end_time_spin.setValue(end_time)
+                self.start_time_spin.setRange(start_time, end_time)
+                self.end_time_spin.setRange(start_time, end_time)
+                
+                # Update status
+                self.alignment_status_label.setText(f"ℹ Using {channel_name} channel time range")
+                self.alignment_status_label.setStyleSheet("color: #1976d2; font-size: 10px; padding: 5px;")
+                
+            else:
+                # Neither channel has time data
+                self.alignment_status_label.setText("⚠ No time data - will create from indices")
+                self.alignment_status_label.setStyleSheet("color: #f57c00; font-size: 10px; padding: 5px;")
+                
+                # Set default time range
+                self.start_time_spin.setValue(0.0)
+                self.end_time_spin.setValue(10.0)
+                
+        except Exception as e:
+            print(f"[ComparisonWizard] Error auto-populating time parameters: {str(e)}")
+            self.alignment_status_label.setText("Error configuring time alignment")
+            self.alignment_status_label.setStyleSheet("color: #d32f2f; font-size: 10px; padding: 5px;")
     
     def _on_add_pair(self):
         """Add a new comparison pair"""
@@ -756,159 +1166,123 @@ class ComparisonWizardWindow(QMainWindow):
             self.pair_name_input.clear()
             self._update_default_pair_name()
     
-    def _on_delete_selected_pair(self):
-        """Delete the selected pair from the table"""
-        try:
-            selected_rows = set()
-            for item in self.active_pair_table.selectedItems():
-                if item:
-                    selected_rows.add(item.row())
-            
-            if len(selected_rows) != 1:
-                QMessageBox.warning(self, "Selection Error", "Please select exactly one pair to delete.")
-                return
-            
-            selected_row = list(selected_rows)[0]
-            pair_name_item = self.active_pair_table.item(selected_row, 1)
-            
-            if not pair_name_item:
-                QMessageBox.warning(self, "Delete Error", "Could not identify the selected pair.")
-                return
-            
-            pair_name = pair_name_item.text()
-            
-            # Find and remove the pair from active_pairs list
-            pair_index = -1
-            for i, pair in enumerate(self.active_pairs):
-                if pair['name'] == pair_name:
-                    pair_index = i
-                    break
-            
-            if pair_index >= 0:
-                # Confirm deletion
-                reply = QMessageBox.question(
-                    self, 
-                    "Confirm Delete", 
-                    f"Are you sure you want to delete the pair:\n\n'{pair_name}'?\n\nThis action cannot be undone.",
-                    QMessageBox.Yes | QMessageBox.No,
-                    QMessageBox.No
-                )
-                
-                if reply == QMessageBox.Yes:
-                    # Remove the pair
-                    self.active_pairs.pop(pair_index)
-                    self._update_active_pairs_table()
-                    self.pair_deleted.emit()
-                    
-                    print(f"[ComparisonWizard] Deleted pair: {pair_name}")
-            else:
-                QMessageBox.warning(self, "Delete Error", f"Could not find pair '{pair_name}' in the active pairs list.")
-                
-        except Exception as e:
-            print(f"[ComparisonWizard] Error deleting selected pair: {str(e)}")
-            QMessageBox.critical(self, "Delete Error", f"An error occurred while deleting the pair:\n\n{str(e)}")
-            
     def _get_current_pair_config(self):
-        """Get current pair configuration from UI"""
+        """Get configuration for current pair selection"""
+        # Validate inputs
         ref_file = self.ref_file_combo.currentText()
-        ref_channel = self.ref_channel_combo.currentText()
         test_file = self.test_file_combo.currentText()
+        ref_channel = self.ref_channel_combo.currentText()
         test_channel = self.test_channel_combo.currentText()
-        pair_name = self.pair_name_input.text().strip()
         
-        if not all([ref_file, ref_channel, test_file, test_channel]):
-            QMessageBox.warning(self, "Warning", "Please select both reference and test channels.")
+        if not all([ref_file, test_file, ref_channel, test_channel]):
+            QMessageBox.warning(self, "Incomplete Selection", 
+                              "Please select both reference and test files and channels.")
             return None
             
+        # Get pair name
+        pair_name = self.pair_name_input.text().strip()
         if not pair_name:
-            # Use placeholder text as default, or generate if placeholder is also empty
             pair_name = self.pair_name_input.placeholderText() or f"{ref_channel} vs {test_channel}"
             
-        # Get selected comparison method
-        method_item = self.method_list.currentItem()
-        method_name = method_item.text() if method_item else "Correlation Analysis"
+        # Get current method (method doesn't matter for adding pairs, only for plot generation)
+        current_item = self.method_list.currentItem()
+        method_name = current_item.text() if current_item else "Correlation Analysis"
         
-        config = {
+        # Get alignment configuration
+        alignment_config = self._get_alignment_config()
+        
+        # Create pair config
+        pair_config = {
             'name': pair_name,
             'ref_file': ref_file,
-            'ref_channel': ref_channel,
             'test_file': test_file,
+            'ref_channel': ref_channel,
             'test_channel': test_channel,
-            'comparison_method': method_name,
-            'alignment_mode': 'index' if self.alignment_mode_combo.currentText() == "Index-Based" else 'time',
-            'alignment_config': self._get_alignment_config(),
-            'method_parameters': self._get_method_parameters_from_table()
+            'comparison_method': method_name,  # Stored but not used until plot generation
+            'alignment_config': alignment_config,
+            'method_parameters': {},  # Will be filled during plot generation
+            'marker_type': None,  # Will be set in _update_active_pairs_table
+            'marker_color': None   # Will be set in _update_active_pairs_table
         }
         
-        return config
+        return pair_config
         
     def _get_alignment_config(self):
-        """Get alignment configuration from parameter table"""
+        """Get alignment configuration from alignment controls"""
         config = {}
         
-        # Extract parameters from the parameter table
-        for row in range(self.param_table.rowCount()):
-            param_name_item = self.param_table.item(row, 0)
-            if not param_name_item:
-                continue
-                
-            param_name = param_name_item.text()
-            
-            # Get parameter value from either combo box or table item
-            widget = self.param_table.cellWidget(row, 1)
-            if widget and isinstance(widget, QComboBox):
-                # Parameter with dropdown
-                param_value = widget.currentText()
-            else:
-                # Regular text parameter
-                param_value_item = self.param_table.item(row, 1)
-                param_value = param_value_item.text() if param_value_item else ""
-            
-            # Convert parameter names to config keys
-            if param_name == "Start Index":
-                config['start_index'] = int(param_value) if param_value.isdigit() else 0
-            elif param_name == "End Index":
-                config['end_index'] = int(param_value) if param_value.isdigit() else 500
-            elif param_name == "Offset":
-                config['offset'] = int(param_value) if param_value.lstrip('-').isdigit() else 0
-            elif param_name == "Start Time":
-                config['start_time'] = float(param_value) if param_value.replace('.', '').isdigit() else 0.0
-            elif param_name == "End Time":
-                config['end_time'] = float(param_value) if param_value.replace('.', '').isdigit() else 10.0
-            elif param_name == "Time Resolution":
-                config['round_to'] = float(param_value) if param_value.replace('.', '').isdigit() else 0.01
-            elif param_name == "Interpolation":
-                config['interpolation'] = param_value
+        if self.alignment_mode_combo.currentText() == "Index-Based":
+            config['start_index'] = self.start_index_spin.value()
+            config['end_index'] = self.end_index_spin.value()
+            config['offset'] = self.index_offset_spin.value()
+        else:  # Time-Based
+            config['start_time'] = self.start_time_spin.value()
+            config['end_time'] = self.end_time_spin.value()
+            config['round_to'] = self.round_to_spin.value()
+            config['interpolation'] = self.interpolation_combo.currentText()
+            config['time_offset'] = self.time_offset_spin.value()
                     
         return config
         
-    def _get_method_parameters_from_table(self):
-        """Extract method-specific parameters from the parameter table"""
+    def _get_method_parameters_from_controls(self):
+        """Extract method-specific parameters from method controls"""
         parameters = {}
         
-        for row in range(self.param_table.rowCount()):
-            param_name_item = self.param_table.item(row, 0)
-            if not param_name_item:
-                continue
-                
-            param_name = param_name_item.text()
+        # Get current method
+        current_item = self.method_list.currentItem()
+        if not current_item:
+            return parameters
             
-            # Skip alignment parameters, only get method-specific ones
-            if param_name in ["Start Index", "End Index", "Offset", 
-                            "Start Time", "End Time", "Time Resolution", "Interpolation"]:
-                continue
-            
-            # Get parameter value from either combo box or table item
-            widget = self.param_table.cellWidget(row, 1)
-            if widget and isinstance(widget, QComboBox):
-                # Parameter with dropdown
-                param_value = widget.currentText()
-            else:
-                # Regular text parameter
-                param_value_item = self.param_table.item(row, 1)
-                param_value = param_value_item.text() if param_value_item else ""
-            
-            parameters[param_name] = param_value
+        method_name = current_item.text()
+        
+        # Try to get parameters from dynamic controls first
+        if hasattr(self, '_method_controls') and method_name in self._method_controls:
+            for param_name, control in self._method_controls[method_name].items():
+                try:
+                    if isinstance(control, QComboBox):
+                        parameters[param_name] = control.currentText()
+                    elif isinstance(control, QCheckBox):
+                        parameters[param_name] = control.isChecked()
+                    elif isinstance(control, (QSpinBox, QDoubleSpinBox)):
+                        parameters[param_name] = control.value()
+                    elif isinstance(control, QLineEdit):
+                        parameters[param_name] = control.text()
+                except Exception as e:
+                    print(f"[ComparisonWizard] Error getting parameter {param_name}: {e}")
+            return parameters
+        
+        # Fallback to static controls (with safety checks)
+        try:
+            if method_name == "Correlation Analysis":
+                if hasattr(self, 'corr_type_combo'):
+                    parameters['correlation_type'] = self.corr_type_combo.currentText()
+                if hasattr(self, 'confidence_spin'):
+                    parameters['confidence_level'] = self.confidence_spin.value()
+                if hasattr(self, 'bootstrap_spin'):
+                    parameters['bootstrap_samples'] = self.bootstrap_spin.value()
+            elif method_name in ["Bland-Altman", "Bland-Altman Analysis"]:
+                if hasattr(self, 'agreement_spin'):
+                    parameters['agreement_limits'] = self.agreement_spin.value()
+                if hasattr(self, 'show_ci_checkbox'):
+                    parameters['show_ci'] = self.show_ci_checkbox.isChecked()
+                if hasattr(self, 'prop_bias_checkbox'):
+                    parameters['proportional_bias'] = self.prop_bias_checkbox.isChecked()
+            elif method_name == "Residual Analysis":
+                if hasattr(self, 'normality_combo'):
+                    parameters['normality_test'] = self.normality_combo.currentText()
+                if hasattr(self, 'outlier_combo'):
+                    parameters['outlier_detection'] = self.outlier_combo.currentText()
+            elif method_name == "Statistical Tests":
+                if hasattr(self, 'alpha_spin'):
+                    parameters['alpha_level'] = self.alpha_spin.value()
+                if hasattr(self, 'test_suite_combo'):
+                    parameters['test_suite'] = self.test_suite_combo.currentText()
+                if hasattr(self, 'equal_var_combo'):
+                    parameters['equal_variance'] = self.equal_var_combo.currentText()
+                if hasattr(self, 'normality_assume_combo'):
+                    parameters['normality_assumption'] = self.normality_assume_combo.currentText()
+        except Exception as e:
+            print(f"[ComparisonWizard] Error getting static control parameters: {e}")
                     
         return parameters
         
@@ -917,6 +1291,10 @@ class ComparisonWizardWindow(QMainWindow):
         self.active_pair_table.setRowCount(len(self.active_pairs))
         
         for i, pair in enumerate(self.active_pairs):
+            # Update pair style information
+            pair['marker_type'] = self._get_style_for_pair(pair)
+            pair['marker_color'] = self._get_color_for_pair(pair)
+            
             # Show checkbox
             show_cb = QCheckBox()
             show_cb.setChecked(True)
@@ -929,21 +1307,47 @@ class ComparisonWizardWindow(QMainWindow):
             self._set_pair_name_tooltip_on_item(pair_name_item, pair)
             self.active_pair_table.setItem(i, 1, pair_name_item)
             
-            # Method
-            method_item = QTableWidgetItem(pair.get('comparison_method', 'N/A'))
-            self.active_pair_table.setItem(i, 2, method_item)
+            # Style - show marker with color information
+            # Extract just the symbol from the marker type (e.g., "○" from "○ Circle")
+            marker_symbol = pair['marker_type'].split()[0] if pair['marker_type'] else '○'
+            style_text = marker_symbol
+            style_item = QTableWidgetItem(style_text)
+            style_item.setToolTip(f"Marker: {pair['marker_type']}\nColor: {pair['marker_color']}")
             
-            # Placeholder for statistics
-            self.active_pair_table.setItem(i, 3, QTableWidgetItem("--"))  # Correlation
-            self.active_pair_table.setItem(i, 4, QTableWidgetItem("Pending"))  # Status
+            # Set text color to match the pair color
+            try:
+                from PySide6.QtGui import QColor
+                # Map emoji color names to actual colors
+                color_display_map = {
+                    '🔵 Blue': '#1f77b4',
+                    '🔴 Red': '#d62728',
+                    '🟢 Green': '#2ca02c',
+                    '🟣 Purple': '#9467bd',
+                    '🟠 Orange': '#ff7f0e',
+                    '🟤 Brown': '#8c564b',
+                    '🩷 Pink': '#e377c2',
+                    '⚫ Gray': '#7f7f7f',
+                    '🟡 Yellow': '#bcbd22',
+                    '🔶 Cyan': '#17becf'
+                }
+                color_hex = color_display_map.get(pair['marker_color'], '#1f77b4')
+                color = QColor(color_hex)
+                style_item.setForeground(color)
+            except:
+                pass  # If color parsing fails, use default color
+            self.active_pair_table.setItem(i, 2, style_item)
+            
+            # Status
+            self.active_pair_table.setItem(i, 3, QTableWidgetItem("Ready"))  # Status
             
         # Enable generate plot button if pairs exist
-        self.generate_plot_button.setEnabled(len(self.active_pairs) > 0)
+        if hasattr(self, 'generate_plot_button'):
+            self.generate_plot_button.setEnabled(len(self.active_pairs) > 0)
     
     def _on_show_checkbox_changed(self, state):
         """Handle Show checkbox state changes"""
-        if hasattr(self, 'comparison_manager'):
-            self.comparison_manager._update_cumulative_display()
+        # No automatic plot update - only when Generate Plot button is clicked
+        pass
     
     def _set_pair_name_tooltip_on_item(self, item, pair_config):
         """Set tooltip for a pair name table item"""
@@ -1009,3 +1413,68 @@ class ComparisonWizardWindow(QMainWindow):
         """Update the cumulative statistics display"""
         if hasattr(self, 'cumulative_stats_text'):
             self.cumulative_stats_text.setText(stats_text)
+            
+    def _refresh_comparison_data(self):
+        """Refresh comparison data from the registry after manager is set"""
+        try:
+            print("[ComparisonWizard] Starting comparison data refresh...")
+            
+            # Repopulate comparison methods
+            self._populate_comparison_methods()
+            
+            # Recreate dynamic method controls
+            if hasattr(self, 'method_controls_stack'):
+                print(f"[ComparisonWizard] Clearing {self.method_controls_stack.count()} existing controls")
+                
+                # Clear existing controls
+                while self.method_controls_stack.count() > 0:
+                    widget = self.method_controls_stack.widget(0)
+                    self.method_controls_stack.removeWidget(widget)
+                    if widget:
+                        widget.deleteLater()
+                
+                # Recreate controls
+                self._create_dynamic_method_controls()
+                
+                # Update current method selection
+                if self.method_list.currentItem():
+                    current_row = self.method_list.currentRow()
+                    if current_row < self.method_controls_stack.count():
+                        self.method_controls_stack.setCurrentIndex(current_row)
+                        print(f"[ComparisonWizard] Set method controls to index {current_row}")
+                        
+            print("[ComparisonWizard] Successfully refreshed comparison data from registry")
+            
+        except Exception as e:
+            print(f"[ComparisonWizard] Error refreshing comparison data: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _get_style_for_pair(self, pair):
+        """Get style marker for a comparison pair"""
+        # Define available markers similar to main window - these match the manager's marker_map
+        marker_types = [
+            '○ Circle', '□ Square', '△ Triangle', '◇ Diamond', '▽ Inverted Triangle',
+            '◁ Left Triangle', '▷ Right Triangle', '⬟ Pentagon', '✦ Star', '⬢ Hexagon',
+            '○ Circle', '□ Square'  # Repeat first two for more pairs
+        ]
+        
+        # Use pair index to assign marker (cycling through available markers)
+        pair_index = self.active_pairs.index(pair) if pair in self.active_pairs else 0
+        marker_type = marker_types[pair_index % len(marker_types)]
+        
+        return marker_type
+    
+    def _get_color_for_pair(self, pair):
+        """Get color for a comparison pair"""
+        # Define color palette that matches the manager's color_map
+        color_types = [
+            '🔵 Blue', '🔴 Red', '🟢 Green', '🟣 Purple', '🟠 Orange', 
+            '🟤 Brown', '🩷 Pink', '⚫ Gray', '🟡 Yellow', '🔶 Cyan'
+        ]
+        
+        # Use pair index to assign color (cycling through available colors)
+        pair_index = self.active_pairs.index(pair) if pair in self.active_pairs else 0
+        color_type = color_types[pair_index % len(color_types)]
+        
+        return color_type

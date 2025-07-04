@@ -25,30 +25,74 @@ class StatisticalComparison(BaseComparison):
     version = "1.0.0"
     
     parameters = {
+        'test_suite': {
+            'type': str,
+            'default': 'comprehensive',
+            'choices': ['basic', 'comprehensive', 'nonparametric', 'robust'],
+            'description': 'Test Suite',
+            'tooltip': 'Basic: t-test, F-test\nComprehensive: Multiple parametric tests\nNonparametric: Rank-based tests\nRobust: Outlier-resistant tests'
+        },
         'significance_level': {
             'type': float,
             'default': 0.05,
             'min': 0.001,
-            'max': 0.5,
-            'description': 'Significance level for hypothesis testing'
-        },
-        'test_suite': {
-            'type': str,
-            'default': 'comprehensive',
-            'choices': ['basic', 'comprehensive', 'nonparametric'],
-            'description': 'Suite of tests to perform'
+            'max': 0.1,
+            'description': 'Significance Level (α)',
+            'tooltip': 'Type I error rate for hypothesis tests\n0.05 = 5% chance of false positive\n0.01 = 1% chance (more conservative)'
         },
         'equal_variance_assumption': {
             'type': str,
             'default': 'test',
             'choices': ['assume_equal', 'assume_unequal', 'test'],
-            'description': 'How to handle equal variance assumption'
+            'description': 'Equal Variance',
+            'tooltip': 'Assume equal: Use pooled variance\nAssume unequal: Use Welch\'s t-test\nTest: Automatically test and decide'
         },
         'normality_assumption': {
             'type': str,
             'default': 'test',
             'choices': ['assume_normal', 'assume_nonnormal', 'test'],
-            'description': 'How to handle normality assumption'
+            'description': 'Normality Assumption',
+            'tooltip': 'Assume normal: Use parametric tests\nAssume non-normal: Use nonparametric tests\nTest: Automatically test and decide'
+        },
+        'multiple_comparisons': {
+            'type': str,
+            'default': 'bonferroni',
+            'choices': ['none', 'bonferroni', 'holm', 'fdr_bh'],
+            'description': 'Multiple Comparisons',
+            'tooltip': 'None: No correction\nBonferroni: Conservative correction\nHolm: Step-down method\nFDR: False discovery rate (Benjamini-Hochberg)'
+        },
+        'effect_size_measures': {
+            'type': bool,
+            'default': True,
+            'description': 'Effect Size Measures',
+            'tooltip': 'Calculate effect sizes (Cohen\'s d, eta-squared, etc.)\nHelps interpret practical significance beyond statistical significance'
+        },
+        'confidence_intervals': {
+            'type': bool,
+            'default': True,
+            'description': 'Confidence Intervals',
+            'tooltip': 'Calculate confidence intervals for means, differences, and effect sizes'
+        },
+        'bootstrap_tests': {
+            'type': bool,
+            'default': False,
+            'description': 'Bootstrap Tests',
+            'tooltip': 'Use bootstrap resampling for robust statistical tests\nSlower but more reliable for small samples or non-normal data'
+        },
+        'bootstrap_samples': {
+            'type': int,
+            'default': 1000,
+            'min': 100,
+            'max': 10000,
+            'description': 'Bootstrap Samples',
+            'tooltip': 'Number of bootstrap resamples for bootstrap tests\nMore samples = more accurate but slower'
+        },
+        'outlier_handling': {
+            'type': str,
+            'default': 'identify',
+            'choices': ['ignore', 'identify', 'remove', 'robust'],
+            'description': 'Outlier Handling',
+            'tooltip': 'Ignore: No outlier detection\nIdentify: Report outliers but keep them\nRemove: Exclude outliers from analysis\nRobust: Use outlier-resistant tests'
         },
         'paired_data': {
             'type': bool,
@@ -58,6 +102,7 @@ class StatisticalComparison(BaseComparison):
     }
     
     output_types = ["statistical_tests", "assumption_tests", "effect_sizes", "descriptive_statistics"]
+    plot_type = "scatter"
     
     def compare(self, ref_data: np.ndarray, test_data: np.ndarray, 
                 ref_time: Optional[np.ndarray] = None, 
@@ -84,7 +129,7 @@ class StatisticalComparison(BaseComparison):
             'n_ref': len(ref_clean),
             'n_test': len(test_clean),
             'valid_ratio': valid_ratio,
-            'significance_level': self.params['significance_level'],
+            'alpha_level': self.params['significance_level'],
             'paired_data': self.params['paired_data'],
             'descriptive_statistics': self._calculate_descriptive_stats(ref_clean, test_clean),
             'assumption_tests': {},
@@ -417,4 +462,145 @@ class StatisticalComparison(BaseComparison):
             d_interp = effect_sizes.get('cohens_d_interpretation', 'unknown')
             interpretations['effect_size'] = f"Effect size is {d_interp} (Cohen's d = {d_value:.3f})"
         
-        return interpretations 
+        return interpretations
+    
+    def generate_plot_content(self, ax, ref_data: np.ndarray, test_data: np.ndarray, 
+                             plot_config: Dict[str, Any] = None, 
+                             checked_pairs: list = None) -> None:
+        """Generate statistical comparison plot content - scatter plot with statistical annotations"""
+        try:
+            ref_data = np.array(ref_data)
+            test_data = np.array(test_data)
+            
+            if len(ref_data) == 0:
+                ax.text(0.5, 0.5, 'No valid data for statistical analysis', 
+                       ha='center', va='center', transform=ax.transAxes)
+                return
+            
+            # Get parameters from config
+            alpha = plot_config.get('alpha_level', 0.05) if plot_config else 0.05
+            test_suite = plot_config.get('test_suite', 'basic') if plot_config else 'basic'
+            equal_var = plot_config.get('equal_variance', 'test') if plot_config else 'test'
+            normality = plot_config.get('normality_assumption', 'test') if plot_config else 'test'
+            
+            # Add 1:1 line
+            min_val = min(np.min(ref_data), np.min(test_data))
+            max_val = max(np.max(ref_data), np.max(test_data))
+            ax.plot([min_val, max_val], [min_val, max_val], 'k--', alpha=0.5, 
+                   linewidth=2, label='1:1 line')
+            
+            # Calculate descriptive statistics
+            ref_mean = np.mean(ref_data)
+            test_mean = np.mean(test_data)
+            ref_std = np.std(ref_data, ddof=1)
+            test_std = np.std(test_data, ddof=1)
+            
+            # Perform statistical tests
+            stats_text = ""
+            
+            # T-test
+            try:
+                if equal_var == 'assume_equal' or (equal_var == 'test' and 
+                   stats.levene(ref_data, test_data)[1] > 0.05):
+                    t_stat, p_value = stats.ttest_ind(ref_data, test_data, equal_var=True)
+                    test_name = "t-test (equal var)"
+                else:
+                    t_stat, p_value = stats.ttest_ind(ref_data, test_data, equal_var=False)
+                    test_name = "Welch's t-test"
+                
+                stats_text += f'{test_name}:\n'
+                stats_text += f'  t = {t_stat:.3f}, p = {p_value:.3f}\n'
+                stats_text += f'  {"Significant" if p_value < alpha else "Not significant"}\n\n'
+            except Exception as e:
+                stats_text += f't-test error: {str(e)}\n\n'
+            
+            # Mann-Whitney U test (non-parametric alternative)
+            try:
+                u_stat, u_p = stats.mannwhitneyu(ref_data, test_data, alternative='two-sided')
+                stats_text += f'Mann-Whitney U test:\n'
+                stats_text += f'  U = {u_stat:.1f}, p = {u_p:.3f}\n'
+                stats_text += f'  {"Significant" if u_p < alpha else "Not significant"}\n\n'
+            except Exception as e:
+                stats_text += f'Mann-Whitney error: {str(e)}\n\n'
+            
+            # Effect size (Cohen's d)
+            try:
+                pooled_std = np.sqrt(((len(ref_data) - 1) * ref_std**2 + 
+                                     (len(test_data) - 1) * test_std**2) / 
+                                    (len(ref_data) + len(test_data) - 2))
+                if pooled_std > 0:
+                    cohens_d = (test_mean - ref_mean) / pooled_std
+                    if abs(cohens_d) >= 0.8:
+                        effect_size = "large"
+                    elif abs(cohens_d) >= 0.5:
+                        effect_size = "medium"
+                    elif abs(cohens_d) >= 0.2:
+                        effect_size = "small"
+                    else:
+                        effect_size = "negligible"
+                    
+                    stats_text += f'Effect size:\n'
+                    stats_text += f'  Cohen\'s d = {cohens_d:.3f} ({effect_size})\n\n'
+            except:
+                pass
+            
+            # Descriptive statistics
+            stats_text += f'Descriptive statistics:\n'
+            stats_text += f'  Ref: μ = {ref_mean:.3f}, σ = {ref_std:.3f}\n'
+            stats_text += f'  Test: μ = {test_mean:.3f}, σ = {test_std:.3f}\n'
+            stats_text += f'  Difference: {test_mean - ref_mean:.3f}\n'
+            stats_text += f'  n = {len(ref_data):,} points'
+            
+            # Add confidence ellipse if requested
+            if len(ref_data) > 5 and len(test_data) > 5:
+                try:
+                    from matplotlib.patches import Ellipse
+                    # Calculate 95% confidence ellipse
+                    combined_data = np.column_stack([ref_data, test_data])
+                    cov = np.cov(combined_data.T)
+                    eigenvals, eigenvecs = np.linalg.eigh(cov)
+                    
+                    # Get the largest eigenvalue and eigenvector
+                    largest_eigenval_idx = np.argmax(eigenvals)
+                    largest_eigenval = eigenvals[largest_eigenval_idx]
+                    largest_eigenvec = eigenvecs[:, largest_eigenval_idx]
+                    
+                    # Calculate the angle of the ellipse
+                    angle = np.degrees(np.arctan2(largest_eigenvec[1], largest_eigenvec[0]))
+                    
+                    # Chi-square value for 95% confidence
+                    chi2_val = 5.991  # 2 degrees of freedom, 95% confidence
+                    
+                    # Width and height of ellipse
+                    width = 2 * np.sqrt(chi2_val * eigenvals[0])
+                    height = 2 * np.sqrt(chi2_val * eigenvals[1])
+                    
+                    # Center of ellipse
+                    center = (ref_mean, test_mean)
+                    
+                    # Create and add ellipse
+                    ellipse = Ellipse(center, width, height, angle=angle, 
+                                    facecolor='none', edgecolor='blue', alpha=0.5, 
+                                    linewidth=2, label='95% confidence ellipse')
+                    ax.add_patch(ellipse)
+                except:
+                    pass
+            
+            # Add mean lines
+            ax.axvline(ref_mean, color='blue', linestyle=':', alpha=0.7, label=f'Ref mean ({ref_mean:.3f})')
+            ax.axhline(test_mean, color='red', linestyle=':', alpha=0.7, label=f'Test mean ({test_mean:.3f})')
+            
+            # Add statistics text box
+            ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, 
+                   bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
+                   verticalalignment='top', fontsize=9)
+            
+            ax.set_xlabel('Reference')
+            ax.set_ylabel('Test')
+            ax.set_title('Statistical Comparison')
+            ax.legend(loc='lower right')
+            
+        except Exception as e:
+            print(f"[Statistical] Error in plot generation: {e}")
+            ax.text(0.5, 0.5, f'Error generating statistical plot: {str(e)}', 
+                   ha='center', va='center', transform=ax.transAxes) 

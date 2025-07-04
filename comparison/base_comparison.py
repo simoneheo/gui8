@@ -30,6 +30,10 @@ class BaseComparison(ABC):
     # Output types this comparison produces
     output_types = ["statistics", "plot_data"]
     
+    # Plot configuration
+    plot_type = "scatter"  # Default plot type
+    requires_pairs = False  # Whether this comparison needs pair data instead of combined data
+    
     def __init__(self, **kwargs):
         """
         Initialize the comparison method with parameters.
@@ -202,6 +206,41 @@ class BaseComparison(ABC):
             Dictionary containing metadata
         """
         return self.metadata.copy()
+    
+    def generate_plot_content(self, ax, ref_data: np.ndarray, test_data: np.ndarray, 
+                             plot_config: Dict[str, Any] = None, 
+                             checked_pairs: List[Dict[str, Any]] = None) -> None:
+        """
+        Generate plot content for this comparison method.
+        
+        Args:
+            ax: Matplotlib axes object to plot on
+            ref_data: Reference data array (combined from all pairs)
+            test_data: Test data array (combined from all pairs)
+            plot_config: Plot configuration dictionary
+            checked_pairs: List of checked pair configurations (for methods that need pair-specific data)
+        """
+        # Default implementation - basic scatter plot
+        try:
+            if len(ref_data) == 0:
+                ax.text(0.5, 0.5, f'No valid data for {self.name}', 
+                       ha='center', va='center', transform=ax.transAxes)
+                return
+            
+            # Add identity line for reference
+            min_val = min(np.min(ref_data), np.min(test_data))
+            max_val = max(np.max(ref_data), np.max(test_data))
+            ax.plot([min_val, max_val], [min_val, max_val], 'k--', alpha=0.8, linewidth=2, label='Perfect Agreement')
+            
+            # Basic plot title and labels
+            ax.set_xlabel('Reference')
+            ax.set_ylabel('Test')
+            ax.set_title(f'{self.name} Analysis')
+            
+        except Exception as e:
+            print(f"[{self.name}] Error generating plot: {e}")
+            ax.text(0.5, 0.5, f'Error generating {self.name} plot: {str(e)}', 
+                   ha='center', va='center', transform=ax.transAxes)
     
     def __str__(self) -> str:
         """String representation of the comparison method"""

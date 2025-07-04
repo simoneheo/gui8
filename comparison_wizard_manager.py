@@ -14,7 +14,8 @@ from typing import Dict, List, Optional
 
 # Import comparison methods from the new comparison folder
 try:
-    from comparison.comparison_registry import ComparisonRegistry, load_all_comparisons
+    from comparison.comparison_registry import ComparisonRegistry
+    from comparison import load_all_comparisons
     from comparison.base_comparison import BaseComparison
     COMPARISON_AVAILABLE = True
     print("[ComparisonWizardManager] Comparison registry imported successfully")
@@ -25,11 +26,34 @@ except ImportError as e:
     # Create dummy classes if comparison module is not available
     class ComparisonRegistry:
         @staticmethod
-        def all_comparisons():
-            return ["correlation", "bland_altman", "residual", "statistical"]
+        def get_all_methods():
+            return ["Correlation Analysis", "Bland-Altman Analysis", "Residual Analysis", "Statistical Tests"]
         
         @staticmethod
-        def get(name):
+        def get_all_categories():
+            return ["Statistical", "Agreement", "Error Analysis"]
+        
+        @staticmethod
+        def get_methods_by_category(category):
+            if category == "Statistical":
+                return ["Correlation Analysis", "Statistical Tests"]
+            elif category == "Agreement":
+                return ["Bland-Altman Analysis"]
+            elif category == "Error Analysis":
+                return ["Residual Analysis"]
+            return []
+        
+        @staticmethod
+        def get_method_info(method_name):
+            return {
+                'name': method_name,
+                'description': f'Description for {method_name}',
+                'parameters': {},
+                'category': 'Statistical'
+            }
+        
+        @staticmethod
+        def create_method(method_name, **kwargs):
             return None
     
     def load_all_comparisons(directory):
@@ -91,8 +115,15 @@ class ComparisonWizardManager(QObject):
         # Set bidirectional reference
         self.window.comparison_manager = self
         
-        # Connect signals
+        # Connect signals first
         self._connect_signals()
+        
+        # Refresh window with comparison registry data after everything is set up
+        try:
+            self.window._refresh_comparison_data()
+        except Exception as e:
+            print(f"[ComparisonWizardManager] Warning: Could not refresh comparison data: {e}")
+            # This is not critical, the window will use static controls
         
         # Log initialization
         self._log_state_change("Manager initialized successfully")
@@ -101,8 +132,18 @@ class ComparisonWizardManager(QObject):
         """Initialize comparison methods from the comparison folder"""
         try:
             if COMPARISON_AVAILABLE:
-                load_all_comparisons("comparison")
+                # Initialize the comparison registry
+                ComparisonRegistry.initialize()
                 self.comparison_registry = ComparisonRegistry
+                
+                # Log loaded methods
+                methods = self.comparison_registry.get_all_methods()
+                categories = self.comparison_registry.get_all_categories()
+                print(f"[ComparisonWizardManager] Loaded {len(methods)} comparison methods in {len(categories)} categories")
+                for category in categories:
+                    category_methods = self.comparison_registry.get_methods_by_category(category)
+                    print(f"  {category}: {', '.join(category_methods)}")
+                
                 self._log_state_change("Comparison methods loaded successfully")
             else:
                 self._log_state_change("Comparison methods not available - using basic calculations only")
@@ -114,65 +155,112 @@ class ComparisonWizardManager(QObject):
         """Get list of available comparison methods"""
         if COMPARISON_AVAILABLE:
             try:
-                return self.comparison_registry.all_comparisons()
+                return self.comparison_registry.get_all_methods()
             except:
                 pass
-        return ["correlation", "bland_altman", "residual", "statistical"]
+        return ["Correlation Analysis", "Bland-Altman Analysis", "Residual Analysis", "Statistical Tests"]
+    
+    def get_comparison_categories(self):
+        """Get list of comparison method categories"""
+        if COMPARISON_AVAILABLE:
+            try:
+                return self.comparison_registry.get_all_categories()
+            except:
+                pass
+        return ["Statistical", "Agreement", "Error Analysis"]
+    
+    def get_methods_by_category(self, category):
+        """Get comparison methods in a specific category"""
+        if COMPARISON_AVAILABLE:
+            try:
+                return self.comparison_registry.get_methods_by_category(category)
+            except:
+                pass
+        # Fallback
+        if category == "Statistical":
+            return ["Correlation Analysis", "Statistical Tests"]
+        elif category == "Agreement":
+            return ["Bland-Altman Analysis"]
+        elif category == "Error Analysis":
+            return ["Residual Analysis"]
+        return []
+    
+    def get_method_info(self, method_name):
+        """Get detailed information about a comparison method"""
+        if COMPARISON_AVAILABLE:
+            try:
+                return self.comparison_registry.get_method_info(method_name)
+            except:
+                pass
+        # Fallback
+        return {
+            'name': method_name,
+            'description': f'Description for {method_name}',
+            'parameters': {},
+            'category': 'Statistical'
+        }
     
     def apply_comparison_method(self, method_name, ref_data, test_data, parameters=None):
-        """Apply a specific comparison method to the data using the new comparison folder"""
+        """Apply a specific comparison method to the data using the comparison registry"""
         try:
             if not COMPARISON_AVAILABLE:
                 return self._fallback_comparison(method_name, ref_data, test_data)
             
-            # Map method names to comparison types
-            method_mapping = {
-                'Correlation Analysis': 'correlation',
-                'Bland-Altman': 'bland_altman', 
-                'Residual Analysis': 'residual',
-                'Statistical Tests': 'statistical'
-            }
+            # Create comparison method instance with parameters
+            converted_params = self._convert_parameters(parameters or {})
+            comparison_instance = self.comparison_registry.create_method(method_name, **converted_params)
             
-            comparison_type = method_mapping.get(method_name, method_name.lower())
-            
-            # Get the comparison method class
-            comparison_cls = self.comparison_registry.get(comparison_type)
-            if not comparison_cls:
-                print(f"[ComparisonWizardManager] Comparison method '{method_name}' ({comparison_type}) not found")
+            if not comparison_instance:
+                print(f"[ComparisonWizardManager] Could not create comparison method '{method_name}'")
                 return self._fallback_comparison(method_name, ref_data, test_data)
-            
-            # Convert and prepare parameters
-            converted_params = {}
-            if parameters:
-                for key, value in parameters.items():
-                    if key == "Confidence Level":
-                        converted_params['confidence_level'] = float(value)
-                    elif key == "Method":
-                        converted_params['method'] = value.lower()
-                    elif key == "Agreement Limits":
-                        converted_params['agreement_limits'] = float(value)
-                    elif key == "Show CI":
-                        converted_params['show_ci'] = value.lower() == 'true'
-                    elif key == "Alpha Level":
-                        converted_params['alpha'] = float(value)
-                    elif key == "Normality Test":
-                        converted_params['normality_test'] = value.lower()
-                    elif key == "Outlier Detection":
-                        converted_params['outlier_method'] = value.lower()
-                    elif key == "Test Type":
-                        converted_params['test_type'] = value.lower()
-            
-            # Create instance with converted parameters
-            comparison_instance = comparison_cls(**converted_params)
             
             # Apply the comparison
             result = comparison_instance.compare(ref_data, test_data)
+            
+            # Add method metadata
+            result['method_info'] = {
+                'name': method_name,
+                'parameters_used': converted_params,
+                'registry_available': True
+            }
             
             return result
             
         except Exception as e:
             print(f"[ComparisonWizardManager] Error applying comparison method '{method_name}': {e}")
             return self._fallback_comparison(method_name, ref_data, test_data)
+    
+    def _convert_parameters(self, parameters):
+        """Convert UI parameters to comparison method parameters"""
+        converted = {}
+        
+        for key, value in parameters.items():
+            # Map UI parameter names to comparison method parameter names
+            if key == "correlation_type":
+                converted['correlation_type'] = value
+            elif key == "confidence_level":
+                converted['confidence_level'] = float(value)
+            elif key == "bootstrap_samples":
+                converted['bootstrap_samples'] = int(value)
+            elif key == "agreement_limits" or key == "Agreement Limits":
+                converted['confidence_level'] = float(value) / 100.0 if float(value) > 1 else float(value)
+            elif key == "show_ci" or key == "Show CI":
+                converted['compute_confidence_intervals'] = bool(value)
+            elif key == "proportional_bias" or key == "Proportional Bias":
+                converted['outlier_detection'] = bool(value)
+            elif key == "normality_test" or key == "Normality Test":
+                converted['test_method'] = str(value).lower()
+            elif key == "outlier_detection" or key == "Outlier Detection":
+                converted['outlier_method'] = str(value).lower()
+            elif key == "alpha_level" or key == "Alpha Level":
+                converted['significance_level'] = float(value)
+            elif key == "test_suite" or key == "Test Suite":
+                converted['test_type'] = str(value).lower()
+            else:
+                # Keep original parameter name and value
+                converted[key.lower().replace(' ', '_')] = value
+        
+        return converted
     
     def _fallback_comparison(self, method_name, ref_data, test_data):
         """Fallback comparison calculations when comparison module is not available"""
@@ -523,10 +611,16 @@ class ComparisonWizardManager(QObject):
         
         # Map comparison methods to plot types
         method_to_plot_type = {
-            'Correlation Analysis': 'scatter',
-            'Bland-Altman': 'bland_altman',
+            'Correlation Analysis': 'pearson',  # Fixed: Changed from 'scatter' to 'pearson'
+            'Bland-Altman Analysis': 'bland_altman',  # Fixed: Added "Analysis"
             'Residual Analysis': 'residual',
-            'Statistical Tests': 'scatter'
+            'Statistical Tests': 'scatter',
+            # New comparison methods
+            'Lin\'s CCC': 'ccc',
+            'RMSE': 'rmse',
+            'ICC': 'icc',
+            'Cross Correlation': 'cross_correlation',
+            'DTW': 'dtw'
         }
         
         return method_to_plot_type.get(comparison_method, 'scatter')
@@ -679,6 +773,15 @@ class ComparisonWizardManager(QObject):
                         ax.scatter(all_ref_data, all_residuals, alpha=0.6, s=20, c='blue')
                     else:
                         hb = ax.hexbin(all_ref_data, all_residuals, gridsize=bin_size, cmap='viridis', mincnt=1)
+                        
+                elif plot_type == 'ccc' or plot_type == 'rmse' or plot_type == 'icc':
+                    # CCC, RMSE, and ICC all use hexbin plot of test vs reference
+                    # Check for zero range
+                    if np.ptp(all_ref_data) == 0 or np.ptp(all_test_data) == 0:
+                        # Fallback to scatter plot
+                        ax.scatter(all_ref_data, all_test_data, alpha=0.6, s=20, c='blue')
+                    else:
+                        hb = ax.hexbin(all_ref_data, all_test_data, gridsize=bin_size, cmap='viridis', mincnt=1)
                 
                 # Add colorbar only if hexbin was successful
                 if 'hb' in locals():
@@ -700,6 +803,9 @@ class ComparisonWizardManager(QObject):
                 elif plot_type == 'residual':
                     all_residuals = all_test_data - all_ref_data
                     ax.scatter(all_ref_data, all_residuals, alpha=0.6, s=20, c='blue')
+                elif plot_type == 'ccc' or plot_type == 'rmse' or plot_type == 'icc':
+                    # CCC, RMSE, and ICC all use scatter plot of test vs reference
+                    ax.scatter(all_ref_data, all_test_data, alpha=0.6, s=20, c='blue')
             
         elif density_type == 'kde':
             # For KDE, combine all data into density visualization
@@ -716,6 +822,10 @@ class ComparisonWizardManager(QObject):
                     all_residuals = all_test_data - all_ref_data
                     self._create_kde_plot(ax, all_ref_data, all_residuals, kde_bandwidth)
                     
+                elif plot_type == 'ccc' or plot_type == 'rmse' or plot_type == 'icc':
+                    # CCC, RMSE, and ICC all use scatter plot of test vs reference
+                    self._create_kde_plot(ax, all_ref_data, all_test_data, kde_bandwidth)
+                    
             except Exception as e:
                 print(f"[ComparisonWizard] KDE plotting failed: {e}, falling back to scatter")
                 # Fallback to scatter plotting
@@ -728,6 +838,9 @@ class ComparisonWizardManager(QObject):
                 elif plot_type == 'residual':
                     all_residuals = all_test_data - all_ref_data
                     ax.scatter(all_ref_data, all_residuals, alpha=0.6, s=20, c='blue')
+                elif plot_type == 'ccc' or plot_type == 'rmse' or plot_type == 'icc':
+                    # CCC, RMSE, and ICC all use scatter plot of test vs reference
+                    ax.scatter(all_ref_data, all_test_data, alpha=0.6, s=20, c='blue')
             
         else:
             # For scatter plots, plot each pair separately
@@ -756,8 +869,67 @@ class ComparisonWizardManager(QObject):
                     ax.scatter(ref_plot, residuals, alpha=0.6, s=30,
                               color=color, marker=marker,
                               label=f"{pair_name} (n={len(ref_plot)})")
+                
+                elif plot_type == 'ccc':
+                    # CCC uses scatter plot of test vs reference
+                    ax.scatter(ref_plot, test_plot, alpha=0.6, s=30,
+                              color=color, marker=marker,
+                              label=f"{pair_name} (n={len(ref_plot)})")
+                
+                elif plot_type == 'rmse':
+                    # RMSE uses scatter plot of test vs reference
+                    ax.scatter(ref_plot, test_plot, alpha=0.6, s=30,
+                              color=color, marker=marker,
+                              label=f"{pair_name} (n={len(ref_plot)})")
+                
+                elif plot_type == 'icc':
+                    # ICC uses scatter plot of test vs reference
+                    ax.scatter(ref_plot, test_plot, alpha=0.6, s=30,
+                              color=color, marker=marker,
+                              label=f"{pair_name} (n={len(ref_plot)})")
         
-        # Generate plot-specific content
+        # Generate plot-specific content using dynamic method dispatch
+        self._generate_dynamic_plot_content(ax, all_ref_data, all_test_data, plot_config, checked_pairs)
+        
+        # Apply common plot configuration
+        self._apply_common_plot_config(ax, fig, plot_config, checked_pairs)
+        
+        print(f"[ComparisonWizard] Plot generated successfully with {len(checked_pairs)} pairs")
+    
+    def _generate_dynamic_plot_content(self, ax, all_ref_data, all_test_data, plot_config, checked_pairs):
+        """Generate plot content using dynamic method dispatch from comparison registry"""
+        try:
+            plot_type = plot_config.get('plot_type', 'scatter')
+            
+            # Find the comparison method that matches this plot type
+            comparison_method = None
+            method_instance = None
+            
+            for method_name in self.comparison_registry.get_all_methods():
+                method_info = self.comparison_registry.get_method_info(method_name)
+                if method_info and method_info.get('plot_type') == plot_type:
+                    # Create an instance of the comparison method
+                    method_instance = self.comparison_registry.create_method(method_name)
+                    if method_instance:
+                        comparison_method = method_name
+                        break
+            
+            if method_instance and hasattr(method_instance, 'generate_plot_content'):
+                print(f"[ComparisonWizard] Using dynamic plot generation for {comparison_method} (plot_type: {plot_type})")
+                method_instance.generate_plot_content(ax, all_ref_data, all_test_data, plot_config, checked_pairs)
+            else:
+                # Fallback to hardcoded methods for compatibility
+                print(f"[ComparisonWizard] No dynamic method found for plot_type: {plot_type}, using fallback")
+                self._generate_fallback_plot_content(ax, all_ref_data, all_test_data, plot_config, plot_type, checked_pairs)
+                
+        except Exception as e:
+            print(f"[ComparisonWizard] Error in dynamic plot generation: {e}")
+            # Ultimate fallback
+            ax.text(0.5, 0.5, f'Error generating {plot_type} plot: {str(e)}', 
+                   ha='center', va='center', transform=ax.transAxes)
+    
+    def _generate_fallback_plot_content(self, ax, all_ref_data, all_test_data, plot_config, plot_type, checked_pairs):
+        """Fallback plot generation for backward compatibility"""
         if plot_type == 'pearson':
             self._generate_pearson_plot_content(ax, all_ref_data, all_test_data, plot_config)
         elif plot_type == 'bland_altman':
@@ -766,11 +938,20 @@ class ComparisonWizardManager(QObject):
             self._generate_scatter_plot_content(ax, all_ref_data, all_test_data, plot_config)
         elif plot_type == 'residual':
             self._generate_residual_plot_content(ax, all_ref_data, all_test_data, plot_config)
-        
-        # Apply common plot configuration
-        self._apply_common_plot_config(ax, fig, plot_config, checked_pairs)
-        
-        print(f"[ComparisonWizard] Plot generated successfully with {len(checked_pairs)} pairs")
+        elif plot_type == 'ccc':
+            self._generate_ccc_plot_content(ax, all_ref_data, all_test_data, plot_config)
+        elif plot_type == 'rmse':
+            self._generate_rmse_plot_content(ax, all_ref_data, all_test_data, plot_config)
+        elif plot_type == 'icc':
+            self._generate_icc_plot_content(ax, all_ref_data, all_test_data, plot_config)
+        elif plot_type == 'cross_correlation':
+            self._generate_cross_correlation_plot_content(ax, checked_pairs, plot_config)
+        elif plot_type == 'dtw':
+            self._generate_dtw_plot_content(ax, checked_pairs, plot_config)
+        else:
+            # Default scatter plot
+            ax.text(0.5, 0.5, f'Unknown plot type: {plot_type}', 
+                   ha='center', va='center', transform=ax.transAxes)
         
     def _create_kde_plot(self, ax, x_data, y_data, bandwidth):
         """Create KDE density plot for multi-pair visualization"""
@@ -850,24 +1031,74 @@ class ComparisonWizardManager(QObject):
         ax.plot([min_val, max_val], [min_val, max_val], 'k--', alpha=0.8, 
                linewidth=2, label='1:1 line')
         
-        # Calculate correlation statistics
+        # Calculate correlation statistics based on selected type
+        correlation_type = plot_config.get('correlation_type', 'pearson')
+        confidence_level = plot_config.get('confidence_level', 0.95)
+        
         try:
-            r_value, p_value = scipy_stats.pearsonr(all_ref_data, all_test_data)
-            r2_value = r_value ** 2
-            
-            # Add correlation text box
-            stats_text = f'r = {r_value:.4f}\nR² = {r2_value:.4f}\np = {p_value:.2e}' if not np.isnan(p_value) else f'r = {r_value:.4f}\nR² = {r2_value:.4f}'
+            if correlation_type == 'pearson' or correlation_type == 'all':
+                r_value, p_value = scipy_stats.pearsonr(all_ref_data, all_test_data)
+                r2_value = r_value ** 2
+                
+                # Add correlation text box
+                stats_text = f'Pearson r = {r_value:.4f}\nR² = {r2_value:.4f}\np = {p_value:.2e}' if not np.isnan(p_value) else f'Pearson r = {r_value:.4f}\nR² = {r2_value:.4f}'
+                
+                # Add confidence interval if available
+                if not np.isnan(p_value) and len(all_ref_data) > 3:
+                    n = len(all_ref_data)
+                    # Fisher z-transformation for confidence interval
+                    z_r = 0.5 * np.log((1 + r_value) / (1 - r_value))
+                    se_z = 1 / np.sqrt(n - 3)
+                    alpha = 1 - confidence_level
+                    z_critical = scipy_stats.norm.ppf(1 - alpha/2)
+                    
+                    z_lower = z_r - z_critical * se_z
+                    z_upper = z_r + z_critical * se_z
+                    
+                    # Transform back to correlation scale
+                    r_lower = (np.exp(2 * z_lower) - 1) / (np.exp(2 * z_lower) + 1)
+                    r_upper = (np.exp(2 * z_upper) - 1) / (np.exp(2 * z_upper) + 1)
+                    
+                    stats_text += f'\n{confidence_level*100:.0f}% CI: [{r_lower:.3f}, {r_upper:.3f}]'
+                
+                # Add additional correlation types if requested
+                if correlation_type == 'all':
+                    try:
+                        spearman_r, spearman_p = scipy_stats.spearmanr(all_ref_data, all_test_data)
+                        kendall_tau, kendall_p = scipy_stats.kendalltau(all_ref_data, all_test_data)
+                        stats_text += f'\nSpearman ρ = {spearman_r:.4f}\nKendall τ = {kendall_tau:.4f}'
+                    except:
+                        pass
+                
+            elif correlation_type == 'spearman':
+                r_value, p_value = scipy_stats.spearmanr(all_ref_data, all_test_data)
+                stats_text = f'Spearman ρ = {r_value:.4f}\np = {p_value:.2e}' if not np.isnan(p_value) else f'Spearman ρ = {r_value:.4f}'
+                
+            elif correlation_type == 'kendall':
+                r_value, p_value = scipy_stats.kendalltau(all_ref_data, all_test_data)
+                stats_text = f'Kendall τ = {r_value:.4f}\np = {p_value:.2e}' if not np.isnan(p_value) else f'Kendall τ = {r_value:.4f}'
             
             # Position text box in upper left or wherever there's space
             ax.text(0.05, 0.95, stats_text, transform=ax.transAxes, 
                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
-                   verticalalignment='top', fontsize=12)
+                   verticalalignment='top', fontsize=10)
                    
         except Exception as e:
-            print(f"[ComparisonWizard] Error calculating Pearson correlation: {e}")
+            print(f"[ComparisonWizard] Error calculating correlation: {e}")
             ax.text(0.05, 0.95, 'Correlation: N/A', transform=ax.transAxes,
                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
                    verticalalignment='top')
+        
+        # Add best fit line for correlation analysis
+        try:
+            slope, intercept, r_val, p_val, std_err = scipy_stats.linregress(all_ref_data, all_test_data)
+            if not np.isnan(slope):
+                x_line = np.array([min_val, max_val])
+                y_line = slope * x_line + intercept
+                ax.plot(x_line, y_line, 'r-', linewidth=2, alpha=0.7,
+                       label=f'Best fit: y = {slope:.3f}x + {intercept:.3f}')
+        except Exception as e:
+            print(f"[ComparisonWizard] Error calculating best fit line: {e}")
         
         # Add custom line if specified
         if plot_config.get('custom_line'):
@@ -880,7 +1111,7 @@ class ComparisonWizardManager(QObject):
         
         ax.set_xlabel(plot_config.get('xlabel', 'Reference'))
         ax.set_ylabel(plot_config.get('ylabel', 'Test'))
-        ax.set_title('Pearson Correlation Plot')
+        ax.set_title(f'{correlation_type.title()} Correlation Plot')
         
     def _generate_bland_altman_plot_content(self, ax, all_ref_data, all_test_data, plot_config):
         """Generate Bland-Altman plot content"""
@@ -891,15 +1122,56 @@ class ComparisonWizardManager(QObject):
         mean_diff = np.mean(all_diffs)
         std_diff = np.std(all_diffs)
         
-        ax.axhline(mean_diff, color='red', linestyle='-', linewidth=2, 
-                  label=f'Mean difference: {mean_diff:.3f}')
+        # Get agreement limits multiplier (default 1.96 for 95% limits)
+        agreement_limits = plot_config.get('agreement_limits', 1.96)
         
-        # Add confidence intervals if requested
+        ax.axhline(mean_diff, color='red', linestyle='-', linewidth=2, 
+                  label=f'Mean bias: {mean_diff:.3f}')
+        
+        # Add limits of agreement (always show for Bland-Altman)
+        upper_loa = mean_diff + agreement_limits * std_diff
+        lower_loa = mean_diff - agreement_limits * std_diff
+        
+        ax.axhline(upper_loa, color='red', linestyle='--', linewidth=2,
+                  label=f'Upper LoA: {upper_loa:.3f}')
+        ax.axhline(lower_loa, color='red', linestyle='--', linewidth=2,
+                  label=f'Lower LoA: {lower_loa:.3f}')
+        
+        # Add confidence intervals for the limits if requested
         if plot_config.get('confidence_interval', False):
-            ax.axhline(mean_diff + 1.96*std_diff, color='red', linestyle='--', 
-                      label=f'+1.96 SD: {mean_diff + 1.96*std_diff:.3f}')
-            ax.axhline(mean_diff - 1.96*std_diff, color='red', linestyle='--',
-                      label=f'-1.96 SD: {mean_diff - 1.96*std_diff:.3f}')
+            n = len(all_diffs)
+            if n > 2:
+                # Calculate confidence intervals for the limits
+                se_loa = std_diff * np.sqrt(3/n)  # Standard error for LoA
+                t_critical = 1.96  # For 95% CI
+                
+                # Upper LoA confidence interval
+                ax.axhline(upper_loa + t_critical * se_loa, color='red', linestyle=':', alpha=0.7,
+                          label=f'Upper LoA 95% CI')
+                ax.axhline(upper_loa - t_critical * se_loa, color='red', linestyle=':', alpha=0.7)
+                
+                # Lower LoA confidence interval
+                ax.axhline(lower_loa + t_critical * se_loa, color='red', linestyle=':', alpha=0.7,
+                          label=f'Lower LoA 95% CI')
+                ax.axhline(lower_loa - t_critical * se_loa, color='red', linestyle=':', alpha=0.7)
+        
+        # Add zero line for reference
+        ax.axhline(0, color='black', linestyle='-', alpha=0.3, linewidth=1)
+        
+        # Check for proportional bias if requested
+        if plot_config.get('proportional_bias', False):
+            try:
+                # Fit linear regression to detect proportional bias
+                from scipy import stats as scipy_stats
+                slope, intercept, r_value, p_value, std_err = scipy_stats.linregress(all_means, all_diffs)
+                
+                if p_value < 0.05:  # Significant proportional bias
+                    x_line = np.array([np.min(all_means), np.max(all_means)])
+                    y_line = slope * x_line + intercept
+                    ax.plot(x_line, y_line, 'g-', linewidth=2, alpha=0.7,
+                           label=f'Prop. bias: p={p_value:.3f}')
+            except Exception as e:
+                print(f"[ComparisonWizard] Error calculating proportional bias: {e}")
         
         # Add custom line if specified
         if plot_config.get('custom_line'):
@@ -944,9 +1216,86 @@ class ComparisonWizardManager(QObject):
         
     def _generate_residual_plot_content(self, ax, all_ref_data, all_test_data, plot_config):
         """Generate residual plot content"""
+        # Calculate residuals
+        residuals = all_test_data - all_ref_data
+        
         # Add zero line
         ax.axhline(0, color='red', linestyle='-', alpha=0.8, linewidth=2, 
                   label='Zero residual')
+        
+        # Add residual statistics
+        try:
+            mean_residual = np.mean(residuals)
+            std_residual = np.std(residuals)
+            rmse = np.sqrt(np.mean(residuals**2))
+            
+            # Add mean residual line
+            if abs(mean_residual) > 0.001:  # Only show if significant
+                ax.axhline(mean_residual, color='blue', linestyle='--', alpha=0.7,
+                          label=f'Mean residual: {mean_residual:.3f}')
+            
+            # Add ±1 and ±2 standard deviation lines
+            ax.axhline(mean_residual + std_residual, color='orange', linestyle=':', alpha=0.6,
+                      label=f'±1 SD: {std_residual:.3f}')
+            ax.axhline(mean_residual - std_residual, color='orange', linestyle=':', alpha=0.6)
+            ax.axhline(mean_residual + 2*std_residual, color='red', linestyle=':', alpha=0.5,
+                      label=f'±2 SD: {2*std_residual:.3f}')
+            ax.axhline(mean_residual - 2*std_residual, color='red', linestyle=':', alpha=0.5)
+            
+            # Add statistics text box
+            stats_text = f'RMSE = {rmse:.4f}\nMean = {mean_residual:.4f}\nStd = {std_residual:.4f}'
+            
+            # Perform normality test if requested
+            normality_test = plot_config.get('normality_test', 'shapiro')
+            if normality_test and len(residuals) > 3:
+                try:
+                    if normality_test == 'shapiro' and len(residuals) <= 5000:
+                        stat, p_val = scipy_stats.shapiro(residuals)
+                        stats_text += f'\nShapiro p = {p_val:.3f}'
+                        if p_val > 0.05:
+                            stats_text += ' (Normal)'
+                        else:
+                            stats_text += ' (Non-normal)'
+                    elif normality_test == 'kstest':
+                        stat, p_val = scipy_stats.kstest(residuals, 'norm')
+                        stats_text += f'\nKS test p = {p_val:.3f}'
+                    elif normality_test == 'jarque_bera':
+                        stat, p_val = scipy_stats.jarque_bera(residuals)
+                        stats_text += f'\nJB test p = {p_val:.3f}'
+                except Exception as test_error:
+                    print(f"[ComparisonWizard] Error in normality test: {test_error}")
+            
+            # Detect outliers if requested
+            outlier_method = plot_config.get('outlier_detection', 'iqr')
+            if outlier_method:
+                try:
+                    n_outliers = 0
+                    if outlier_method == 'iqr':
+                        q1, q3 = np.percentile(residuals, [25, 75])
+                        iqr = q3 - q1
+                        lower_bound = q1 - 1.5 * iqr
+                        upper_bound = q3 + 1.5 * iqr
+                        n_outliers = np.sum((residuals < lower_bound) | (residuals > upper_bound))
+                    elif outlier_method == 'zscore':
+                        z_scores = np.abs((residuals - mean_residual) / std_residual)
+                        n_outliers = np.sum(z_scores > 3)
+                    elif outlier_method == 'modified_zscore':
+                        median_residual = np.median(residuals)
+                        mad = np.median(np.abs(residuals - median_residual))
+                        modified_z_scores = 0.6745 * (residuals - median_residual) / mad
+                        n_outliers = np.sum(np.abs(modified_z_scores) > 3.5)
+                    
+                    stats_text += f'\nOutliers: {n_outliers} ({n_outliers/len(residuals)*100:.1f}%)'
+                except Exception as outlier_error:
+                    print(f"[ComparisonWizard] Error in outlier detection: {outlier_error}")
+            
+            # Position text box
+            ax.text(0.05, 0.95, stats_text, transform=ax.transAxes, 
+                   bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
+                   verticalalignment='top', fontsize=10)
+                   
+        except Exception as e:
+            print(f"[ComparisonWizard] Error calculating residual statistics: {e}")
         
         # Add custom line if specified
         if plot_config.get('custom_line'):
@@ -959,7 +1308,7 @@ class ComparisonWizardManager(QObject):
         
         ax.set_xlabel(plot_config.get('xlabel', 'Reference'))
         ax.set_ylabel(plot_config.get('ylabel', 'Residuals (Test - Reference)'))
-        ax.set_title('Residual Plot')
+        ax.set_title('Residual Analysis Plot')
         
     def _apply_common_plot_config(self, ax, fig, plot_config, checked_pairs):
         """Apply common plot configuration options"""
@@ -969,7 +1318,7 @@ class ComparisonWizardManager(QObject):
             
         # Only show legend for scatter plots and if requested
         density_type = plot_config.get('density_display', 'scatter')
-        if plot_config.get('show_legend', True) and density_type == 'scatter' and len(checked_pairs) <= 10:
+        if plot_config.get('show_legend', False) and density_type == 'scatter' and len(checked_pairs) <= 10:
             ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
         
         # Apply axis ranges if specified
@@ -2177,13 +2526,17 @@ class ComparisonWizardManager(QObject):
         std_diff = np.std(diffs)
         
         # Add lines
-        ax.axhline(mean_diff, color='red', linestyle='-', label=f'Mean diff: {mean_diff:.3f}')
+        agreement_limits = plot_config.get('agreement_limits', 1.96)
         
-        if plot_config.get('confidence_interval'):
-            ax.axhline(mean_diff + 1.96*std_diff, color='red', linestyle='--', 
-                      label=f'+1.96 SD: {mean_diff + 1.96*std_diff:.3f}')
-            ax.axhline(mean_diff - 1.96*std_diff, color='red', linestyle='--',
-                      label=f'-1.96 SD: {mean_diff - 1.96*std_diff:.3f}')
+        ax.axhline(mean_diff, color='red', linestyle='-', label=f'Mean bias: {mean_diff:.3f}')
+        
+        # Always show limits of agreement for Bland-Altman
+        upper_loa = mean_diff + agreement_limits * std_diff
+        lower_loa = mean_diff - agreement_limits * std_diff
+        ax.axhline(upper_loa, color='red', linestyle='--', 
+                  label=f'Upper LoA: {upper_loa:.3f}')
+        ax.axhline(lower_loa, color='red', linestyle='--',
+                  label=f'Lower LoA: {lower_loa:.3f}')
                       
         if plot_config.get('custom_line'):
             try:
@@ -2195,7 +2548,8 @@ class ComparisonWizardManager(QObject):
         ax.set_xlabel(f'Mean of {aligned_data["ref_label"]} and {aligned_data["test_label"]}')
         ax.set_ylabel(f'{aligned_data["test_label"]} - {aligned_data["ref_label"]}')
         ax.set_title('Bland-Altman Plot')
-        ax.legend()
+        if plot_config.get('show_legend', False):
+            ax.legend()
         ax.grid(True, alpha=0.3)
         
     def _generate_scatter_plot(self, fig, aligned_data, plot_config):
@@ -2242,7 +2596,8 @@ class ComparisonWizardManager(QObject):
         ax.set_xlabel(aligned_data['ref_label'])
         ax.set_ylabel(aligned_data['test_label'])
         ax.set_title('Scatter Plot')
-        ax.legend()
+        if plot_config.get('show_legend', False):
+            ax.legend()
         ax.grid(True, alpha=0.3)
         
     def _generate_residual_plot(self, fig, aligned_data, plot_config):
@@ -2292,7 +2647,8 @@ class ComparisonWizardManager(QObject):
         ax.set_xlabel(aligned_data['ref_label'])
         ax.set_ylabel(f'Residuals ({aligned_data["test_label"]} - {aligned_data["ref_label"]})')
         ax.set_title('Residual Plot')
-        ax.legend()
+        if plot_config.get('show_legend', False):
+            ax.legend()
         ax.grid(True, alpha=0.3)
 
     def _update_cumulative_display(self):
@@ -2315,35 +2671,55 @@ class ComparisonWizardManager(QObject):
         
         # Generate plot based on comparison method (not just cumulative preview)
         plot_type = self._determine_plot_type_from_pairs(checked_pairs)
+        
+        # Build comprehensive plot configuration including method parameters
         plot_config = {
             'plot_type': plot_type,
             'show_grid': True,
-            'show_legend': True,
+            'show_legend': False,  # Remove legend by default
             'checked_pairs': checked_pairs
         }
+        
+        # Add method-specific parameters from the first pair for plot configuration
+        if checked_pairs:
+            first_pair = checked_pairs[0]
+            method_params = first_pair.get('method_parameters', {})
+            
+            # Map method parameters to plot config parameters
+            if plot_type == 'bland_altman':
+                plot_config['confidence_interval'] = method_params.get('show_ci', True)
+                plot_config['agreement_limits'] = method_params.get('agreement_limits', 1.96)
+                plot_config['proportional_bias'] = method_params.get('proportional_bias', False)
+            elif plot_type == 'scatter' or plot_type == 'pearson':
+                plot_config['confidence_level'] = method_params.get('confidence_level', 0.95)
+                plot_config['correlation_type'] = method_params.get('correlation_type', 'pearson')
+            elif plot_type == 'residual':
+                plot_config['normality_test'] = method_params.get('normality_test', 'shapiro')
+                plot_config['outlier_detection'] = method_params.get('outlier_detection', 'iqr')
         
         # Use the same plot generation as the Generate Plot button
         self._generate_multi_pair_plot(checked_pairs, plot_config)
 
-    def _update_step2_cumulative_display(self):
-        """Update cumulative statistics display for step 2"""
-        # Get checked pairs from step 2 table
-        checked_pairs = self.window.get_step2_checked_pairs()
+    def _update_comprehensive_display(self):
+        """Update comprehensive statistics display"""
+        # Get checked pairs from the main table
+        checked_pairs = self.window.get_checked_pairs()
         
         if not checked_pairs:
-            self.window.update_step2_cumulative_stats("No pairs selected for analysis")
+            # Just use the regular cumulative stats for consistency
+            self._update_cumulative_display()
             return
         
         # Get current plot configuration to determine plot type
-        plot_config = self.window.get_plot_config()
+        plot_config = self.window._get_plot_config()
         plot_type = plot_config.get('plot_type', 'scatter')
         
         # Calculate comprehensive cumulative statistics
         cumulative_stats = self._calculate_comprehensive_statistics(checked_pairs, plot_type)
         
-        # Format and display comprehensive statistics
+        # Format and display comprehensive statistics (use regular cumulative stats display)
         stats_text = self._format_comprehensive_stats(cumulative_stats, len(checked_pairs), plot_type)
-        self.window.update_step2_cumulative_stats(stats_text)
+        self.window.update_cumulative_stats(stats_text)
         
     def _calculate_comprehensive_statistics(self, checked_pairs, plot_type='scatter'):
         """Calculate comprehensive statistics for step 2 display"""
@@ -2960,7 +3336,9 @@ class ComparisonWizardManager(QObject):
             
             # Legend and grid
             if pair_count <= 10:  # Only show legend if not too many pairs
-                ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+                # Note: This is a preview plot, so we don't have plot_config here
+                # For consistency with other plots, we'll disable legend by default
+                pass  # Removed legend display
             ax.grid(True, alpha=0.3)
             
             try:
@@ -3059,3 +3437,324 @@ class ComparisonWizardManager(QObject):
         rms_str = f"{stats['rms']:.3f}" if not np.isnan(stats['rms']) else "N/A"
         
         return f"Cumulative Stats: r = {r_str}, RMS = {rms_str}, N = {stats['n']:,} points ({n_pairs} pairs shown)"
+
+    def _generate_ccc_plot_content(self, ax, all_ref_data, all_test_data, plot_config):
+        """Generate Lin's CCC plot content - scatter plot with CCC statistics"""
+        try:
+            all_ref_data = np.array(all_ref_data)
+            all_test_data = np.array(all_test_data)
+            
+            if len(all_ref_data) == 0:
+                ax.text(0.5, 0.5, 'No valid data for CCC analysis', 
+                       ha='center', va='center', transform=ax.transAxes)
+                return
+            
+            # Calculate CCC
+            mean_ref = np.mean(all_ref_data)
+            mean_test = np.mean(all_test_data)
+            var_ref = np.var(all_ref_data)
+            var_test = np.var(all_test_data)
+            cov = np.mean((all_ref_data - mean_ref) * (all_test_data - mean_test))
+            
+            ccc = (2 * cov) / (var_ref + var_test + (mean_ref - mean_test)**2)
+            
+            # Add identity line
+            min_val = min(np.min(all_ref_data), np.min(all_test_data))
+            max_val = max(np.max(all_ref_data), np.max(all_test_data))
+            ax.plot([min_val, max_val], [min_val, max_val], 'k--', alpha=0.8, linewidth=2, label='Perfect Agreement')
+            
+            # Add CCC statistics
+            stats_text = f'Lin\'s CCC = {ccc:.4f}\n'
+            stats_text += f'n = {len(all_ref_data):,} points\n'
+            
+            # Interpretation
+            if ccc >= 0.99:
+                interpretation = 'Excellent'
+            elif ccc >= 0.95:
+                interpretation = 'Substantial'
+            elif ccc >= 0.90:
+                interpretation = 'Moderate'
+            else:
+                interpretation = 'Poor'
+            stats_text += f'Agreement: {interpretation}'
+            
+            ax.text(0.05, 0.95, stats_text, transform=ax.transAxes, 
+                   bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
+                   verticalalignment='top', fontsize=10)
+            
+            ax.set_xlabel('Reference')
+            ax.set_ylabel('Test')
+            ax.set_title('Lin\'s Concordance Correlation Coefficient')
+            
+        except Exception as e:
+            print(f"[ComparisonWizard] Error in CCC plot: {e}")
+            ax.text(0.5, 0.5, f'Error generating CCC plot: {str(e)}', 
+                   ha='center', va='center', transform=ax.transAxes)
+
+    def _generate_rmse_plot_content(self, ax, all_ref_data, all_test_data, plot_config):
+        """Generate RMSE plot content - scatter plot with RMSE statistics"""
+        try:
+            all_ref_data = np.array(all_ref_data)
+            all_test_data = np.array(all_test_data)
+            
+            if len(all_ref_data) == 0:
+                ax.text(0.5, 0.5, 'No valid data for RMSE analysis', 
+                       ha='center', va='center', transform=ax.transAxes)
+                return
+            
+            # Calculate RMSE and related metrics
+            rmse = np.sqrt(np.mean((all_test_data - all_ref_data) ** 2))
+            mae = np.mean(np.abs(all_test_data - all_ref_data))
+            bias = np.mean(all_test_data - all_ref_data)
+            
+            # Add identity line
+            min_val = min(np.min(all_ref_data), np.min(all_test_data))
+            max_val = max(np.max(all_ref_data), np.max(all_test_data))
+            ax.plot([min_val, max_val], [min_val, max_val], 'k--', alpha=0.8, linewidth=2, label='Perfect Agreement')
+            
+            # Add error bands around identity line
+            x_range = np.linspace(min_val, max_val, 100)
+            ax.fill_between(x_range, x_range - rmse, x_range + rmse, alpha=0.2, color='red', label=f'±RMSE ({rmse:.3f})')
+            
+            # Add RMSE statistics
+            stats_text = f'RMSE = {rmse:.4f}\n'
+            stats_text += f'MAE = {mae:.4f}\n'
+            stats_text += f'Bias = {bias:.4f}\n'
+            stats_text += f'n = {len(all_ref_data):,} points'
+            
+            ax.text(0.05, 0.95, stats_text, transform=ax.transAxes, 
+                   bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
+                   verticalalignment='top', fontsize=10)
+            
+            ax.set_xlabel('Reference')
+            ax.set_ylabel('Test')
+            ax.set_title('Root Mean Square Error Analysis')
+            
+        except Exception as e:
+            print(f"[ComparisonWizard] Error in RMSE plot: {e}")
+            ax.text(0.5, 0.5, f'Error generating RMSE plot: {str(e)}', 
+                   ha='center', va='center', transform=ax.transAxes)
+
+    def _generate_icc_plot_content(self, ax, all_ref_data, all_test_data, plot_config):
+        """Generate ICC plot content - scatter plot with ICC statistics"""
+        try:
+            all_ref_data = np.array(all_ref_data)
+            all_test_data = np.array(all_test_data)
+            
+            if len(all_ref_data) == 0:
+                ax.text(0.5, 0.5, 'No valid data for ICC analysis', 
+                       ha='center', va='center', transform=ax.transAxes)
+                return
+            
+            # Simple ICC calculation (ICC(2,1) - two-way random effects, single measures)
+            # This is a simplified version - full ICC requires more complex ANOVA
+            n = len(all_ref_data)
+            
+            # Calculate means
+            grand_mean = (np.mean(all_ref_data) + np.mean(all_test_data)) / 2
+            subject_means = (all_ref_data + all_test_data) / 2
+            
+            # Calculate variance components (simplified)
+            between_subject_var = np.var(subject_means, ddof=1)
+            within_subject_var = np.mean([np.var([all_ref_data[i], all_test_data[i]], ddof=1) for i in range(n)])
+            
+            # ICC calculation
+            icc = (between_subject_var - within_subject_var) / (between_subject_var + within_subject_var)
+            icc = max(0, icc)  # ICC cannot be negative in this context
+            
+            # Add identity line
+            min_val = min(np.min(all_ref_data), np.min(all_test_data))
+            max_val = max(np.max(all_ref_data), np.max(all_test_data))
+            ax.plot([min_val, max_val], [min_val, max_val], 'k--', alpha=0.8, linewidth=2, label='Perfect Agreement')
+            
+            # Add ICC statistics
+            stats_text = f'ICC = {icc:.4f}\n'
+            stats_text += f'n = {n:,} points\n'
+            
+            # Interpretation (Cicchetti guidelines)
+            if icc >= 0.75:
+                interpretation = 'Excellent'
+            elif icc >= 0.60:
+                interpretation = 'Good'
+            elif icc >= 0.40:
+                interpretation = 'Fair'
+            else:
+                interpretation = 'Poor'
+            stats_text += f'Reliability: {interpretation}'
+            
+            ax.text(0.05, 0.95, stats_text, transform=ax.transAxes, 
+                   bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
+                   verticalalignment='top', fontsize=10)
+            
+            ax.set_xlabel('Reference')
+            ax.set_ylabel('Test')
+            ax.set_title('Intraclass Correlation Coefficient')
+            
+        except Exception as e:
+            print(f"[ComparisonWizard] Error in ICC plot: {e}")
+            ax.text(0.5, 0.5, f'Error generating ICC plot: {str(e)}', 
+                   ha='center', va='center', transform=ax.transAxes)
+
+    def _generate_cross_correlation_plot_content(self, ax, checked_pairs, plot_config):
+        """Generate cross-correlation plot content"""
+        try:
+            if not checked_pairs:
+                ax.text(0.5, 0.5, 'No pairs selected for cross-correlation', 
+                       ha='center', va='center', transform=ax.transAxes)
+                return
+            
+            colors = ['blue', 'red', 'green', 'purple', 'orange', 'brown', 'pink', 'gray', 'olive', 'cyan']
+            
+            max_correlation = 0
+            best_lag = 0
+            
+            for i, pair in enumerate(checked_pairs):
+                pair_name = pair['name']
+                if pair_name not in self.pair_aligned_data:
+                    continue
+                    
+                aligned_data = self.pair_aligned_data[pair_name]
+                ref_data = aligned_data['ref_data']
+                test_data = aligned_data['test_data']
+                
+                if ref_data is None or test_data is None or len(ref_data) == 0:
+                    continue
+                
+                # Filter valid data
+                valid_mask = np.isfinite(ref_data) & np.isfinite(test_data)
+                ref_clean = ref_data[valid_mask]
+                test_clean = test_data[valid_mask]
+                
+                if len(ref_clean) < 10:
+                    continue
+                
+                # Calculate cross-correlation
+                max_lag = min(50, len(ref_clean) // 4)
+                correlation = np.correlate(test_clean - np.mean(test_clean), 
+                                         ref_clean - np.mean(ref_clean), mode='full')
+                correlation = correlation / (np.std(ref_clean) * np.std(test_clean) * len(ref_clean))
+                
+                # Create lag array
+                lags = np.arange(-max_lag, max_lag + 1)
+                mid = len(correlation) // 2
+                start_idx = mid - max_lag
+                end_idx = mid + max_lag + 1
+                correlation_subset = correlation[start_idx:end_idx]
+                
+                # Plot cross-correlation
+                color = colors[i % len(colors)]
+                ax.plot(lags, correlation_subset, color=color, label=f'{pair_name}', linewidth=2)
+                
+                # Find peak
+                peak_idx = np.argmax(np.abs(correlation_subset))
+                peak_lag = lags[peak_idx]
+                peak_corr = correlation_subset[peak_idx]
+                
+                if abs(peak_corr) > abs(max_correlation):
+                    max_correlation = peak_corr
+                    best_lag = peak_lag
+                
+                ax.plot(peak_lag, peak_corr, 'o', color=color, markersize=8)
+            
+            ax.axhline(y=0, color='k', linestyle='-', alpha=0.3)
+            ax.axvline(x=0, color='k', linestyle='-', alpha=0.3)
+            
+            # Add statistics
+            stats_text = f'Peak correlation: {max_correlation:.4f}\n'
+            stats_text += f'At lag: {best_lag} samples'
+            
+            ax.text(0.05, 0.95, stats_text, transform=ax.transAxes, 
+                   bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
+                   verticalalignment='top', fontsize=10)
+            
+            ax.set_xlabel('Lag (samples)')
+            ax.set_ylabel('Cross-correlation')
+            ax.set_title('Cross-correlation Analysis')
+            
+        except Exception as e:
+            print(f"[ComparisonWizard] Error in cross-correlation plot: {e}")
+            ax.text(0.5, 0.5, f'Error generating cross-correlation plot: {str(e)}', 
+                   ha='center', va='center', transform=ax.transAxes)
+
+    def _generate_dtw_plot_content(self, ax, checked_pairs, plot_config):
+        """Generate DTW plot content"""
+        try:
+            if not checked_pairs:
+                ax.text(0.5, 0.5, 'No pairs selected for DTW analysis', 
+                       ha='center', va='center', transform=ax.transAxes)
+                return
+            
+            # For DTW, we'll show the time series and warping path for the first pair
+            pair = checked_pairs[0]
+            pair_name = pair['name']
+            
+            if pair_name not in self.pair_aligned_data:
+                ax.text(0.5, 0.5, f'No aligned data for {pair_name}', 
+                       ha='center', va='center', transform=ax.transAxes)
+                return
+                
+            aligned_data = self.pair_aligned_data[pair_name]
+            ref_data = aligned_data['ref_data']
+            test_data = aligned_data['test_data']
+            
+            if ref_data is None or test_data is None or len(ref_data) == 0:
+                ax.text(0.5, 0.5, 'No valid data for DTW analysis', 
+                       ha='center', va='center', transform=ax.transAxes)
+                return
+            
+            # Filter valid data
+            valid_mask = np.isfinite(ref_data) & np.isfinite(test_data)
+            ref_clean = ref_data[valid_mask]
+            test_clean = test_data[valid_mask]
+            
+            if len(ref_clean) < 10:
+                ax.text(0.5, 0.5, 'Insufficient data for DTW analysis', 
+                       ha='center', va='center', transform=ax.transAxes)
+                return
+            
+            # Downsample for DTW computation if too long
+            if len(ref_clean) > 200:
+                indices = np.linspace(0, len(ref_clean) - 1, 200, dtype=int)
+                ref_clean = ref_clean[indices]
+                test_clean = test_clean[indices]
+            
+            # Simple DTW distance calculation (without full path)
+            n, m = len(ref_clean), len(test_clean)
+            dtw_matrix = np.full((n + 1, m + 1), np.inf)
+            dtw_matrix[0, 0] = 0
+            
+            for i in range(1, n + 1):
+                for j in range(1, m + 1):
+                    cost = (ref_clean[i-1] - test_clean[j-1])**2
+                    dtw_matrix[i, j] = cost + min(dtw_matrix[i-1, j],    # insertion
+                                                  dtw_matrix[i, j-1],    # deletion
+                                                  dtw_matrix[i-1, j-1])  # match
+            
+            dtw_distance = np.sqrt(dtw_matrix[n, m])
+            normalized_distance = dtw_distance / max(n, m)
+            
+            # Plot the time series
+            time_ref = np.arange(len(ref_clean))
+            time_test = np.arange(len(test_clean))
+            
+            ax.plot(time_ref, ref_clean, 'b-', label='Reference', linewidth=2)
+            ax.plot(time_test, test_clean, 'r-', label='Test', linewidth=2)
+            
+            # Add DTW statistics
+            stats_text = f'DTW Distance: {dtw_distance:.4f}\n'
+            stats_text += f'Normalized: {normalized_distance:.4f}\n'
+            stats_text += f'Ref length: {len(ref_clean)}\n'
+            stats_text += f'Test length: {len(test_clean)}'
+            
+            ax.text(0.05, 0.95, stats_text, transform=ax.transAxes, 
+                   bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
+                   verticalalignment='top', fontsize=10)
+            
+            ax.set_xlabel('Time (samples)')
+            ax.set_ylabel('Amplitude')
+            ax.set_title(f'Dynamic Time Warping - {pair_name}')
+            
+        except Exception as e:
+            print(f"[ComparisonWizard] Error in DTW plot: {e}")
+            ax.text(0.5, 0.5, f'Error generating DTW plot: {str(e)}', 
+                   ha='center', va='center', transform=ax.transAxes)

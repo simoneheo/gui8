@@ -28,33 +28,65 @@ class ResidualComparison(BaseComparison):
             'type': str,
             'default': 'absolute',
             'choices': ['absolute', 'relative', 'standardized', 'studentized'],
-            'description': 'Type of residual calculation'
+            'description': 'Residual Type',
+            'tooltip': 'Absolute: Raw differences (test - ref)\nRelative: Percentage differences\nStandardized: Divided by standard deviation\nStudentized: Normalized for outlier detection'
         },
         'trend_analysis': {
             'type': bool,
             'default': True,
-            'description': 'Perform trend analysis on residuals'
+            'description': 'Trend Analysis',
+            'tooltip': 'Analyze trends and patterns in residuals over time or measurement order'
         },
         'normality_test': {
-            'type': bool,
-            'default': True,
-            'description': 'Test residuals for normality'
+            'type': str,
+            'default': 'shapiro',
+            'choices': ['shapiro', 'kstest', 'jarque_bera', 'anderson', 'all'],
+            'description': 'Normality Test',
+            'tooltip': 'Shapiro-Wilk: Most powerful for small samples\nKS test: Kolmogorov-Smirnov\nJarque-Bera: Based on skewness/kurtosis\nAnderson-Darling: More sensitive to tails\nAll: Run all tests'
         },
         'autocorrelation_test': {
             'type': bool,
             'default': True,
-            'description': 'Test residuals for autocorrelation'
+            'description': 'Autocorrelation Test',
+            'tooltip': 'Test for serial correlation in residuals\nImportant for time series data'
+        },
+        'outlier_detection': {
+            'type': str,
+            'default': 'iqr',
+            'choices': ['iqr', 'zscore', 'modified_zscore', 'isolation_forest', 'all'],
+            'description': 'Outlier Detection',
+            'tooltip': 'IQR: Interquartile range (robust)\nZ-score: Standard deviation based\nModified Z-score: Median-based (very robust)\nIsolation Forest: Machine learning approach\nAll: Use multiple methods'
         },
         'outlier_threshold': {
             'type': float,
             'default': 3.0,
             'min': 1.0,
             'max': 5.0,
-            'description': 'Threshold for outlier detection (in standard deviations)'
+            'description': 'Outlier Threshold',
+            'tooltip': 'Threshold for outlier detection in standard deviations\n2.0 = more sensitive, 3.0 = balanced, 4.0 = conservative'
+        },
+        'heteroscedasticity_test': {
+            'type': bool,
+            'default': True,
+            'description': 'Test Heteroscedasticity',
+            'tooltip': 'Test whether residual variance changes with fitted values\nImportant for validating model assumptions'
+        },
+        'runs_test': {
+            'type': bool,
+            'default': True,
+            'description': 'Runs Test',
+            'tooltip': 'Test for randomness in residual patterns\nDetects systematic trends or clustering'
+        },
+        'durbin_watson_test': {
+            'type': bool,
+            'default': True,
+            'description': 'Durbin-Watson Test',
+            'tooltip': 'Test for first-order autocorrelation\nValues near 2.0 indicate no autocorrelation'
         }
     }
     
     output_types = ["residual_statistics", "trend_analysis", "normality_tests", "outlier_analysis", "plot_data"]
+    plot_type = "residual"
     
     def compare(self, ref_data: np.ndarray, test_data: np.ndarray, 
                 ref_time: Optional[np.ndarray] = None, 
@@ -452,4 +484,110 @@ class ResidualComparison(BaseComparison):
         else:
             interpretations['outliers'] = "No significant outliers"
         
-        return interpretations 
+        return interpretations
+    
+    def generate_plot_content(self, ax, ref_data: np.ndarray, test_data: np.ndarray, 
+                             plot_config: Dict[str, Any] = None, 
+                             checked_pairs: list = None) -> None:
+        """Generate residual plot content - residuals vs reference values"""
+        try:
+            ref_data = np.array(ref_data)
+            test_data = np.array(test_data)
+            
+            if len(ref_data) == 0:
+                ax.text(0.5, 0.5, 'No valid data for residual analysis', 
+                       ha='center', va='center', transform=ax.transAxes)
+                return
+            
+            # Calculate residuals
+            residuals = test_data - ref_data
+            
+            # Get analysis parameters from config
+            normality_test = plot_config.get('normality_test', 'shapiro') if plot_config else 'shapiro'
+            outlier_detection = plot_config.get('outlier_detection', 'iqr') if plot_config else 'iqr'
+            
+            # Add zero line for reference
+            ax.axhline(0, color='black', linestyle='-', alpha=0.5, linewidth=1, label='Zero residual')
+            
+            # Calculate statistics
+            mean_residual = np.mean(residuals)
+            std_residual = np.std(residuals, ddof=1)
+            
+            # Add mean line
+            ax.axhline(mean_residual, color='blue', linestyle='--', linewidth=2, 
+                      label=f'Mean residual ({mean_residual:.3f})')
+            
+            # Add ±1σ and ±2σ lines
+            ax.axhline(mean_residual + std_residual, color='orange', linestyle=':', alpha=0.7,
+                      label=f'±1σ ({std_residual:.3f})')
+            ax.axhline(mean_residual - std_residual, color='orange', linestyle=':', alpha=0.7)
+            ax.axhline(mean_residual + 2*std_residual, color='red', linestyle=':', alpha=0.7,
+                      label=f'±2σ ({2*std_residual:.3f})')
+            ax.axhline(mean_residual - 2*std_residual, color='red', linestyle=':', alpha=0.7)
+            
+            # Detect and highlight outliers
+            if outlier_detection == 'iqr':
+                q25, q75 = np.percentile(residuals, [25, 75])
+                iqr = q75 - q25
+                outlier_mask = (residuals < q25 - 1.5*iqr) | (residuals > q75 + 1.5*iqr)
+            else:  # zscore
+                z_scores = np.abs(stats.zscore(residuals))
+                outlier_mask = z_scores > 3.0
+            
+            # Plot normal points
+            normal_mask = ~outlier_mask
+            if np.any(normal_mask):
+                ax.scatter(ref_data[normal_mask], residuals[normal_mask], alpha=0.6, s=20, 
+                          color='blue', label='Normal points')
+            
+            # Plot outliers
+            if np.any(outlier_mask):
+                ax.scatter(ref_data[outlier_mask], residuals[outlier_mask], alpha=0.8, s=30, 
+                          color='red', marker='x', label=f'Outliers ({np.sum(outlier_mask)})')
+            
+            # Add trend line if there's a significant trend
+            try:
+                slope, intercept, r_value, p_value, _ = stats.linregress(ref_data, residuals)
+                if p_value < 0.05:  # Significant trend
+                    x_line = np.array([np.min(ref_data), np.max(ref_data)])
+                    y_line = slope * x_line + intercept
+                    ax.plot(x_line, y_line, 'g-', linewidth=2, alpha=0.7,
+                           label=f'Trend (p={p_value:.3f})')
+            except:
+                pass
+            
+            # Test normality and add to statistics
+            stats_text = f'Mean = {mean_residual:.4f}\n'
+            stats_text += f'SD = {std_residual:.4f}\n'
+            
+            try:
+                if normality_test == 'shapiro':
+                    stat, p_val = stats.shapiro(residuals)
+                    stats_text += f'Shapiro p = {p_val:.3f}\n'
+                    normal_status = "Normal" if p_val > 0.05 else "Non-normal"
+                    stats_text += f'Distribution: {normal_status}\n'
+                elif normality_test == 'kstest':
+                    stat, p_val = stats.kstest(residuals, 'norm')
+                    stats_text += f'KS test p = {p_val:.3f}\n'
+                    normal_status = "Normal" if p_val > 0.05 else "Non-normal"
+                    stats_text += f'Distribution: {normal_status}\n'
+            except:
+                pass
+            
+            stats_text += f'n = {len(ref_data):,} points\n'
+            stats_text += f'Outliers = {np.sum(outlier_mask)} ({np.sum(outlier_mask)/len(residuals)*100:.1f}%)'
+            
+            # Add statistics text box
+            ax.text(0.05, 0.95, stats_text, transform=ax.transAxes, 
+                   bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
+                   verticalalignment='top', fontsize=10)
+            
+            ax.set_xlabel('Reference Values')
+            ax.set_ylabel('Residuals (Test - Reference)')
+            ax.set_title('Residual Analysis')
+            ax.legend(loc='upper right')
+            
+        except Exception as e:
+            print(f"[Residual] Error in plot generation: {e}")
+            ax.text(0.5, 0.5, f'Error generating residual plot: {str(e)}', 
+                   ha='center', va='center', transform=ax.transAxes) 
