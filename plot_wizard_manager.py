@@ -2,7 +2,8 @@ from PySide6.QtCore import QObject, Signal, Qt, QTimer
 from PySide6.QtWidgets import (
     QMessageBox, QTableWidgetItem, QColorDialog, QComboBox, QCheckBox, 
     QSpinBox, QFileDialog, QInputDialog, QHeaderView, QDialog, QVBoxLayout,
-    QHBoxLayout, QLabel, QLineEdit, QPushButton, QFormLayout, QGroupBox, QDoubleSpinBox
+    QHBoxLayout, QLabel, QLineEdit, QPushButton, QFormLayout, QGroupBox, QDoubleSpinBox,
+    QWidget
 )
 from PySide6.QtGui import QColor
 from plot_wizard_window import PlotWizardWindow
@@ -573,8 +574,14 @@ class PlotWizardManager(QObject):
             'tight_layout': True
         }
         
-        # Configuration controls will be updated after connection
+        # Connect signals and populate dropdowns
+        self._connect_signals()
+        self._connect_config_controls()
+        self._populate_dropdowns()
         
+        # Update config controls to match initial state
+        self._update_config_controls()
+
     def _setup_line_config_table(self):
         """Setup the line configuration table"""
         table = self.window.line_config_table
@@ -582,11 +589,9 @@ class PlotWizardManager(QObject):
         # Set column widths
         header = table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Subplot#
-        header.setSectionResizeMode(1, QHeaderView.Stretch)          # Legend
-        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)  # Color
-        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Line
-        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Marker
-        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)  # Y Axis
+        header.setSectionResizeMode(1, QHeaderView.Stretch)          # Channel Name
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)  # Type
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Actions
         
     def _setup_subplot_config_table(self):
         """Setup the subplot configuration table"""
@@ -595,37 +600,40 @@ class PlotWizardManager(QObject):
         # Set column widths
         header = table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Subplot#
-        header.setSectionResizeMode(1, QHeaderView.Stretch)          # Xlabel
-        header.setSectionResizeMode(2, QHeaderView.Stretch)          # Ylabel
-        header.setSectionResizeMode(3, QHeaderView.Stretch)          # Legend Label
-        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Legend
-        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)  # Legend Pos
-        header.setSectionResizeMode(6, QHeaderView.ResizeToContents)  # Advanced
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Actions
         
     def _connect_signals(self):
-        """Connect window signals to manager methods"""
-        # Add button
-        self.window.add_btn.clicked.connect(self._on_add_to_plot)
-        
-        # File/channel selection
-        self.window.file_dropdown.currentTextChanged.connect(self._on_file_changed)
-        self.window.channel_dropdown.currentTextChanged.connect(self._on_channel_changed)
-        
-        # Table interactions
-        self.window.line_config_table.cellDoubleClicked.connect(self._on_line_config_cell_clicked)
-        self.window.subplot_config_table.cellDoubleClicked.connect(self._on_subplot_config_cell_clicked)
-        self.window.subplot_config_table.cellChanged.connect(self._on_subplot_config_cell_changed)
-        
-        # Subplot dimension controls
-        self.window.rows_spinbox.valueChanged.connect(self._on_dimension_changed)
-        self.window.cols_spinbox.valueChanged.connect(self._on_dimension_changed)
-        
-        # Plot configuration controls
-        self._connect_config_controls()
-        
-        # Initialize controls with current config values
-        self._update_config_controls()
-        
+        """Connect signals to their respective slots"""
+        try:
+            # Disconnect any existing connections to prevent duplicates
+            try:
+                self.window.add_btn.clicked.disconnect()
+                self.window.file_dropdown.currentTextChanged.disconnect()
+                self.window.channel_dropdown.currentTextChanged.disconnect()
+                self.window.rows_spinbox.valueChanged.disconnect()
+                self.window.cols_spinbox.valueChanged.disconnect()
+            except:
+                pass  # Ignore if no connections exist
+            
+            # Connect signals
+            self.window.add_btn.clicked.connect(self._on_add_to_plot)
+            self.window.file_dropdown.currentTextChanged.connect(self._on_file_changed)
+            self.window.channel_dropdown.currentTextChanged.connect(self._on_channel_changed)
+            
+            # Dimension controls
+            self.window.rows_spinbox.valueChanged.connect(self._on_dimension_changed)
+            self.window.cols_spinbox.valueChanged.connect(self._on_dimension_changed)
+            
+        except Exception as e:
+            print(f"[PlotWizard] Error connecting signals: {e}")
+
+    def _on_plot_type_changed(self, plot_type):
+        """Handle plot type selection change"""
+        try:
+            print(f"[PlotWizard] Plot type changed to: {plot_type}")
+        except Exception as e:
+            print(f"[PlotWizard] Error handling plot type change: {e}")
+
     def _connect_config_controls(self):
         """Connect all plot configuration controls to update methods"""
         try:
@@ -720,35 +728,12 @@ class PlotWizardManager(QObject):
                         channel_names.append(name)
                 
                 self.window.channel_dropdown.addItems(channel_names)
-                
-                # Auto-set plot type based on first channel if available
-                if channels:
-                    self._update_plot_type_for_channel(channels[0])
+                print(f"[PlotWizard] File changed to: {filename}, found {len(channel_names)} channels")
                 
         except Exception as e:
             print(f"[PlotWizard] Error updating channels: {str(e)}")
             
-    def _update_plot_type_for_channel(self, channel):
-        """Update plot type dropdown based on channel tags"""
-        try:
-            # Check channel tags to determine plot type
-            if hasattr(channel, 'tags') and channel.tags:
-                if 'spectrogram' in channel.tags:
-                    plot_type = 'Spectrogram'
-                else:
-                    plot_type = 'Line'  # Default for time-series
-            else:
-                plot_type = 'Line'  # Default fallback
-            
-            # Update the dropdown
-            index = self.window.type_dropdown.findText(plot_type)
-            if index >= 0:
-                self.window.type_dropdown.setCurrentIndex(index)
-                print(f"[PlotWizard] Auto-detected plot type: {plot_type}")
-            
-        except Exception as e:
-            print(f"[PlotWizard] Error updating plot type: {str(e)}")
-            
+
     def _on_channel_changed(self, channel_name):
         """Handle channel selection change"""
         try:
@@ -763,45 +748,60 @@ class PlotWizardManager(QObject):
             # Get the channel object
             channel = self._get_channel(filename, channel_name)
             if channel:
-                # Update plot type based on channel
-                self._update_plot_type_for_channel(channel)
-                
-                # Auto-populate legend entry
-                if not self.window.legend_entry.text().strip():
-                    self.window.legend_entry.setText(channel_name)
+                # Determine plot type based on channel (for internal use)
+                plot_type = self._determine_plot_type_for_channel(channel)
+                print(f"[PlotWizard] Channel changed to: {channel_name}, detected plot type: {plot_type}")
                 
         except Exception as e:
-            print(f"[PlotWizard] Error handling channel change: {str(e)}")
-            
+            print(f"[PlotWizard] Error handling channel change: {e}")
+
+    def _determine_plot_type_for_channel(self, channel):
+        """Determine the appropriate plot type for a channel"""
+        try:
+            # Check channel tags to determine plot type
+            if hasattr(channel, 'tags') and channel.tags:
+                if 'spectrogram' in channel.tags:
+                    return 'Spectrogram'
+                elif 'scatter' in channel.tags:
+                    return 'Scatter'
+                elif 'bar' in channel.tags:
+                    return 'Bar'
+                else:
+                    return 'Line'  # Default for time-series
+            else:
+                return 'Line'  # Default fallback
+        except Exception as e:
+            print(f"[PlotWizard] Error determining plot type: {e}")
+            return 'Line'
+
     def _on_add_to_plot(self):
         """Handle adding a channel to the plot"""
         try:
             # Get current selections
             filename = self.window.file_dropdown.currentText()
             channel_name = self.window.channel_dropdown.currentText()
-            plot_type = self.window.type_dropdown.currentText()
-            legend_name = self.window.legend_entry.text().strip()
             
             if not all([filename, channel_name]):
-                QMessageBox.warning(self.window, "Selection Error", 
-                                  "Please select both a file and channel.")
+                print("[PlotWizard] Missing file or channel selection")
                 return
             
             if filename == "No parsed files available":
-                QMessageBox.warning(self.window, "No Data", 
-                                  "No parsed files available.")
+                print("[PlotWizard] No parsed files available")
                 return
             
             # Get the channel object
             channel = self._get_channel(filename, channel_name)
             if not channel:
-                QMessageBox.warning(self.window, "Channel Error", 
-                                  f"Could not find channel '{channel_name}' in file '{filename}'.")
+                print(f"[PlotWizard] Could not find channel: {channel_name}")
                 return
             
-            # Generate legend name if not provided
-            if not legend_name:
-                legend_name = f"{channel_name} ({filename})"
+            # Determine plot type automatically
+            plot_type = self._determine_plot_type_for_channel(channel)
+            
+            # Generate legend name from channel name
+            legend_name = channel_name or channel.legend_label or channel.channel_id
+            
+            print(f"[PlotWizard] Adding to plot: {filename} - {channel_name} ({plot_type})")
             
             # Determine subplot number based on auto-stacking logic
             if not self.user_set_dimensions:
@@ -854,7 +854,8 @@ class PlotWizardManager(QObject):
                 'line_style': '-',
                 'marker': 'o' if plot_type == 'Scatter' else 'None',
                 'y_axis': y_axis,
-                'visible': True
+                'visible': True,
+                'size': self._get_channel_size(channel)  # Add size information
             }
             
             print(f"[PlotWizard] Added {plot_type} to subplot {subplot_num} on {y_axis} axis")
@@ -866,26 +867,18 @@ class PlotWizardManager(QObject):
             if subplot_num not in self.subplot_configs:
                 self._create_subplot_config(subplot_num)
             
-            # Update tables
-            self._update_line_config_table()
-            self._update_subplot_config_table()
-            
-            # Clear legend entry for next item
-            self.window.legend_entry.clear()
-            
             # Auto-update subplot dimensions
             self._auto_update_dimensions()
             
-            # Update plot
+            # Update tables and plot
+            self._update_line_config_table()
+            self._update_subplot_config_table()
             self._update_plot()
-            
-            print(f"[PlotWizard] Added {legend_name} to subplot {subplot_num}")
             
         except Exception as e:
             print(f"[PlotWizard] Error adding to plot: {str(e)}")
             traceback.print_exc()
-            QMessageBox.critical(self.window, "Error", f"Failed to add to plot: {str(e)}")
-            
+
     def _get_channel(self, filename, channel_name):
         """Get channel object by filename and channel name"""
         try:
@@ -917,6 +910,7 @@ class PlotWizardManager(QObject):
         """Create default configuration for a subplot"""
         self.subplot_configs[subplot_num] = {
             'subplot': subplot_num,
+            'subplot_name': f"Subplot {subplot_num}",  # Add subplot name
             'xlabel': 'Time',
             'ylabel': 'Amplitude',
             'show_legend': True,
@@ -934,10 +928,24 @@ class PlotWizardManager(QObject):
             'y_right_label': ''
         }
         
+    def _create_line_button_slot(self, method, index):
+        """Create a properly bound slot for line action buttons"""
+        return lambda checked=False: method(index)
+    
+    def _create_spinbox_slot(self, index):
+        """Create a properly bound slot for spinbox value changes"""
+        return lambda v: self._on_subplot_changed(index, v)
+    
     def _update_line_config_table(self):
         """Update the line configuration table"""
         try:
             table = self.window.line_config_table
+            
+            # Temporarily disconnect signals to prevent recursive calls
+            table.blockSignals(True)
+            
+            # Clear existing contents to avoid widget reuse issues
+            table.clearContents()
             table.setRowCount(len(self.plot_items))
             
             for i, item in enumerate(self.plot_items):
@@ -946,230 +954,560 @@ class PlotWizardManager(QObject):
                 subplot_spinbox.setMinimum(1)
                 subplot_spinbox.setMaximum(10)
                 subplot_spinbox.setValue(item['subplot'])
-                subplot_spinbox.valueChanged.connect(lambda v, idx=i: self._on_subplot_changed(idx, v))
+                subplot_spinbox.valueChanged.connect(self._create_spinbox_slot(i))
                 table.setCellWidget(i, 0, subplot_spinbox)
                 
-                # Legend name (editable)
-                table.setItem(i, 1, QTableWidgetItem(item['legend_name']))
+                # Channel Name (display only)
+                channel_name = item.get('channel_name', item.get('legend_name', 'Unknown'))
+                channel_item = QTableWidgetItem(str(channel_name))
+                channel_item.setFlags(channel_item.flags() & ~Qt.ItemIsEditable)
+                table.setItem(i, 1, channel_item)
                 
-                # Color (clickable)
-                color_item = QTableWidgetItem(item['color'])
-                color_item.setBackground(QColor(item['color']))
-                table.setItem(i, 2, color_item)
+                # Type (display only)
+                plot_type = item.get('plot_type', 'Unknown')
+                type_item = QTableWidgetItem(str(plot_type))
+                type_item.setFlags(type_item.flags() & ~Qt.ItemIsEditable)
+                table.setItem(i, 2, type_item)
                 
-                # Line style (dropdown) - disabled for spectrograms
-                line_combo = QComboBox()
-                line_combo.addItems(self.line_style_names)
-                try:
-                    style_idx = self.line_styles.index(item['line_style'])
-                    line_combo.setCurrentIndex(style_idx)
-                except ValueError:
-                    line_combo.setCurrentIndex(0)
-                line_combo.currentIndexChanged.connect(lambda idx, row=i: self._on_line_style_changed(row, idx))
+                # Size (display only)
+                size = item.get('size', 'Unknown')
+                size_item = QTableWidgetItem(str(size))
+                size_item.setFlags(size_item.flags() & ~Qt.ItemIsEditable)
+                table.setItem(i, 3, size_item)
                 
-                # Disable for spectrograms
-                if item['plot_type'] == 'Spectrogram':
-                    line_combo.setEnabled(False)
-                    line_combo.setToolTip("Line style not applicable to spectrograms")
+                # Actions (buttons)
+                actions_widget = QWidget()
+                actions_layout = QHBoxLayout(actions_widget)
+                actions_layout.setContentsMargins(2, 2, 2, 2)
+                actions_layout.setSpacing(2)
                 
-                table.setCellWidget(i, 3, line_combo)
+                # Info button - match main window icon
+                info_button = QPushButton("❗")
+                info_button.setMaximumWidth(25)
+                info_button.setMaximumHeight(25)
+                info_button.setToolTip("Channel information")
+                info_button.clicked.connect(self._create_line_button_slot(self._on_line_info_clicked, i))
+                actions_layout.addWidget(info_button)
                 
-                # Marker (dropdown) - disabled for spectrograms
-                marker_combo = QComboBox()
-                marker_names_with_none = ['None'] + self.marker_names
-                marker_combo.addItems(marker_names_with_none)
-                try:
-                    if item['marker'] == 'None':
-                        marker_combo.setCurrentIndex(0)
-                    else:
-                        marker_idx = self.markers.index(item['marker']) + 1
-                        marker_combo.setCurrentIndex(marker_idx)
-                except ValueError:
-                    marker_combo.setCurrentIndex(0)
-                marker_combo.currentIndexChanged.connect(lambda idx, row=i: self._on_marker_changed(row, idx))
+                # Paint button - match main window icon
+                paint_button = QPushButton("🎨")
+                paint_button.setMaximumWidth(25)
+                paint_button.setMaximumHeight(25)
+                paint_button.setToolTip("Edit line style")
+                paint_button.clicked.connect(self._create_line_button_slot(self._on_line_paint_clicked, i))
+                actions_layout.addWidget(paint_button)
                 
-                # Disable for spectrograms
-                if item['plot_type'] == 'Spectrogram':
-                    marker_combo.setEnabled(False)
-                    marker_combo.setToolTip("Markers not applicable to spectrograms")
+                # Delete button - match main window icon
+                delete_button = QPushButton("🗑️")
+                delete_button.setMaximumWidth(25)
+                delete_button.setMaximumHeight(25)
+                delete_button.setToolTip("Remove from plot")
+                delete_button.clicked.connect(self._create_line_button_slot(self._on_line_delete_clicked, i))
+                actions_layout.addWidget(delete_button)
                 
-                table.setCellWidget(i, 4, marker_combo)
-                
-                # Y Axis (dropdown)
-                y_axis_combo = QComboBox()
-                y_axis_combo.addItems(['left', 'right'])
-                y_axis_combo.setCurrentText(item['y_axis'])
-                y_axis_combo.currentTextChanged.connect(lambda text, row=i: self._on_y_axis_changed(row, text))
-                table.setCellWidget(i, 5, y_axis_combo)
-                
-        except Exception as e:
-            print(f"[PlotWizard] Error updating line config table: {str(e)}")
+                table.setCellWidget(i, 4, actions_widget)
             
+            # Re-enable signals
+            table.blockSignals(False)
+            
+        except Exception as e:
+            print(f"[PlotWizard] Error updating line config table: {e}")
+            traceback.print_exc()
+    
+    def _create_subplot_button_slot(self, method, subplot_num):
+        """Create a properly bound slot for subplot action buttons"""
+        return lambda checked=False: method(subplot_num)
+    
     def _update_subplot_config_table(self):
-        """Update the subplot configuration table with separate rows for different plot types"""
+        """Update the subplot configuration table"""
         try:
             table = self.window.subplot_config_table
+            
+            # Temporarily disconnect signals to prevent recursive calls
+            table.blockSignals(True)
+            
+            # Get unique subplot numbers from plot items
             subplot_nums = sorted(set(item['subplot'] for item in self.plot_items))
             
-            # Create configuration rows - one per subplot per plot type
-            config_rows = []
-            for subplot_num in subplot_nums:
-                subplot_items = [item for item in self.plot_items if item['subplot'] == subplot_num]
-                plot_types = set(item['plot_type'] for item in subplot_items)
-                
-                # If mixed types, create separate rows for each type
-                if len(plot_types) > 1:
-                    for plot_type in sorted(plot_types):  # Sort for consistent ordering
-                        config_rows.append({
-                            'subplot_num': subplot_num,
-                            'plot_type': plot_type,
-                            'mixed': True
-                        })
-                else:
-                    # Single type, one row
-                    config_rows.append({
-                        'subplot_num': subplot_num,
-                        'plot_type': list(plot_types)[0] if plot_types else 'Line',
-                        'mixed': False
-                    })
+            # Clear existing contents
+            table.clearContents()
+            table.setRowCount(len(subplot_nums))
             
-            table.setRowCount(len(config_rows))
-            
-            # Check if any subplot contains spectrograms to determine column header
-            has_any_spectrogram = any(item['plot_type'] == 'Spectrogram' for item in self.plot_items)
-            if has_any_spectrogram:
-                # Update column header to reflect mixed usage
-                table.setHorizontalHeaderLabels(["Subplot#", "Xlabel", "Ylabel", "Legend Label", "Legend", "Legend/Colorbar Pos", "Advanced"])
-            else:
-                # Standard legend-only header
-                table.setHorizontalHeaderLabels(["Subplot#", "Xlabel", "Ylabel", "Legend Label", "Legend", "Legend Pos", "Advanced"])
-            
-            # Temporarily disconnect signal to avoid recursion during updates
-            try:
-                table.cellChanged.disconnect()
-            except RuntimeError:
-                # Signal wasn't connected yet, which is fine
-                pass
-            
-            for i, row_config in enumerate(config_rows):
-                subplot_num = row_config['subplot_num']
-                plot_type = row_config['plot_type']
-                is_mixed = row_config['mixed']
-                
+            for i, subplot_num in enumerate(subplot_nums):
+                # Ensure subplot config exists
                 if subplot_num not in self.subplot_configs:
                     self._create_subplot_config(subplot_num)
                 
                 config = self.subplot_configs[subplot_num]
                 
-                # Subplot number (read-only) - show type suffix for mixed subplots
-                if is_mixed:
-                    display_text = f"{subplot_num} ({plot_type})"
-                else:
-                    display_text = str(subplot_num)
-                subplot_item = QTableWidgetItem(display_text)
+                # Subplot number (display only)
+                subplot_item = QTableWidgetItem(str(subplot_num))
                 subplot_item.setFlags(subplot_item.flags() & ~Qt.ItemIsEditable)
-                subplot_item.setData(Qt.UserRole, {'subplot_num': subplot_num, 'plot_type': plot_type})
                 table.setItem(i, 0, subplot_item)
                 
-                # X Label (editable) - same for all types in subplot, only editable on first row
-                xlabel_item = QTableWidgetItem(config['xlabel'])
-                xlabel_item.setData(Qt.UserRole, {'subplot_num': subplot_num, 'plot_type': plot_type})
+                # Subplot name (editable)
+                subplot_name = config.get('subplot_name', f"Subplot {subplot_num}")
+                name_item = QTableWidgetItem(str(subplot_name))
+                table.setItem(i, 1, name_item)
                 
-                # Check if this is the first row for this subplot
-                is_first_row_for_subplot = not any(
-                    config_rows[j]['subplot_num'] == subplot_num 
-                    for j in range(i)
+                # Actions (buttons)
+                actions_widget = QWidget()
+                actions_layout = QHBoxLayout(actions_widget)
+                actions_layout.setContentsMargins(2, 2, 2, 2)
+                actions_layout.setSpacing(2)
+                
+                # Info button - match main window icon
+                info_button = QPushButton("❗")
+                info_button.setMaximumWidth(25)
+                info_button.setMaximumHeight(25)
+                info_button.setToolTip("Subplot information")
+                info_button.clicked.connect(self._create_subplot_button_slot(self._on_subplot_info_clicked, subplot_num))
+                actions_layout.addWidget(info_button)
+                
+                # Paint button - match main window icon
+                paint_button = QPushButton("🎨")
+                paint_button.setMaximumWidth(25)
+                paint_button.setMaximumHeight(25)
+                paint_button.setToolTip("Edit subplot style")
+                paint_button.clicked.connect(self._create_subplot_button_slot(self._on_subplot_paint_clicked, subplot_num))
+                actions_layout.addWidget(paint_button)
+                
+                # Delete button - match main window icon
+                delete_button = QPushButton("🗑️")
+                delete_button.setMaximumWidth(25)
+                delete_button.setMaximumHeight(25)
+                delete_button.setToolTip("Remove subplot")
+                delete_button.clicked.connect(self._create_subplot_button_slot(self._on_subplot_delete_clicked, subplot_num))
+                actions_layout.addWidget(delete_button)
+                
+                table.setCellWidget(i, 2, actions_widget)
+            
+            # Re-enable signals
+            table.blockSignals(False)
+            
+        except Exception as e:
+            print(f"[PlotWizard] Error updating subplot config table: {e}")
+            traceback.print_exc()
+    
+    def _on_line_delete_clicked(self, item_index):
+        """Handle line delete button click"""
+        try:
+            if 0 <= item_index < len(self.plot_items):
+                item = self.plot_items[item_index]
+                reply = QMessageBox.question(
+                    self.window, 
+                    "Confirm Delete", 
+                    f"Remove '{item['legend_name']}' from plot?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No
                 )
                 
-                if not is_first_row_for_subplot:
-                    # Disable editing for duplicate subplot labels
-                    xlabel_item.setFlags(xlabel_item.flags() & ~Qt.ItemIsEditable)
-                    xlabel_item.setBackground(QColor(240, 240, 240))  # Light gray background
-                    xlabel_item.setToolTip("X label is shared - edit in the first row for this subplot")
+                if reply == QMessageBox.Yes:
+                    # Remove the item
+                    del self.plot_items[item_index]
+                    
+                    # Update tables and plot
+                    self._update_line_config_table()
+                    self._update_subplot_config_table()
+                    self._update_plot()
+                    
+                    print(f"[PlotWizard] Removed item {item_index} from plot")
+                    
+        except Exception as e:
+            print(f"[PlotWizard] Error deleting line: {e}")
+
+    # New action handler methods for the updated table structure
+    def _on_line_info_clicked(self, item_index):
+        """Handle line info button click"""
+        try:
+            if 0 <= item_index < len(self.plot_items):
+                item = self.plot_items[item_index]
+                channel_name = item.get('channel_name', item['legend_name'])
+                plot_type = item['plot_type']
+                subplot_num = item['subplot']
                 
-                table.setItem(i, 1, xlabel_item)
+                # Show info dialog
+                info_text = f"""
+                Channel: {channel_name}
+                Plot Type: {plot_type}
+                Subplot: {subplot_num}
+                Legend: {item['legend_name']}
+                Color: {item['color']}
+                Line Style: {item['line_style']}
+                Marker: {item['marker']}
+                Y-Axis: {item['y_axis']}
+                """
                 
-                # Y Label (editable) - type-specific for mixed subplots
-                if is_mixed:
-                    if plot_type == 'Spectrogram':
-                        ylabel_text = config.get('y_left_label', '').strip()
-                        if not ylabel_text:
-                            ylabel_text = 'Frequency (Hz)'
-                    else:  # Line plots
-                        ylabel_text = config.get('y_right_label', '').strip()
-                        if not ylabel_text:
-                            ylabel_text = 'Amplitude'
-                else:
-                    ylabel_text = config.get('y_left_label', '').strip()
-                    if not ylabel_text:
-                        ylabel_text = config['ylabel']
+                from PySide6.QtWidgets import QMessageBox
+                msg = QMessageBox(self.window)
+                msg.setWindowTitle("Line Information")
+                msg.setText(info_text)
+                msg.exec()
+        except Exception as e:
+            print(f"[PlotWizard] Error showing line info: {str(e)}")
+    
+    def _on_line_paint_clicked(self, item_index):
+        """Handle line paint button click - opens appropriate wizard based on plot type"""
+        try:
+            if 0 <= item_index < len(self.plot_items):
+                item = self.plot_items[item_index]
+                plot_type = item['plot_type']
                 
-                ylabel_item = QTableWidgetItem(ylabel_text)
-                ylabel_item.setData(Qt.UserRole, {'subplot_num': subplot_num, 'plot_type': plot_type})
-                table.setItem(i, 2, ylabel_item)
+                print(f"[PlotWizard] Paint clicked for {item['legend_name']} (type: {plot_type})")
                 
-                # Legend Label (editable) - collect legend names for this type
-                legend_labels = []
-                for item in self.plot_items:
-                    if item['subplot'] == subplot_num and (not is_mixed or item['plot_type'] == plot_type):
-                        legend_labels.append(item['legend_name'])
+                # Try to get the actual channel object if available
+                channel = item.get('channel')
                 
-                legend_label_text = "; ".join(legend_labels) if legend_labels else ""
-                legend_label_item = QTableWidgetItem(legend_label_text)
-                legend_label_item.setData(Qt.UserRole, {'subplot_num': subplot_num, 'plot_type': plot_type})
-                table.setItem(i, 3, legend_label_item)
+                if plot_type == 'Spectrogram' and channel:
+                    # Open spectrogram wizard for spectrogram plots
+                    try:
+                        from spectrogram_wizard import SpectrogramWizard
+                        wizard = SpectrogramWizard(channel, self.window)
+                        wizard.spectrogram_updated.connect(lambda ch_id: self._on_spectrogram_updated_from_wizard(item_index))
+                        wizard.exec()
+                        return
+                    except ImportError:
+                        print("[PlotWizard] SpectrogramWizard not available")
+                elif plot_type == 'Scatter' and channel:
+                    # Open marker wizard for scatter plots
+                    try:
+                        from marker_wizard import MarkerWizard
+                        # Create a pair config dict that matches MarkerWizard's expected format
+                        pair_config = {
+                            'name': item['legend_name'],
+                            'ref_channel': item['channel_name'],
+                            'test_channel': item['channel_name'],
+                            'marker_type': '○ Circle',
+                            'marker_color': item['color'],
+                            'marker_size': 50,
+                            'marker_alpha': 0.7,
+                            'edge_color': '#000000',
+                            'edge_width': 1.0,
+                            'fill_style': 'full',
+                            'z_order': 0
+                        }
+                        wizard = MarkerWizard(pair_config, self.window)
+                        # Connect the marker_updated signal to handle Apply button
+                        wizard.marker_updated.connect(lambda config: self._on_marker_updated_from_wizard(item_index, config))
+                        if wizard.exec():
+                            # Update item properties from wizard results
+                            self._on_marker_updated_from_wizard(item_index, wizard.pair_config)
+                        return
+                    except ImportError:
+                        print("[PlotWizard] MarkerWizard not available")
+                elif channel and hasattr(channel, 'channel_id'):
+                    # Open line wizard for line plots
+                    try:
+                        from line_wizard import LineWizard
+                        wizard = LineWizard(channel, self.window)
+                        wizard.channel_updated.connect(lambda ch_id: self._on_channel_updated_from_wizard(item_index))
+                        wizard.exec()
+                        return
+                    except ImportError:
+                        print("[PlotWizard] LineWizard not available")
                 
-                # Show Legend (checkbox) - type-specific for mixed subplots
-                legend_checkbox = QCheckBox()
-                if is_mixed and plot_type == 'Spectrogram':
-                    # For spectrograms in mixed subplots, this controls colorbar visibility
-                    legend_checkbox.setChecked(config.get('show_colorbar', True))
-                    legend_checkbox.setToolTip("Show/hide colorbar for spectrograms")
-                else:
-                    # For regular plots, this controls legend visibility
-                    legend_checkbox.setChecked(config['show_legend'])
-                    legend_checkbox.setToolTip("Show/hide legend for line plots")
-                
-                legend_checkbox.stateChanged.connect(lambda state, sn=subplot_num, pt=plot_type: self._on_legend_show_changed(sn, state, pt))
-                table.setCellWidget(i, 4, legend_checkbox)
-                
-                # Legend Position (dropdown) - or Colorbar Position for spectrograms
-                legend_pos_combo = QComboBox()
-                
-                if plot_type == 'Spectrogram':
-                    # Use colorbar positions for spectrograms
-                    colorbar_positions = ['bottom', 'top', 'right', 'left']
-                    legend_pos_combo.addItems(colorbar_positions)
-                    current_pos = config.get('colorbar_position', 'bottom')
-                    if current_pos not in colorbar_positions:
-                        current_pos = 'bottom'
-                    legend_pos_combo.setCurrentText(current_pos)
-                    legend_pos_combo.setToolTip("Controls colorbar position for spectrograms")
-                else:
-                    # Use standard legend positions for regular plots
-                    legend_positions = ['upper right', 'upper left', 'lower left', 'lower right', 
-                                      'right', 'center left', 'center right', 'lower center', 'upper center', 'center', 'best']
-                    legend_pos_combo.addItems(legend_positions)
-                    legend_pos_combo.setCurrentText(config['legend_position'])
-                    legend_pos_combo.setToolTip("Controls legend position")
-                
-                legend_pos_combo.currentTextChanged.connect(lambda text, sn=subplot_num, pt=plot_type: self._on_legend_pos_changed(sn, text, pt))
-                table.setCellWidget(i, 5, legend_pos_combo)
-                
-                # Advanced Settings Button
-                advanced_button = QPushButton("Edit")
-                advanced_button.setMaximumWidth(60)
-                advanced_button.clicked.connect(lambda checked, sn=subplot_num, pt=plot_type: self._on_advanced_settings_clicked(sn, pt))
-                table.setCellWidget(i, 6, advanced_button)
-            
-            # Reconnect signal
-            try:
-                table.cellChanged.connect(self._on_subplot_config_cell_changed)
-            except Exception as e:
-                print(f"[PlotWizard] Warning: Could not reconnect cellChanged signal: {e}")
+                # Fallback: Show property editing dialog
+                self._show_line_properties_dialog(item_index)
                 
         except Exception as e:
-            print(f"[PlotWizard] Error updating subplot config table: {str(e)}")
+            print(f"[PlotWizard] Error opening line paint dialog: {str(e)}")
+    
+    def _on_channel_updated_from_wizard(self, item_index):
+        """Handle channel updates from line wizard"""
+        try:
+            if 0 <= item_index < len(self.plot_items):
+                item = self.plot_items[item_index]
+                channel = item.get('channel')
+                if channel:
+                    # Update item properties from channel
+                    item['color'] = getattr(channel, 'color', item['color'])
+                    item['line_style'] = getattr(channel, 'style', item['line_style'])
+                    item['marker'] = getattr(channel, 'marker', item['marker'])
+                    item['legend_name'] = getattr(channel, 'legend_label', item['legend_name'])
+                    
+                    # Map channel y-axis to plot item y-axis
+                    channel_yaxis = getattr(channel, 'yaxis', 'y-left')
+                    item['y_axis'] = 'right' if channel_yaxis == 'y-right' else 'left'
+                    
+                    # Handle z-order
+                    item['z_order'] = getattr(channel, 'z_order', 0)
+                    
+                    print(f"[PlotWizard] Updated channel properties - Y-axis: {item['y_axis']}")
+                    
+                    # Update tables and plot
+                    self._update_line_config_table()
+                    self._update_plot()
+        except Exception as e:
+            print(f"[PlotWizard] Error updating from channel wizard: {str(e)}")
+    
+    def _on_marker_updated_from_wizard(self, item_index, marker_config):
+        """Handle marker updates from marker wizard"""
+        try:
+            if 0 <= item_index < len(self.plot_items):
+                item = self.plot_items[item_index]
+                
+                # Update item properties from marker config
+                item['color'] = marker_config.get('marker_color_hex', marker_config.get('marker_color', item['color']))
+                item['marker'] = marker_config.get('marker_symbol', item['marker'])
+                item['legend_name'] = marker_config.get('name', item['legend_name'])
+                
+                # Store additional marker properties for scatter plots
+                item['marker_size'] = marker_config.get('marker_size', 50)
+                item['marker_alpha'] = marker_config.get('marker_alpha', 0.7)
+                item['edge_color'] = marker_config.get('edge_color', '#000000')
+                item['edge_width'] = marker_config.get('edge_width', 1.0)
+                item['z_order'] = marker_config.get('z_order', 0)
+                
+                # Store x-axis preference for marker plots
+                x_axis = marker_config.get('x_axis', 'bottom')
+                item['x_axis'] = f"x-{x_axis}"  # Convert to channel format
+                
+                print(f"[PlotWizard] Updated marker properties for {item['legend_name']}, x-axis: {item['x_axis']}")
+                
+                # Update tables and plot
+                self._update_line_config_table()
+                self._update_plot()
+        except Exception as e:
+            print(f"[PlotWizard] Error updating from marker wizard: {str(e)}")
+    
+    def _on_spectrogram_updated_from_wizard(self, item_index):
+        """Handle spectrogram updates from spectrogram wizard"""
+        try:
+            if 0 <= item_index < len(self.plot_items):
+                item = self.plot_items[item_index]
+                channel = item.get('channel')
+                if channel:
+                    # Update item properties from channel
+                    item['legend_name'] = getattr(channel, 'legend_label', item['legend_name'])
+                    
+                    # Update subplot config with spectrogram-specific settings
+                    subplot_num = item['subplot']
+                    if subplot_num in self.subplot_configs:
+                        config = self.subplot_configs[subplot_num]
+                        
+                        # Update colorbar settings
+                        config['show_colorbar'] = getattr(channel, 'show_colorbar', True)
+                        config['colorbar_position'] = getattr(channel, 'colorbar_position', 'right')
+                        config['colorbar_label'] = getattr(channel, 'colorbar_label', 'Power (dB)')
+                        
+                        # Update colormap and color limits
+                        config['colormap'] = getattr(channel, 'colormap', 'viridis')
+                        config['clim'] = [
+                            getattr(channel, 'clim_min', None),
+                            getattr(channel, 'clim_max', None)
+                        ]
+                        
+                        # Update axis scales
+                        config['y_scale'] = getattr(channel, 'freq_scale', 'linear')
+                        config['x_scale'] = getattr(channel, 'time_scale', 'linear')
+                        
+                        # Update axis limits
+                        freq_limits = getattr(channel, 'freq_limits', [None, None])
+                        time_limits = getattr(channel, 'time_limits', [None, None])
+                        config['ylim'] = freq_limits
+                        config['xlim'] = time_limits
+                        
+                        print(f"[PlotWizard] Updated spectrogram properties for {item['legend_name']}")
+                        print(f"[PlotWizard] Colormap: {config['colormap']}, Colorbar: {config['show_colorbar']}")
+                    
+                    # Update tables and plot
+                    self._update_line_config_table()
+                    self._update_subplot_config_table()
+                    self._update_plot()
+        except Exception as e:
+            print(f"[PlotWizard] Error updating from spectrogram wizard: {str(e)}")
+    
+    def _show_line_properties_dialog(self, item_index):
+        """Show a simple properties dialog as fallback"""
+        try:
+            if 0 <= item_index < len(self.plot_items):
+                item = self.plot_items[item_index]
+                
+                from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QComboBox, QPushButton, QColorDialog, QDialogButtonBox
+                from PySide6.QtGui import QColor
+                
+                dialog = QDialog(self.window)
+                dialog.setWindowTitle(f"Line Properties - {item['legend_name']}")
+                dialog.setModal(True)
+                dialog.setMinimumSize(300, 200)
+                
+                layout = QVBoxLayout(dialog)
+                
+                # Legend name
+                legend_layout = QHBoxLayout()
+                legend_layout.addWidget(QLabel("Legend:"))
+                legend_edit = QLineEdit(item['legend_name'])
+                legend_layout.addWidget(legend_edit)
+                layout.addLayout(legend_layout)
+                
+                # Color
+                color_layout = QHBoxLayout()
+                color_layout.addWidget(QLabel("Color:"))
+                color_button = QPushButton()
+                color_button.setStyleSheet(f"background-color: {item['color']}; min-height: 30px;")
+                current_color = item['color']
+                
+                def choose_color():
+                    nonlocal current_color
+                    color = QColorDialog.getColor(QColor(current_color), dialog)
+                    if color.isValid():
+                        current_color = color.name()
+                        color_button.setStyleSheet(f"background-color: {current_color}; min-height: 30px;")
+                
+                color_button.clicked.connect(choose_color)
+                color_layout.addWidget(color_button)
+                layout.addLayout(color_layout)
+                
+                # Line style
+                style_layout = QHBoxLayout()
+                style_layout.addWidget(QLabel("Line Style:"))
+                style_combo = QComboBox()
+                styles = [('-', 'Solid'), ('--', 'Dashed'), ('-.', 'Dash-dot'), (':', 'Dotted'), ('None', 'None')]
+                for style_val, style_name in styles:
+                    style_combo.addItem(style_name, style_val)
+                    if style_val == item['line_style']:
+                        style_combo.setCurrentText(style_name)
+                style_layout.addWidget(style_combo)
+                layout.addLayout(style_layout)
+                
+                # Marker
+                marker_layout = QHBoxLayout()
+                marker_layout.addWidget(QLabel("Marker:"))
+                marker_combo = QComboBox()
+                markers = [('None', 'None'), ('o', 'Circle'), ('s', 'Square'), ('^', 'Triangle'), ('D', 'Diamond'), ('+', 'Plus'), ('x', 'X')]
+                for marker_val, marker_name in markers:
+                    marker_combo.addItem(marker_name, marker_val)
+                    if marker_val == item['marker']:
+                        marker_combo.setCurrentText(marker_name)
+                marker_layout.addWidget(marker_combo)
+                layout.addLayout(marker_layout)
+                
+                # Y-axis selection
+                y_axis_layout = QHBoxLayout()
+                y_axis_layout.addWidget(QLabel("Y-Axis:"))
+                y_axis_combo = QComboBox()
+                y_axis_combo.addItem("Left", "left")
+                y_axis_combo.addItem("Right", "right")
+                current_y_axis = item.get('y_axis', 'left')
+                if current_y_axis == 'right':
+                    y_axis_combo.setCurrentIndex(1)
+                else:
+                    y_axis_combo.setCurrentIndex(0)
+                y_axis_layout.addWidget(y_axis_combo)
+                layout.addLayout(y_axis_layout)
+                
+                # Dialog buttons
+                button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+                button_box.accepted.connect(dialog.accept)
+                button_box.rejected.connect(dialog.reject)
+                layout.addWidget(button_box)
+                
+                if dialog.exec() == QDialog.Accepted:
+                    # Apply changes
+                    item['legend_name'] = legend_edit.text()
+                    item['color'] = current_color
+                    item['line_style'] = style_combo.currentData()
+                    item['marker'] = marker_combo.currentData()
+                    item['y_axis'] = y_axis_combo.currentData()
+                    
+                    print(f"[PlotWizard] Updated line properties - Y-axis: {item['y_axis']}")
+                    
+                    # Update tables and plot
+                    self._update_line_config_table()
+                    self._update_plot()
+                    
+        except Exception as e:
+            print(f"[PlotWizard] Error showing line properties dialog: {str(e)}")
+    
+    def _on_subplot_info_clicked(self, subplot_num):
+        """Handle subplot info button click"""
+        try:
+            # Count items in this subplot
+            subplot_items = [item for item in self.plot_items if item['subplot'] == subplot_num]
+            plot_types = list(set(item['plot_type'] for item in subplot_items))
+            
+            config = self.subplot_configs.get(subplot_num, {})
+            
+            info_text = f"""
+            Subplot: {subplot_num}
+            Number of items: {len(subplot_items)}
+            Plot types: {', '.join(plot_types)}
+            X Label: {config.get('xlabel', 'Not set')}
+            Y Label: {config.get('ylabel', 'Not set')}
+            Legend: {'Show' if config.get('show_legend', True) else 'Hide'}
+            """
+            
+            from PySide6.QtWidgets import QMessageBox
+            msg = QMessageBox(self.window)
+            msg.setWindowTitle("Subplot Information")
+            msg.setText(info_text)
+            msg.exec()
+        except Exception as e:
+            print(f"[PlotWizard] Error showing subplot info: {str(e)}")
+    
+    def _on_subplot_paint_clicked(self, subplot_num):
+        """Handle subplot paint button click - opens subplot wizard"""
+        try:
+            # Ensure subplot config exists
+            if subplot_num not in self.subplot_configs:
+                self._create_subplot_config(subplot_num)
+            
+            config = self.subplot_configs[subplot_num]
+            
+            # Import and open the subplot wizard
+            from subplot_wizard import SubplotWizard
+            wizard = SubplotWizard(subplot_num, config, self.window)
+            wizard.subplot_updated.connect(self._on_subplot_wizard_updated)
+            wizard.exec()
+        except Exception as e:
+            print(f"[PlotWizard] Error opening subplot paint dialog: {str(e)}")
+    
+    def _on_subplot_delete_clicked(self, subplot_num):
+        """Handle subplot delete button click"""
+        try:
+            # Count items in this subplot
+            items_in_subplot = [item for item in self.plot_items if item['subplot'] == subplot_num]
+            
+            if not items_in_subplot:
+                # No items in subplot, just remove config
+                if subplot_num in self.subplot_configs:
+                    del self.subplot_configs[subplot_num]
+                self._update_subplot_config_table()
+                return
+            
+            reply = QMessageBox.question(
+                self.window, 
+                "Confirm Delete", 
+                f"Remove subplot {subplot_num} and all its {len(items_in_subplot)} items?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            
+            if reply == QMessageBox.Yes:
+                # Remove all items in this subplot
+                self.plot_items = [item for item in self.plot_items if item['subplot'] != subplot_num]
+                
+                # Remove subplot config
+                if subplot_num in self.subplot_configs:
+                    del self.subplot_configs[subplot_num]
+                
+                # Update tables and plot
+                self._update_line_config_table()
+                self._update_subplot_config_table()
+                self._update_plot()
+        except Exception as e:
+            print(f"[PlotWizard] Error deleting subplot: {e}")
+    
+    def _on_subplot_wizard_updated(self, subplot_num, updated_config):
+        """Handle subplot wizard updates"""
+        try:
+            # Update the subplot configuration
+            if subplot_num in self.subplot_configs:
+                self.subplot_configs[subplot_num].update(updated_config)
+                # Update the plot to reflect changes
+                self._update_plot()
+        except Exception as e:
+            print(f"[PlotWizard] Error updating subplot config: {str(e)}")
             
     def _on_subplot_changed(self, item_index, new_subplot):
         """Handle subplot number change"""
@@ -1628,7 +1966,7 @@ class PlotWizardManager(QObject):
         except Exception as e:
             print(f"[PlotWizard] Error applying figure settings: {e}")
             
-    def _apply_axis_styling(self, ax):
+    def _apply_axis_styling(self, ax, has_right_axis=False, is_right_axis=False):
         """Apply axis styling from global configuration"""
         try:
             # Tick properties
@@ -1649,15 +1987,21 @@ class PlotWizardManager(QObject):
             for spine in ax.spines.values():
                 spine.set_linewidth(axis_linewidth)
             
-            # Box style
+            # Box style - handle right axis specially
             box_style = self.global_config.get('box_style', 'full')
             if box_style == 'full':
                 # Keep all spines
                 pass
             elif box_style == 'left_bottom':
-                # Only left and bottom spines
-                ax.spines['top'].set_visible(False)
-                ax.spines['right'].set_visible(False)
+                if is_right_axis:
+                    # For right axis, only show right and bottom spines
+                    ax.spines['top'].set_visible(False)
+                    ax.spines['left'].set_visible(False)
+                else:
+                    # For left axis, show left and bottom, but preserve right if needed
+                    ax.spines['top'].set_visible(False)
+                    if not has_right_axis:
+                        ax.spines['right'].set_visible(False)
             elif box_style == 'none':
                 # No spines
                 for spine in ax.spines.values():
@@ -1827,6 +2171,61 @@ class PlotWizardManager(QObject):
                     
         except Exception as e:
             print(f"[PlotWizard] Error applying tick controls: {e}")
+    
+    def _configure_x_axis_positioning(self, ax_left, ax_right, items):
+        """Configure x-axis positioning based on channel preferences"""
+        try:
+            # Determine if any channels prefer top x-axis
+            has_top_x_axis = False
+            has_bottom_x_axis = False
+            
+            for item in items:
+                # Check channel xaxis property (for line/spectrogram wizards)
+                channel = item.get('channel')
+                if channel:
+                    xaxis_pref = getattr(channel, 'xaxis', 'x-bottom')
+                    if xaxis_pref == 'x-top':
+                        has_top_x_axis = True
+                    else:
+                        has_bottom_x_axis = True
+                
+                # Check item x_axis property (for marker wizard)
+                item_x_axis = item.get('x_axis', 'x-bottom')
+                if item_x_axis == 'x-top':
+                    has_top_x_axis = True
+                else:
+                    has_bottom_x_axis = True
+            
+            # Configure x-axis positioning
+            if has_top_x_axis and not has_bottom_x_axis:
+                # Only top x-axis requested
+                ax_left.xaxis.tick_top()
+                ax_left.xaxis.set_label_position('top')
+                if ax_right is not None:
+                    ax_right.xaxis.tick_top()
+                    ax_right.xaxis.set_label_position('top')
+                print(f"[PlotWizard] Configured top x-axis only")
+                
+            elif has_top_x_axis and has_bottom_x_axis:
+                # Both top and bottom x-axis requested (mixed channels)
+                ax_left.xaxis.set_ticks_position('both')
+                ax_left.xaxis.set_label_position('bottom')  # Default label position
+                if ax_right is not None:
+                    ax_right.xaxis.set_ticks_position('both')
+                    ax_right.xaxis.set_label_position('bottom')
+                print(f"[PlotWizard] Configured both top and bottom x-axis")
+                
+            else:
+                # Default to bottom x-axis
+                ax_left.xaxis.tick_bottom()
+                ax_left.xaxis.set_label_position('bottom')
+                if ax_right is not None:
+                    ax_right.xaxis.tick_bottom()
+                    ax_right.xaxis.set_label_position('bottom')
+                print(f"[PlotWizard] Configured bottom x-axis only")
+                
+        except Exception as e:
+            print(f"[PlotWizard] Error configuring x-axis positioning: {e}")
             
     def _update_config_controls(self):
         """Update the configuration controls to match global_config"""
@@ -2015,9 +2414,12 @@ class PlotWizardManager(QObject):
                             if ax_right is None:
                                 ax_right = ax_left.twinx()
                                 axes[subplot_num]['right'] = ax_right
+                                print(f"[PlotWizard] Created right y-axis for subplot {subplot_num}")
                             ax = ax_right
+                            print(f"[PlotWizard] Using right y-axis for {item['legend_name']}")
                         else:
                             ax = ax_left
+                            print(f"[PlotWizard] Using left y-axis for {item['legend_name']}")
                         
                         # Get channel data
                         channel = item['channel']
@@ -2074,11 +2476,27 @@ class PlotWizardManager(QObject):
                             default_linewidth = self.global_config.get('line_width', 2.0)
                             linewidth = default_linewidth if len(items) == 1 else max(default_linewidth, 2.0)
                             markersize = 5 if len(items) > 1 else 4
+                            z_order = item.get('z_order', 0)
                             ax.plot(x_plot, y_plot, color=color, linestyle=line_style, 
-                                   marker=marker, label=label, markersize=markersize, linewidth=linewidth)
+                                   marker=marker, label=label, markersize=markersize, linewidth=linewidth,
+                                   zorder=z_order)
                         elif plot_type == 'Scatter':
-                            ax.scatter(x_plot, y_plot, color=color, marker=marker or 'o', 
-                                     label=label, s=20, alpha=0.7)
+                            # Get marker properties from item (set by marker wizard)
+                            marker_size = item.get('marker_size', 20)
+                            marker_alpha = item.get('marker_alpha', 0.7)
+                            edge_color = item.get('edge_color', 'none')
+                            edge_width = item.get('edge_width', 0)
+                            z_order = item.get('z_order', 0)
+                            
+                            ax.scatter(x_plot, y_plot, 
+                                     c=color, 
+                                     marker=marker or 'o', 
+                                     label=label, 
+                                     s=marker_size, 
+                                     alpha=marker_alpha,
+                                     edgecolors=edge_color if edge_width > 0 else 'none',
+                                     linewidths=edge_width,
+                                     zorder=z_order)
                         elif plot_type == 'Bar':
                             # For bar plots, use limited data points to avoid overcrowding
                             if len(x_plot) > 50:
@@ -2096,7 +2514,11 @@ class PlotWizardManager(QObject):
                             colormap = config.get('colormap', 'viridis')
                             clim = config.get('clim', [None, None])
                             
-
+                            # Get channel-specific properties from spectrogram wizard
+                            channel_alpha = getattr(channel, 'alpha', 1.0)
+                            channel_interpolation = getattr(channel, 'interpolation', 'nearest')
+                            channel_shading = getattr(channel, 'shading', 'gouraud')
+                            
                             # Check if this is a real spectrogram channel with metadata
                             if hasattr(channel, 'metadata') and 'Zxx' in channel.metadata:
                                 # Real spectrogram data with pre-computed Zxx
@@ -2124,7 +2546,7 @@ class PlotWizardManager(QObject):
                                     # Convert to dB
                                     Zxx_db = 10 * np.log10(Zxx_plot + 1e-10)
                                     
-                                    # Apply color limits
+                                    # Apply color limits (from channel or config)
                                     if clim[0] is not None and clim[1] is not None:
                                         vmin, vmax = clim[0], clim[1]
                                     elif clim[0] is not None:
@@ -2134,12 +2556,12 @@ class PlotWizardManager(QObject):
                                     else:
                                         vmin, vmax = None, None
                                     
-                                    # Create the plot with enhanced transparency for overlaying
-                                    alpha_val = 0.7 if len(items) > 1 else 0.9
+                                    # Use channel alpha, but adjust for overlaying
+                                    alpha_val = channel_alpha * (0.7 if len(items) > 1 else 1.0)
                                     
-                                    # Use pcolormesh with proper axis order: (time, freq, power)
+                                    # Use pcolormesh with channel-specific shading
                                     im = ax.pcolormesh(t_axis, f_axis, Zxx_db, cmap=colormap, 
-                                                     shading='gouraud', alpha=alpha_val, vmin=vmin, vmax=vmax)
+                                                     shading=channel_shading, alpha=alpha_val, vmin=vmin, vmax=vmax)
                                 else:
                                     print(f"[PlotWizard] Invalid spectrogram data - Zxx shape: {Zxx.shape if hasattr(Zxx, 'shape') else 'unknown'}, t_axis: {len(t_axis)}, f_axis: {len(f_axis)}")
                                     continue
@@ -2162,9 +2584,9 @@ class PlotWizardManager(QObject):
                                 else:
                                     vmin, vmax = None, None
                                 
-                                # Create the plot with enhanced transparency for overlaying
-                                alpha_val = 0.7 if len(items) > 1 else 0.9
-                                im = ax.pcolormesh(t, f, Sxx_db, cmap=colormap, shading='gouraud', 
+                                # Use channel alpha, but adjust for overlaying
+                                alpha_val = channel_alpha * (0.7 if len(items) > 1 else 1.0)
+                                im = ax.pcolormesh(t, f, Sxx_db, cmap=colormap, shading=channel_shading, 
                                                  alpha=alpha_val, vmin=vmin, vmax=vmax)
                             else:
                                 print(f"[PlotWizard] Spectrogram requires at least 100 data points, got {len(y_plot)}")
@@ -2175,46 +2597,62 @@ class PlotWizardManager(QObject):
                             show_colorbar = config.get('show_colorbar', True)
                             if colorbar_key not in colorbars_added and show_colorbar:
                                 try:
-                                    # Get colorbar label and position from config
+                                    # Get colorbar properties from channel and config
                                     colorbar_label = config.get('colorbar_label', f'Power (dB) - {label}')
                                     colorbar_position = config.get('colorbar_position', 'bottom')
                                     
-                                    # Create colorbar with specified position and proper spacing
+                                    # Get enhanced colorbar properties from channel
+                                    colorbar_pad = getattr(channel, 'colorbar_pad', 0.05)
+                                    colorbar_shrink = getattr(channel, 'colorbar_shrink', 0.8)
+                                    colorbar_aspect = getattr(channel, 'colorbar_aspect', 20)
+                                    colorbar_ticks = getattr(channel, 'colorbar_ticks', 5)
+                                    tick_format = getattr(channel, 'tick_format', '%.1f')
+                                    label_fontsize = getattr(channel, 'colorbar_label_fontsize', 10)
+                                    tick_fontsize = getattr(channel, 'colorbar_tick_fontsize', 8)
+                                    
+                                    # Create colorbar with specified position and properties
                                     if colorbar_position in ['bottom', 'top']:
                                         orientation = 'horizontal'
-                                        pad = 0.15 if colorbar_position == 'bottom' else 0.08
-                                        shrink = 0.8  # Make colorbar smaller horizontally
-                                        aspect = 30   # Control thickness
+                                        location = colorbar_position
                                     else:  # 'left' or 'right'
                                         orientation = 'vertical'
-                                        pad = 0.05
-                                        shrink = 0.8  # Make colorbar smaller vertically
-                                        aspect = 20   # Control thickness
+                                        location = colorbar_position
                                     
-                                    # Create colorbar with proper positioning and sizing
-                                    if colorbar_position == 'left':
-                                        # For left position, create on the left side
-                                        cbar = self.window.figure.colorbar(im, ax=ax, label=colorbar_label,
-                                                                         orientation=orientation, pad=pad, 
-                                                                         location='left', shrink=shrink, aspect=aspect)
-                                    elif colorbar_position == 'right':
-                                        # For right position (default matplotlib behavior)
-                                        cbar = self.window.figure.colorbar(im, ax=ax, label=colorbar_label,
-                                                                         orientation=orientation, pad=pad,
-                                                                         shrink=shrink, aspect=aspect)
-                                    elif colorbar_position == 'top':
-                                        # For top position
-                                        cbar = self.window.figure.colorbar(im, ax=ax, label=colorbar_label,
-                                                                         orientation=orientation, pad=pad,
-                                                                         location='top', shrink=shrink, aspect=aspect)
-                                    else:  # 'bottom' (default)
-                                        # For bottom position
-                                        cbar = self.window.figure.colorbar(im, ax=ax, label=colorbar_label,
-                                                                         orientation=orientation, pad=pad,
-                                                                         location='bottom', shrink=shrink, aspect=aspect)
+                                    # Create colorbar with enhanced properties
+                                    cbar = self.window.figure.colorbar(
+                                        im, ax=ax, 
+                                        label=colorbar_label,
+                                        orientation=orientation, 
+                                        location=location,
+                                        pad=colorbar_pad, 
+                                        shrink=colorbar_shrink, 
+                                        aspect=colorbar_aspect
+                                    )
+                                    
+                                    # Configure colorbar ticks and labels
+                                    if orientation == 'horizontal':
+                                        cbar.ax.tick_params(labelsize=tick_fontsize)
+                                        cbar.set_label(colorbar_label, fontsize=label_fontsize)
+                                        
+                                        # Set custom tick locations and format
+                                        vmin, vmax = im.get_clim()
+                                        tick_locations = np.linspace(vmin, vmax, colorbar_ticks)
+                                        cbar.set_ticks(tick_locations)
+                                        tick_labels = [tick_format % val for val in tick_locations]
+                                        cbar.set_ticklabels(tick_labels)
+                                    else:  # vertical
+                                        cbar.ax.tick_params(labelsize=tick_fontsize)
+                                        cbar.set_label(colorbar_label, fontsize=label_fontsize)
+                                        
+                                        # Set custom tick locations and format
+                                        vmin, vmax = im.get_clim()
+                                        tick_locations = np.linspace(vmin, vmax, colorbar_ticks)
+                                        cbar.set_ticks(tick_locations)
+                                        tick_labels = [tick_format % val for val in tick_locations]
+                                        cbar.set_ticklabels(tick_labels)
                                     
                                     colorbars_added.add(colorbar_key)
-                                    print(f"[PlotWizard] Added colorbar at {colorbar_position} for subplot {subplot_num}")
+                                    print(f"[PlotWizard] Added enhanced colorbar at {colorbar_position} for subplot {subplot_num}")
                                 except Exception as cb_error:
                                     print(f"[PlotWizard] Colorbar warning: {cb_error}")
                             
@@ -2268,9 +2706,12 @@ class PlotWizardManager(QObject):
                         ax_right.set_ylabel(config['y_right_label'])
                     
                     # Apply axis styling
-                    self._apply_axis_styling(ax_left)
+                    self._apply_axis_styling(ax_left, has_right_axis=(ax_right is not None))
                     if ax_right is not None:
-                        self._apply_axis_styling(ax_right)
+                        self._apply_axis_styling(ax_right, is_right_axis=True)
+                    
+                    # Configure x-axis positioning based on channel preferences
+                    self._configure_x_axis_positioning(ax_left, ax_right, items)
                     
                     # Configure legend
                     if config['show_legend']:
@@ -2446,3 +2887,16 @@ class PlotWizardManager(QObject):
             QMessageBox.critical(self.window, "Error", 
                                f"Failed to load configuration: {str(e)}")
             return False 
+
+    def _get_channel_size(self, channel):
+        """Get the size/dimensions of channel data"""
+        try:
+            if hasattr(channel, 'xdata') and hasattr(channel, 'ydata'):
+                if channel.xdata is not None and channel.ydata is not None:
+                    return f"({len(channel.xdata)}, 2)"
+                elif channel.ydata is not None:
+                    return f"({len(channel.ydata)},)"
+            return "No data"
+        except Exception as e:
+            print(f"[PlotWizard] Error getting channel size: {e}")
+            return "Unknown"

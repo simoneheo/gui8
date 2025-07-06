@@ -81,6 +81,7 @@ class LineWizard(QDialog):
             'style': self.channel.style,
             'marker': self.channel.marker,
             'yaxis': self.channel.yaxis,
+            'xaxis': getattr(self.channel, 'xaxis', 'x-bottom'),
             'legend_label': self.channel.legend_label,
             'z_order': getattr(self.channel, 'z_order', 0)
         }
@@ -134,8 +135,13 @@ class LineWizard(QDialog):
         layout.addLayout(form_layout)
         
         # Axis Selection Group
-        axis_group = QGroupBox("Y-Axis")
+        axis_group = QGroupBox("Axis Position")
         axis_layout = QVBoxLayout(axis_group)
+        
+        # Y-Axis Selection
+        y_axis_label = QLabel("Y-Axis:")
+        y_axis_label.setStyleSheet("font-weight: bold;")
+        axis_layout.addWidget(y_axis_label)
         
         self.axis_button_group = QButtonGroup()
         self.left_axis_radio = QRadioButton("Left Axis")
@@ -146,6 +152,22 @@ class LineWizard(QDialog):
         
         axis_layout.addWidget(self.left_axis_radio)
         axis_layout.addWidget(self.right_axis_radio)
+        
+        # X-Axis Selection
+        x_axis_label = QLabel("X-Axis:")
+        x_axis_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        axis_layout.addWidget(x_axis_label)
+        
+        self.x_axis_button_group = QButtonGroup()
+        self.bottom_x_axis_radio = QRadioButton("Bottom Axis")
+        self.top_x_axis_radio = QRadioButton("Top Axis")
+        
+        self.x_axis_button_group.addButton(self.bottom_x_axis_radio, 0)
+        self.x_axis_button_group.addButton(self.top_x_axis_radio, 1)
+        
+        axis_layout.addWidget(self.bottom_x_axis_radio)
+        axis_layout.addWidget(self.top_x_axis_radio)
+        
         layout.addWidget(axis_group)
         
         # Preview section
@@ -183,6 +205,7 @@ class LineWizard(QDialog):
         self.style_combo.currentTextChanged.connect(self.update_preview)
         self.marker_combo.currentTextChanged.connect(self.update_preview)
         self.axis_button_group.buttonToggled.connect(self.update_preview)
+        self.x_axis_button_group.buttonToggled.connect(self.update_preview)
         self.bring_to_front_checkbox.toggled.connect(self.update_preview)
     
     def load_channel_properties(self):
@@ -219,6 +242,13 @@ class LineWizard(QDialog):
         else:
             self.right_axis_radio.setChecked(True)
         
+        # X-axis
+        channel_xaxis = getattr(self.channel, 'xaxis', 'x-bottom')
+        if channel_xaxis == "x-bottom":
+            self.bottom_x_axis_radio.setChecked(True)
+        else:
+            self.top_x_axis_radio.setChecked(True)
+        
         # Z-order (Bring to Front)
         z_order = getattr(self.channel, 'z_order', 0)
         self.bring_to_front_checkbox.setChecked(z_order > 0)
@@ -246,6 +276,7 @@ class LineWizard(QDialog):
         style_name = self.style_combo.currentText()
         marker_name = self.marker_combo.currentText()
         axis = "Left" if self.left_axis_radio.isChecked() else "Right"
+        x_axis = "Bottom" if self.bottom_x_axis_radio.isChecked() else "Top"
         legend_name = self.legend_edit.text() or self.channel.ylabel or "Unnamed"
         bring_to_front = "Yes" if self.bring_to_front_checkbox.isChecked() else "No"
         
@@ -256,7 +287,7 @@ class LineWizard(QDialog):
             <b>Color:</b> <span style="color: {color};">████</span> {color}<br>
             <b>Style:</b> {style_name}<br>
             <b>Marker:</b> {marker_name}<br>
-            <b>Axis:</b> {axis}<br>
+            <b>Axis:</b> {axis} - {x_axis}<br>
             <b>Bring to Front:</b> {bring_to_front}
         </div>
         """
@@ -304,6 +335,7 @@ class LineWizard(QDialog):
         
         # Axis
         self.channel.yaxis = "y-left" if self.left_axis_radio.isChecked() else "y-right"
+        self.channel.xaxis = "x-bottom" if self.bottom_x_axis_radio.isChecked() else "x-top"
         
         # Z-order (Bring to Front)
         self.channel.z_order = 10 if self.bring_to_front_checkbox.isChecked() else 0
@@ -318,6 +350,7 @@ class LineWizard(QDialog):
         self.channel.style = self.original_properties['style']
         self.channel.marker = self.original_properties['marker']
         self.channel.yaxis = self.original_properties['yaxis']
+        self.channel.xaxis = self.original_properties['xaxis']
         self.channel.legend_label = self.original_properties['legend_label']
         self.channel.z_order = self.original_properties['z_order']
     

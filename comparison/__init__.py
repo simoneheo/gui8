@@ -1,27 +1,27 @@
 """
 Comparison Methods Module
 
-This module contains various statistical and visual comparison methods for analyzing
-relationships between data channels. It follows the same pattern as the steps and
-mixers modules for consistency and extensibility.
+This module contains streamlined statistical and visual comparison methods for analyzing
+relationships between data channels. The methods have been optimized for the most
+common use cases while maintaining comprehensive functionality.
 
 Available comparison methods:
-- Correlation analysis (Pearson, Spearman, Kendall)
-- Bland-Altman analysis
-- Residual analysis
-- Time series comparison
-- Statistical tests
-- Custom comparison metrics
+- Correlation analysis (Pearson, Spearman) with integrated RMSE
+- Bland-Altman analysis for method comparison
+- Residual analysis with multiple fitting methods
+- Statistical tests (t-test, Wilcoxon, KS test)
+- Cross-correlation for time series analysis
 """
 
 from .base_comparison import BaseComparison
 from .comparison_registry import ComparisonRegistry
 
-# Import all comparison methods
+# Import streamlined comparison methods
 from .correlation_comparison import CorrelationComparison
 from .bland_altman_comparison import BlandAltmanComparison
 from .residual_comparison import ResidualComparison
 from .statistical_comparison import StatisticalComparison
+from .cross_correlation_comparison import CrossCorrelationComparison
 
 def load_all_comparisons(directory=None):
     """
@@ -36,7 +36,7 @@ def load_all_comparisons(directory=None):
     try:
         # Initialize the comparison registry
         ComparisonRegistry.initialize()
-        print("[Comparison] Successfully loaded all comparison methods")
+        print("[Comparison] Successfully loaded streamlined comparison methods")
         return True
     except Exception as e:
         print(f"[Comparison] Error loading comparison methods: {e}")
@@ -49,9 +49,10 @@ __all__ = [
     'BlandAltmanComparison', 
     'ResidualComparison',
     'StatisticalComparison',
+    'CrossCorrelationComparison',
     'load_all_comparisons'
 ]
 
 # Version info
-__version__ = '1.0.0'
+__version__ = '2.0.0'
 __author__ = 'GUI8 Development Team' 

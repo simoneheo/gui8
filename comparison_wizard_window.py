@@ -2,16 +2,18 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QComboBox, 
     QCheckBox, QTextEdit, QGroupBox, QFormLayout, QSplitter, QApplication, QListWidget, QSpinBox,
     QTableWidget, QRadioButton, QTableWidgetItem, QDialog, QStackedWidget, QMessageBox, QScrollArea,
-    QTabWidget, QFrame, QButtonGroup, QDoubleSpinBox
+    QTabWidget, QFrame, QButtonGroup, QDoubleSpinBox, QAbstractItemView, QHeaderView
 )
-from PySide6.QtCore import Qt, Signal, QTimer
-from PySide6.QtGui import QTextCursor, QIntValidator, QColor, QFont
+from PySide6.QtCore import Qt, Signal, QTimer, QPoint
+from PySide6.QtGui import QTextCursor, QIntValidator, QColor, QFont, QPixmap, QPainter, QPen, QBrush, QPolygon
 import pandas as pd
 from copy import deepcopy
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 import matplotlib.pyplot as plt
 import time
+import numpy as np
+from comparison.comparison_registry import ComparisonRegistry, load_all_comparisons
 
 class ComparisonWizardWindow(QMainWindow):
     """
@@ -50,6 +52,9 @@ class ComparisonWizardWindow(QMainWindow):
         
         # Auto-populate alignment parameters with initial selection
         self._auto_populate_alignment_parameters()
+        
+        # Initialize overlay options for the default selected method
+        self._initialize_default_method_selection()
         
     def _validate_initialization(self):
         """Validate that the wizard has necessary data to function"""
@@ -180,21 +185,29 @@ class ComparisonWizardWindow(QMainWindow):
     def _populate_comparison_methods(self):
         """Populate comparison methods from the registry"""
         try:
-            if hasattr(self, 'comparison_manager') and self.comparison_manager:
-                methods = self.comparison_manager.get_available_comparison_methods()
-            else:
-                # Fallback methods
-                methods = ["Correlation Analysis", "Bland-Altman Analysis", "Residual Analysis", "Statistical Tests"]
+            # Initialize comparison registry if not already done
+            if not ComparisonRegistry._initialized:
+                load_all_comparisons()
+            
+            # Get methods from registry
+            methods = ComparisonRegistry.get_all_methods()
+            
+            if not methods:
+                # Fallback methods if registry is empty
+                methods = ["Bland-Altman Analysis", "Correlation Analysis", "Residual Analysis", "Statistical Tests", "Cross-Correlation"]
+                print("[ComparisonWizard] Using fallback methods - comparison registry may not be loaded")
             
             self.method_list.clear()
             self.method_list.addItems(methods)
             if methods:
                 self.method_list.setCurrentRow(0)  # Select first method by default
                 
+            print(f"[ComparisonWizard] Loaded {len(methods)} comparison methods from registry")
+                
         except Exception as e:
             print(f"[ComparisonWizard] Error populating methods: {e}")
-            # Fallback
-            methods = ["Correlation Analysis", "Bland-Altman Analysis", "Residual Analysis", "Statistical Tests"]
+            # Fallback methods
+            methods = ["Bland-Altman Analysis", "Correlation Analysis", "Residual Analysis", "Statistical Tests", "Cross-Correlation"]
             self.method_list.clear()
             self.method_list.addItems(methods)
             if methods:
@@ -205,53 +218,123 @@ class ComparisonWizardWindow(QMainWindow):
         group = QGroupBox("Method Options")
         group.setStyleSheet("QGroupBox { font-weight: bold; }")
         self.method_controls_layout = QVBoxLayout(group)
-        
+
         # Create stacked widget to hold different method controls
         self.method_controls_stack = QStackedWidget()
         self.method_controls_layout.addWidget(self.method_controls_stack)
-        
+
         # Create controls for each method
         self._create_dynamic_method_controls()
-        
+
+        # Overlay Options (new section)
+        self._create_overlay_options(self.method_controls_layout)
+
+        # Performance Options (from old version)
+        performance_group = QGroupBox("Performance Options")
+        performance_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+        performance_layout = QVBoxLayout(performance_group)
+
+        # Downsampling option
+        downsample_layout = QHBoxLayout()
+        self.downsample_checkbox = QCheckBox("Limit Max Points:")
+        self.downsample_checkbox.setToolTip("Reduce data points for better performance with large datasets")
+        self.downsample_input = QLineEdit("5000")
+        self.downsample_input.setMaximumWidth(80)
+        self.downsample_input.setPlaceholderText("5000")
+        self.downsample_input.setEnabled(False)  # Initially disabled
+
+        # Connect checkbox to enable/disable input
+        self.downsample_checkbox.toggled.connect(self.downsample_input.setEnabled)
+
+        downsample_layout.addWidget(self.downsample_checkbox)
+        downsample_layout.addWidget(self.downsample_input)
+        downsample_layout.addStretch()
+
+        performance_layout.addLayout(downsample_layout)
+
+        # Additional performance options
+        other_perf_layout = QHBoxLayout()
+
+        self.fast_render_checkbox = QCheckBox("Fast Rendering")
+        self.fast_render_checkbox.setToolTip("Use simplified rendering for better performance")
+        self.fast_render_checkbox.setChecked(False)
+
+        self.cache_results_checkbox = QCheckBox("Cache Results")
+        self.cache_results_checkbox.setToolTip("Cache computation results to avoid recalculation")
+        self.cache_results_checkbox.setChecked(True)
+
+        other_perf_layout.addWidget(self.fast_render_checkbox)
+        other_perf_layout.addWidget(self.cache_results_checkbox)
+        other_perf_layout.addStretch()
+
+        performance_layout.addLayout(other_perf_layout)
+
+        # Density Display Options (from old version)
+        density_layout = QHBoxLayout()
+        density_layout.addWidget(QLabel("Density Display:"))
+        self.density_combo = QComboBox()
+        self.density_combo.addItems(["Scatter", "Hexbin", "KDE"])
+        self.density_combo.setToolTip("Choose display method for high-density data")
+        self.density_combo.setCurrentText("Scatter")
+
+        # Bin size for hexbin
+        self.bin_size_label = QLabel("Bin Size:")
+        self.bin_size_input = QLineEdit("20")
+        self.bin_size_input.setMaximumWidth(50)
+        self.bin_size_input.setToolTip("Number of hexagonal bins for hexbin display")
+
+        density_layout.addWidget(self.density_combo)
+        density_layout.addWidget(self.bin_size_label)
+        density_layout.addWidget(self.bin_size_input)
+        density_layout.addStretch()
+
+        performance_layout.addLayout(density_layout)
+
+        self.method_controls_layout.addWidget(performance_group)
+
         # Add Generate Plot button
         self.generate_plot_button = QPushButton("📊 Generate Plot")
         self.generate_plot_button.clicked.connect(self._on_generate_plot)
         self.method_controls_layout.addWidget(self.generate_plot_button)
-        
+
         layout.addWidget(group)
         
     def _create_dynamic_method_controls(self):
         """Create method controls dynamically from comparison registry"""
         try:
-            if hasattr(self, 'comparison_manager') and self.comparison_manager:
-                try:
-                    methods = self.comparison_manager.get_available_comparison_methods()
-                    print(f"[ComparisonWizard] Creating dynamic controls for methods: {methods}")
-                    
-                    for method_name in methods:
-                        try:
-                            method_info = self.comparison_manager.get_method_info(method_name)
+            # Initialize comparison registry if not already done
+            if not ComparisonRegistry._initialized:
+                load_all_comparisons()
+            
+            # Get methods from registry
+            methods = ComparisonRegistry.get_all_methods()
+            
+            if methods:
+                print(f"[ComparisonWizard] Creating dynamic controls for methods: {methods}")
+                
+                for method_name in methods:
+                    try:
+                        method_info = ComparisonRegistry.get_method_info(method_name)
+                        if method_info:
                             widget = self._create_controls_for_method(method_name, method_info)
                             self.method_controls_stack.addWidget(widget)
                             print(f"[ComparisonWizard] Created controls for {method_name}")
-                        except Exception as method_error:
-                            print(f"[ComparisonWizard] Error creating controls for {method_name}: {method_error}")
+                        else:
+                            print(f"[ComparisonWizard] No method info found for {method_name}")
                             # Create a simple placeholder widget for this method
                             placeholder = QWidget()
                             placeholder_layout = QVBoxLayout(placeholder)
-                            placeholder_layout.addWidget(QLabel(f"Error loading controls for {method_name}"))
+                            placeholder_layout.addWidget(QLabel(f"No parameters available for {method_name}"))
                             self.method_controls_stack.addWidget(placeholder)
-                    
-                    if len(methods) == 0:
-                        print("[ComparisonWizard] No methods available, using static controls")
-                        self._create_static_method_controls()
-                        
-                except Exception as manager_error:
-                    print(f"[ComparisonWizard] Error accessing comparison manager: {manager_error}")
-                    self._create_static_method_controls()
+                    except Exception as method_error:
+                        print(f"[ComparisonWizard] Error creating controls for {method_name}: {method_error}")
+                        # Create a simple placeholder widget for this method
+                        placeholder = QWidget()
+                        placeholder_layout = QVBoxLayout(placeholder)
+                        placeholder_layout.addWidget(QLabel(f"Error loading controls for {method_name}"))
+                        self.method_controls_stack.addWidget(placeholder)
             else:
-                print("[ComparisonWizard] No comparison manager available, using static controls")
-                # Fallback: create static controls
+                print("[ComparisonWizard] No methods available from registry, using static controls")
                 self._create_static_method_controls()
                 
         except Exception as e:
@@ -280,7 +363,18 @@ class ComparisonWizardWindow(QMainWindow):
             self._method_controls = {}
         self._method_controls[method_name] = {}
         
+        # List of overlay-related parameters to skip (now handled in overlay section)
+        overlay_params = {
+            'show_ci', 'confidence_intervals', 'compute_confidence_intervals',
+            'outlier_detection', 'confidence_bands', 'confidence_level',
+            'bootstrap_ci', 'confidence_interval'
+        }
+        
         for param_name, param_config in parameters.items():
+            # Skip overlay-related parameters
+            if param_name in overlay_params:
+                continue
+                
             control = self._create_parameter_control(param_name, param_config)
             if control:
                 # Use the shorter description for the label
@@ -288,9 +382,9 @@ class ComparisonWizardWindow(QMainWindow):
                 layout.addRow(label_text + ":", control)
                 self._method_controls[method_name][param_name] = control
         
-        # If no parameters, show a message
-        if not parameters:
-            label = QLabel("No configurable parameters for this method")
+        # If no parameters after filtering, show a message
+        if layout.rowCount() == 0:
+            label = QLabel("Method-specific parameters (overlays configured separately)")
             label.setStyleSheet("color: #666; font-style: italic;")
             layout.addWidget(label)
         
@@ -352,18 +446,23 @@ class ComparisonWizardWindow(QMainWindow):
         self.corr_type_combo.addItems(["pearson", "spearman", "kendall", "all"])
         layout.addRow("Correlation Type:", self.corr_type_combo)
         
-        # Confidence level
-        self.confidence_spin = QDoubleSpinBox()
-        self.confidence_spin.setRange(0.01, 0.99)
-        self.confidence_spin.setValue(0.95)
-        self.confidence_spin.setDecimals(2)
-        layout.addRow("Confidence Level:", self.confidence_spin)
-        
-        # Bootstrap samples
+        # Bootstrap samples (method-specific)
         self.bootstrap_spin = QSpinBox()
         self.bootstrap_spin.setRange(100, 10000)
         self.bootstrap_spin.setValue(1000)
         layout.addRow("Bootstrap Samples:", self.bootstrap_spin)
+        
+        # Remove outliers option
+        self.remove_outliers_checkbox = QCheckBox()
+        self.remove_outliers_checkbox.setChecked(False)
+        layout.addRow("Remove Outliers:", self.remove_outliers_checkbox)
+        
+        # Detrend method
+        self.detrend_combo = QComboBox()
+        self.detrend_combo.addItems(["none", "linear", "polynomial"])
+        layout.addRow("Detrend Method:", self.detrend_combo)
+        
+        # Note: confidence_level and compute_confidence_intervals moved to overlay section
         
         self.method_controls_stack.addWidget(widget)
         
@@ -372,22 +471,29 @@ class ComparisonWizardWindow(QMainWindow):
         widget = QWidget()
         layout = QFormLayout(widget)
         
-        # Agreement limits
+        # Agreement limits (keep this as it's method-specific, not overlay)
         self.agreement_spin = QDoubleSpinBox()
         self.agreement_spin.setRange(1.0, 3.0)
         self.agreement_spin.setValue(1.96)
         self.agreement_spin.setDecimals(2)
-        layout.addRow("Agreement Limits:", self.agreement_spin)
+        layout.addRow("Agreement Multiplier:", self.agreement_spin)
         
-        # Show confidence intervals
-        self.show_ci_checkbox = QCheckBox()
-        self.show_ci_checkbox.setChecked(True)
-        layout.addRow("Show CI:", self.show_ci_checkbox)
+        # Percentage difference option
+        self.percentage_diff_checkbox = QCheckBox()
+        self.percentage_diff_checkbox.setChecked(False)
+        layout.addRow("Percentage Differences:", self.percentage_diff_checkbox)
         
-        # Proportional bias
+        # Log transform option
+        self.log_transform_checkbox = QCheckBox()
+        self.log_transform_checkbox.setChecked(False)
+        layout.addRow("Log Transform:", self.log_transform_checkbox)
+        
+        # Proportional bias test
         self.prop_bias_checkbox = QCheckBox()
-        self.prop_bias_checkbox.setChecked(False)
-        layout.addRow("Proportional Bias:", self.prop_bias_checkbox)
+        self.prop_bias_checkbox.setChecked(True)
+        layout.addRow("Test Proportional Bias:", self.prop_bias_checkbox)
+        
+        # Note: show_ci moved to overlay section
         
         self.method_controls_stack.addWidget(widget)
         
@@ -396,15 +502,27 @@ class ComparisonWizardWindow(QMainWindow):
         widget = QWidget()
         layout = QFormLayout(widget)
         
+        # Residual type
+        self.residual_type_combo = QComboBox()
+        self.residual_type_combo.addItems(["absolute", "relative", "standardized", "studentized"])
+        layout.addRow("Residual Type:", self.residual_type_combo)
+        
         # Normality test
         self.normality_combo = QComboBox()
-        self.normality_combo.addItems(["shapiro", "kstest", "jarque_bera"])
+        self.normality_combo.addItems(["shapiro", "kstest", "jarque_bera", "anderson", "all"])
         layout.addRow("Normality Test:", self.normality_combo)
         
-        # Outlier detection
-        self.outlier_combo = QComboBox()
-        self.outlier_combo.addItems(["iqr", "zscore", "modified_zscore"])
-        layout.addRow("Outlier Detection:", self.outlier_combo)
+        # Trend analysis
+        self.trend_analysis_checkbox = QCheckBox()
+        self.trend_analysis_checkbox.setChecked(True)
+        layout.addRow("Trend Analysis:", self.trend_analysis_checkbox)
+        
+        # Autocorrelation test
+        self.autocorr_checkbox = QCheckBox()
+        self.autocorr_checkbox.setChecked(True)
+        layout.addRow("Autocorrelation Test:", self.autocorr_checkbox)
+        
+        # Note: outlier_detection moved to overlay section
         
         self.method_controls_stack.addWidget(widget)
         
@@ -413,19 +531,19 @@ class ComparisonWizardWindow(QMainWindow):
         widget = QWidget()
         layout = QFormLayout(widget)
         
-        # Alpha level
+        # Alpha level (significance level)
         self.alpha_spin = QDoubleSpinBox()
         self.alpha_spin.setRange(0.001, 0.1)
         self.alpha_spin.setValue(0.05)
         self.alpha_spin.setDecimals(3)
-        layout.addRow("Alpha Level:", self.alpha_spin)
+        layout.addRow("Significance Level (α):", self.alpha_spin)
         
         # Test suite
         self.test_suite_combo = QComboBox()
-        self.test_suite_combo.addItems(["basic", "comprehensive", "nonparametric"])
+        self.test_suite_combo.addItems(["basic", "comprehensive", "nonparametric", "robust"])
         layout.addRow("Test Suite:", self.test_suite_combo)
         
-        # Equal variance
+        # Equal variance assumption
         self.equal_var_combo = QComboBox()
         self.equal_var_combo.addItems(["assume_equal", "assume_unequal", "test"])
         layout.addRow("Equal Variance:", self.equal_var_combo)
@@ -434,6 +552,18 @@ class ComparisonWizardWindow(QMainWindow):
         self.normality_assume_combo = QComboBox()
         self.normality_assume_combo.addItems(["assume_normal", "assume_nonnormal", "test"])
         layout.addRow("Normality:", self.normality_assume_combo)
+        
+        # Multiple comparisons correction
+        self.multiple_comp_combo = QComboBox()
+        self.multiple_comp_combo.addItems(["none", "bonferroni", "holm", "fdr_bh"])
+        layout.addRow("Multiple Comparisons:", self.multiple_comp_combo)
+        
+        # Effect size measures
+        self.effect_size_checkbox = QCheckBox()
+        self.effect_size_checkbox.setChecked(True)
+        layout.addRow("Effect Size Measures:", self.effect_size_checkbox)
+        
+        # Note: confidence_intervals moved to overlay section
         
         self.method_controls_stack.addWidget(widget)
         
@@ -456,16 +586,23 @@ class ComparisonWizardWindow(QMainWindow):
         self.index_group = QGroupBox("Index Options")
         index_layout = QFormLayout(self.index_group)
         
-        # Start index
+        # Index mode
+        self.index_mode_combo = QComboBox()
+        self.index_mode_combo.addItems(["Truncate to Shortest", "Custom Range"])
+        self.index_mode_combo.currentTextChanged.connect(self._on_index_mode_changed)
+        index_layout.addRow("Mode:", self.index_mode_combo)
+        
+        # Custom range controls
         self.start_index_spin = QSpinBox()
         self.start_index_spin.setRange(0, 999999)
         self.start_index_spin.setValue(0)
+        self.start_index_spin.valueChanged.connect(self._on_alignment_parameter_changed)
         index_layout.addRow("Start Index:", self.start_index_spin)
         
-        # End index
         self.end_index_spin = QSpinBox()
         self.end_index_spin.setRange(0, 999999)
         self.end_index_spin.setValue(500)
+        self.end_index_spin.valueChanged.connect(self._on_alignment_parameter_changed)
         index_layout.addRow("End Index:", self.end_index_spin)
         
         # Index offset
@@ -473,6 +610,7 @@ class ComparisonWizardWindow(QMainWindow):
         self.index_offset_spin.setRange(-999999, 999999)
         self.index_offset_spin.setValue(0)
         self.index_offset_spin.setToolTip("Positive: shift test channel forward, Negative: shift reference channel forward")
+        self.index_offset_spin.valueChanged.connect(self._on_alignment_parameter_changed)
         index_layout.addRow("Offset:", self.index_offset_spin)
         
         group_layout.addWidget(self.index_group)
@@ -481,18 +619,25 @@ class ComparisonWizardWindow(QMainWindow):
         self.time_group = QGroupBox("Time Options")
         time_layout = QFormLayout(self.time_group)
         
-        # Start time
+        # Time mode
+        self.time_mode_combo = QComboBox()
+        self.time_mode_combo.addItems(["Overlap Region", "Custom Range"])
+        self.time_mode_combo.currentTextChanged.connect(self._on_time_mode_changed)
+        time_layout.addRow("Mode:", self.time_mode_combo)
+        
+        # Custom time range
         self.start_time_spin = QDoubleSpinBox()
         self.start_time_spin.setRange(-999999.0, 999999.0)
         self.start_time_spin.setValue(0.0)
         self.start_time_spin.setDecimals(3)
+        self.start_time_spin.valueChanged.connect(self._on_alignment_parameter_changed)
         time_layout.addRow("Start Time:", self.start_time_spin)
         
-        # End time
         self.end_time_spin = QDoubleSpinBox()
         self.end_time_spin.setRange(-999999.0, 999999.0)
         self.end_time_spin.setValue(10.0)
         self.end_time_spin.setDecimals(3)
+        self.end_time_spin.valueChanged.connect(self._on_alignment_parameter_changed)
         time_layout.addRow("End Time:", self.end_time_spin)
         
         # Time offset
@@ -501,6 +646,7 @@ class ComparisonWizardWindow(QMainWindow):
         self.time_offset_spin.setValue(0.0)
         self.time_offset_spin.setDecimals(3)
         self.time_offset_spin.setToolTip("Time offset to apply to test channel")
+        self.time_offset_spin.valueChanged.connect(self._on_alignment_parameter_changed)
         time_layout.addRow("Time Offset:", self.time_offset_spin)
         
         # Interpolation method
@@ -508,13 +654,13 @@ class ComparisonWizardWindow(QMainWindow):
         self.interpolation_combo.addItems(["linear", "nearest", "cubic"])
         time_layout.addRow("Interpolation:", self.interpolation_combo)
         
-        # Time resolution
+        # Time grid resolution
         self.round_to_spin = QDoubleSpinBox()
-        self.round_to_spin.setRange(0.0001, 10.0)
-        self.round_to_spin.setValue(1.0)
+        self.round_to_spin.setRange(0.0001, 1.0)
+        self.round_to_spin.setValue(0.01)
         self.round_to_spin.setDecimals(4)
-        self.round_to_spin.setToolTip("Time resolution (smaller = more points)")
-        time_layout.addRow("Time Resolution:", self.round_to_spin)
+        self.round_to_spin.setToolTip("Time grid resolution (smaller = more points)")
+        time_layout.addRow("Grid Resolution:", self.round_to_spin)
         
         group_layout.addWidget(self.time_group)
         
@@ -523,7 +669,7 @@ class ComparisonWizardWindow(QMainWindow):
         self.alignment_status_label.setStyleSheet("color: #666; font-size: 10px; padding: 5px;")
         group_layout.addWidget(self.alignment_status_label)
         
-        # Show/hide appropriate groups
+        # Show/hide appropriate groups (call after all widgets are created)
         self._on_alignment_mode_changed("Index-Based")
         
         layout.addWidget(group)
@@ -533,6 +679,13 @@ class ComparisonWizardWindow(QMainWindow):
         group = QGroupBox("Add Pair")
         group.setStyleSheet("QGroupBox { font-weight: bold; }")
         group_layout = QVBoxLayout(group)
+        
+        # Console output (like mixer wizard)
+        self.console_output = QTextEdit()
+        self.console_output.setReadOnly(True)
+        self.console_output.setPlaceholderText("Method information and guidance will appear here")
+        self.console_output.setMaximumHeight(120)
+        group_layout.addWidget(self.console_output)
         
         # Pair name input with label
         name_layout = QHBoxLayout()
@@ -558,35 +711,41 @@ class ComparisonWizardWindow(QMainWindow):
         # Results table at the top (like mixer wizard)
         self._build_results_table(right_layout)
         
-        # Plot area at the bottom (like mixer wizard)
+        # Plot area at the bottom (like mixer wizard plot area)
         self._build_plot_area(right_layout)
         
         main_splitter.addWidget(self.right_panel)
         
     def _build_results_table(self, layout):
-        """Build the results table showing active comparison pairs (like process wizard step table)"""
-        # Active pairs table header
-        layout.addWidget(QLabel("📋 Active Comparison Pairs:"))
+        """Build the results table showing active comparison pairs (like mixer wizard)"""
+        layout.addWidget(QLabel("Channels:"))
         
-        # Active pairs table (similar to process wizard step table)
-        self.active_pair_table = QTableWidget()
-        self.active_pair_table.setColumnCount(4)
-        self.active_pair_table.setHorizontalHeaderLabels(["Show", "Pair Name", "Style", "Status"])
+        self.active_pair_table = QTableWidget(0, 5)
+        self.active_pair_table.setHorizontalHeaderLabels(["Show", "Style", "Pair Name", "Shape", "Actions"])
+        self.active_pair_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.active_pair_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.active_pair_table.setMaximumHeight(200)
         
-        # Set column widths similar to process wizard
+        # Set column resize modes for better layout (matching mixer wizard)
         header = self.active_pair_table.horizontalHeader()
-        header.setStretchLastSection(True)
-        self.active_pair_table.setColumnWidth(0, 60)  # Show column
-        self.active_pair_table.setColumnWidth(1, 200)  # Pair name
-        self.active_pair_table.setColumnWidth(2, 80)   # Style column
+        header.setSectionResizeMode(0, QHeaderView.Fixed)     # Show column - fixed width
+        header.setSectionResizeMode(1, QHeaderView.Fixed)     # Style - fixed width
+        header.setSectionResizeMode(2, QHeaderView.Fixed)     # Pair Name - fixed width
+        header.setSectionResizeMode(3, QHeaderView.Fixed)     # Shape - fixed width
+        header.setSectionResizeMode(4, QHeaderView.Stretch)   # Actions - stretches
         
-        self.active_pair_table.setMaximumHeight(200)  # Match process wizard table height
+        # Set specific column widths (matching mixer wizard)
+        self.active_pair_table.setColumnWidth(0, 60)   # Show checkbox
+        self.active_pair_table.setColumnWidth(1, 80)   # Style preview
+        self.active_pair_table.setColumnWidth(2, 120)  # Pair Name column
+        self.active_pair_table.setColumnWidth(3, 80)   # Shape column
+        # Actions column will stretch
+        
         self.active_pair_table.setAlternatingRowColors(True)
-        self.active_pair_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.active_pair_table.setShowGrid(True)
         self.active_pair_table.setGridStyle(Qt.SolidLine)
         
-        # Style similar to process wizard
+        # Style similar to mixer wizard
         self.active_pair_table.setStyleSheet("""
             QTableWidget {
                 gridline-color: #ddd;
@@ -764,6 +923,7 @@ class ComparisonWizardWindow(QMainWindow):
         
         # Method selection signal
         self.method_list.itemClicked.connect(self._on_method_selected)
+        self.method_list.itemSelectionChanged.connect(self._on_method_selection_changed)
         
         # Pair management signals
         self.add_pair_button.clicked.connect(self._on_add_pair)
@@ -771,12 +931,64 @@ class ComparisonWizardWindow(QMainWindow):
         # Alignment signals
         self.alignment_mode_combo.currentTextChanged.connect(self._on_alignment_mode_changed)
         
+        # Connect overlay option signals after widgets are created
+        self._connect_overlay_signals()
+        
+        # Performance option signals (from old version)
+        if hasattr(self, 'density_combo'):
+            self.density_combo.currentTextChanged.connect(self._on_density_display_changed)
+        if hasattr(self, 'bin_size_input'):
+            self.bin_size_input.textChanged.connect(self._trigger_plot_update)
+        if hasattr(self, 'downsample_checkbox'):
+            self.downsample_checkbox.stateChanged.connect(self._trigger_plot_update)
+        if hasattr(self, 'downsample_input'):
+            self.downsample_input.textChanged.connect(self._trigger_plot_update)
+        if hasattr(self, 'fast_render_checkbox'):
+            self.fast_render_checkbox.stateChanged.connect(self._trigger_plot_update)
+        if hasattr(self, 'cache_results_checkbox'):
+            self.cache_results_checkbox.stateChanged.connect(self._trigger_plot_update)
+        
         # Update timer for delayed operations
         self.update_timer = QTimer()
         self.update_timer.setSingleShot(True)
         self.update_timer.timeout.connect(self._delayed_update)
         self.update_delay = 500  # 500ms delay
+
+    def _connect_overlay_signals(self):
+        """Connect overlay option signals to plot update"""
+        overlay_widgets = [
+            'y_equals_x_checkbox', 'ci_checkbox', 'outlier_checkbox',
+            'bias_line_checkbox', 'loa_checkbox', 'regression_line_checkbox',
+            'error_bands_checkbox', 'confidence_bands_checkbox', 'custom_line_checkbox'
+        ]
         
+        for widget_name in overlay_widgets:
+            if hasattr(self, widget_name):
+                widget = getattr(self, widget_name)
+                widget.stateChanged.connect(self._on_overlay_changed)
+                print(f"[ComparisonWizard] Connected {widget_name} to overlay change handler")
+        
+        # Connect custom line edit
+        if hasattr(self, 'custom_line_edit'):
+            self.custom_line_edit.textChanged.connect(self._on_overlay_changed)
+            print("[ComparisonWizard] Connected custom_line_edit to overlay change handler")
+
+    def _on_method_selection_changed(self):
+        """Handle method selection changes (for programmatic selection)"""
+        selected_items = self.method_list.selectedItems()
+        if selected_items:
+            self._on_method_selected(selected_items[0])
+
+    def _on_overlay_changed(self):
+        """Handle overlay option changes with immediate plot update"""
+        print("[ComparisonWizard] Overlay option changed, triggering immediate plot update...")
+        
+        # Only update if we have active pairs to avoid unnecessary updates
+        if len(self.active_pairs) > 0:
+            self._trigger_plot_update()
+        else:
+            print("[ComparisonWizard] No active pairs, skipping plot update")
+
     def _on_alignment_mode_changed(self, text):
         """Handle alignment mode changes (like mixer wizard)"""
         print(f"[ComparisonWizard] Alignment mode changed to: {text}")
@@ -794,6 +1006,93 @@ class ComparisonWizardWindow(QMainWindow):
         
         # No automatic plot update - only when Generate Plot button is clicked
         
+    def _on_index_mode_changed(self, mode):
+        """Handle index mode change"""
+        enable_custom = (mode == "Custom Range")
+        self.start_index_spin.setEnabled(enable_custom)
+        self.end_index_spin.setEnabled(enable_custom)
+        
+        # Auto-populate alignment parameters when mode changes
+        self._auto_populate_alignment_parameters()
+        
+    def _on_time_mode_changed(self, mode):
+        """Handle time mode change"""
+        enable_custom = (mode == "Custom Range")
+        self.start_time_spin.setEnabled(enable_custom)
+        self.end_time_spin.setEnabled(enable_custom)
+        
+        # Auto-populate alignment parameters when mode changes
+        self._auto_populate_alignment_parameters()
+
+    def _on_alignment_parameter_changed(self):
+        """Handle alignment parameter value changes"""
+        # Update alignment status display if needed
+        self._update_alignment_status()
+    
+    def _on_density_display_changed(self):
+        """Handle changes in density display type (from old version)"""
+        if hasattr(self, 'density_combo'):
+            density_type = self.density_combo.currentText().lower()
+            
+            # Enable/disable bin size input based on density type
+            if hasattr(self, 'bin_size_input') and hasattr(self, 'bin_size_label'):
+                enable_bin_size = density_type == 'hexbin'
+                self.bin_size_input.setEnabled(enable_bin_size)
+                self.bin_size_label.setEnabled(enable_bin_size)
+        
+        # Trigger plot update if needed
+        self._trigger_plot_update()
+    
+    def _update_alignment_status(self):
+        """Update alignment status label with current validation information"""
+        ref_channel = self._get_selected_channel("reference")
+        test_channel = self._get_selected_channel("test")
+        
+        if not ref_channel or not test_channel:
+            self.alignment_status_label.setText("Select channels to configure alignment")
+            self.alignment_status_label.setStyleSheet("color: #666; font-size: 10px; padding: 5px;")
+            return
+        
+        # Get current alignment configuration
+        alignment_config = self._get_alignment_config()
+        
+        # Perform basic validation (similar to mixer wizard)
+        try:
+            len_ref = len(ref_channel.ydata) if ref_channel.ydata is not None else 0
+            len_test = len(test_channel.ydata) if test_channel.ydata is not None else 0
+            
+            if len_ref == len_test:
+                status_msg = f"Channels compatible: {len_ref} samples each"
+                if alignment_config.get('offset', 0) != 0:
+                    status_msg += f" - Offset: {alignment_config['offset']}"
+                    self.alignment_status_label.setStyleSheet("color: orange; font-size: 10px; padding: 5px;")
+                else:
+                    status_msg += " - No alignment needed"
+                    self.alignment_status_label.setStyleSheet("color: green; font-size: 10px; padding: 5px;")
+            else:
+                status_msg = f"Channels compatible: Ref({len_ref}) + Test({len_test}) samples"
+                if alignment_config.get('alignment_method') == 'index':
+                    if alignment_config.get('mode') == 'truncate':
+                        status_msg += " - Will truncate to shortest"
+                    else:
+                        start_idx = alignment_config.get('start_index', 0)
+                        end_idx = alignment_config.get('end_index', 500)
+                        status_msg += f" - Custom range: {start_idx}-{end_idx}"
+                else:  # time-based
+                    if alignment_config.get('mode') == 'overlap':
+                        status_msg += " - Will use overlap region"
+                    else:
+                        start_time = alignment_config.get('start_time', 0.0)
+                        end_time = alignment_config.get('end_time', 10.0)
+                        status_msg += f" - Custom range: {start_time:.3f}-{end_time:.3f}s"
+                self.alignment_status_label.setStyleSheet("color: orange; font-size: 10px; padding: 5px;")
+            
+            self.alignment_status_label.setText(status_msg)
+            
+        except Exception as e:
+            self.alignment_status_label.setText(f"Validation error: {str(e)}")
+            self.alignment_status_label.setStyleSheet("color: red; font-size: 10px; padding: 5px;")
+        
     def _on_method_selected(self, item):
         """Handle method selection change"""
         if not item:
@@ -806,11 +1105,196 @@ class ComparisonWizardWindow(QMainWindow):
         if method_index < self.method_controls_stack.count():
             self.method_controls_stack.setCurrentIndex(method_index)
         
-        # No automatic plot update - only when Generate Plot button is clicked
+        # Update console with method information
+        self._update_console_for_method(method_name)
         
+        # Update overlay options based on method
+        self._update_overlay_options(method_name)
+        
+        # Set default overlay states for the method
+        self._set_default_overlay_states(method_name)
+        
+        # No automatic plot update - only when Generate Plot button is clicked
+
+    def _set_default_overlay_states(self, method_name):
+        """Set default overlay states based on the selected method"""
+        try:
+            print(f"[ComparisonWizard] Setting default overlay states for: {method_name}")
+            
+            # Reset all to unchecked first
+            overlay_checkboxes = [
+                'y_equals_x_checkbox', 'ci_checkbox', 'outlier_checkbox',
+                'bias_line_checkbox', 'loa_checkbox', 'regression_line_checkbox',
+                'error_bands_checkbox', 'confidence_bands_checkbox', 'custom_line_checkbox'
+            ]
+            
+            for checkbox_name in overlay_checkboxes:
+                if hasattr(self, checkbox_name):
+                    checkbox = getattr(self, checkbox_name)
+                    checkbox.setChecked(False)
+            
+            # Set method-specific defaults
+            if method_name == "Bland-Altman Analysis":
+                print("[ComparisonWizard] Setting Bland-Altman defaults: bias line and LoA")
+                if hasattr(self, 'bias_line_checkbox') and self.bias_line_checkbox.isVisible():
+                    self.bias_line_checkbox.setChecked(True)
+                    print("[ComparisonWizard] ✓ Bias line checkbox set to checked")
+                if hasattr(self, 'loa_checkbox') and self.loa_checkbox.isVisible():
+                    self.loa_checkbox.setChecked(True)
+                    print("[ComparisonWizard] ✓ LoA checkbox set to checked")
+                    
+            elif method_name == "Correlation Analysis":
+                print("[ComparisonWizard] Setting Correlation defaults: y=x line and regression line")
+                if hasattr(self, 'y_equals_x_checkbox') and self.y_equals_x_checkbox.isVisible():
+                    self.y_equals_x_checkbox.setChecked(True)
+                if hasattr(self, 'regression_line_checkbox') and self.regression_line_checkbox.isVisible():
+                    self.regression_line_checkbox.setChecked(True)
+                    
+            elif method_name == "Cross-Correlation":
+                print("[ComparisonWizard] Setting Cross-Correlation defaults: confidence bands")
+                if hasattr(self, 'confidence_bands_checkbox') and self.confidence_bands_checkbox.isVisible():
+                    self.confidence_bands_checkbox.setChecked(True)
+                    
+            print(f"[ComparisonWizard] Completed setting default overlay states for {method_name}")
+                    
+        except Exception as e:
+            print(f"[ComparisonWizard] Error setting default overlay states: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _update_overlay_options(self, method_name):
+        """Show or hide overlay options based on the selected method"""
+        # Hide all overlay options first
+        for widget in self.overlay_widgets.values():
+            widget.hide()
+
+        # Show specific overlays based on method
+        if method_name == "Bland-Altman Analysis":
+            self.overlay_widgets['ci'].show()
+            self.overlay_widgets['bias_line'].show()
+            self.overlay_widgets['loa'].show()
+            self.overlay_widgets['outlier'].show()
+            self.overlay_widgets['custom_line'].show()
+            
+        elif method_name == "Correlation Analysis":
+            self.overlay_widgets['y_equals_x'].show()
+            self.overlay_widgets['ci'].show()
+            self.overlay_widgets['regression_line'].show()
+            self.overlay_widgets['outlier'].show()
+            self.overlay_widgets['custom_line'].show()
+            
+        elif method_name == "Residual Analysis":
+            self.overlay_widgets['outlier'].show()
+            self.overlay_widgets['ci'].show()
+            self.overlay_widgets['custom_line'].show()
+            
+        elif method_name == "Statistical Tests":
+            self.overlay_widgets['ci'].show()
+            self.overlay_widgets['outlier'].show()
+            self.overlay_widgets['y_equals_x'].show()
+            self.overlay_widgets['custom_line'].show()
+            
+        elif method_name == "Cross-Correlation":
+            self.overlay_widgets['confidence_bands'].show()
+            self.overlay_widgets['custom_line'].show()
+            
+        # Default case - show basic overlays
+        else:
+            self.overlay_widgets['y_equals_x'].show()
+            self.overlay_widgets['ci'].show()
+            self.overlay_widgets['custom_line'].show()
+
+    def _create_overlay_options(self, layout):
+        """Create overlay options group"""
+        self.overlay_group = QGroupBox("Overlay Options")
+        self.overlay_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+        self.overlay_layout = QVBoxLayout(self.overlay_group)
+
+        # y = x line toggle (for scatter-type plots)
+        self.y_equals_x_checkbox = QCheckBox("Show y = x Line")
+        self.y_equals_x_checkbox.setToolTip("Toggle y = x line overlay for perfect agreement reference")
+        self.overlay_layout.addWidget(self.y_equals_x_checkbox)
+
+        # Confidence interval (for multiple methods)
+        self.ci_checkbox = QCheckBox("Confidence Interval (95%)")
+        self.ci_checkbox.setToolTip("Show 95% confidence interval")
+        self.overlay_layout.addWidget(self.ci_checkbox)
+
+        # Outlier highlight (for residual and statistical methods)
+        self.outlier_checkbox = QCheckBox("Highlight Outliers")
+        self.outlier_checkbox.setToolTip("Identify and highlight statistical outliers")
+        self.overlay_layout.addWidget(self.outlier_checkbox)
+
+        # Bias line (for Bland-Altman)
+        self.bias_line_checkbox = QCheckBox("Show Bias Line")
+        self.bias_line_checkbox.setToolTip("Show mean bias line (Bland-Altman)")
+        self.overlay_layout.addWidget(self.bias_line_checkbox)
+
+        # Limits of Agreement (for Bland-Altman)
+        self.loa_checkbox = QCheckBox("Show Limits of Agreement")
+        self.loa_checkbox.setToolTip("Show upper and lower limits of agreement (±1.96×SD)")
+        self.overlay_layout.addWidget(self.loa_checkbox)
+
+        # Regression line (for correlation/scatter plots)
+        self.regression_line_checkbox = QCheckBox("Show Regression Line")
+        self.regression_line_checkbox.setToolTip("Show linear regression line")
+        self.overlay_layout.addWidget(self.regression_line_checkbox)
+
+        # Error bands (for RMSE and error analysis)
+        self.error_bands_checkbox = QCheckBox("Show Error Bands")
+        self.error_bands_checkbox.setToolTip("Show ±RMSE error bands around identity line")
+        self.overlay_layout.addWidget(self.error_bands_checkbox)
+
+        # Confidence bands (for cross-correlation)
+        self.confidence_bands_checkbox = QCheckBox("Show Confidence Bands")
+        self.confidence_bands_checkbox.setToolTip("Show confidence bands for cross-correlation")
+        self.overlay_layout.addWidget(self.confidence_bands_checkbox)
+
+        # Custom line option (general purpose)
+        self.custom_line_widget = QWidget()
+        custom_line_layout = QHBoxLayout(self.custom_line_widget)
+        custom_line_layout.setContentsMargins(0, 0, 0, 0)
+        self.custom_line_checkbox = QCheckBox("Custom Line (y = ")
+        self.custom_line_checkbox.setToolTip("Add a custom horizontal or diagonal line to the plot")
+        self.custom_line_edit = QLineEdit("0.0")
+        self.custom_line_edit.setMaximumWidth(60)
+        custom_line_layout.addWidget(self.custom_line_checkbox)
+        custom_line_layout.addWidget(self.custom_line_edit)
+        custom_line_layout.addWidget(QLabel(")"))
+        custom_line_layout.addStretch()
+        self.overlay_layout.addWidget(self.custom_line_widget)
+
+        # Store all overlay widgets for easy show/hide management
+        self.overlay_widgets = {
+            'y_equals_x': self.y_equals_x_checkbox,
+            'ci': self.ci_checkbox,
+            'outlier': self.outlier_checkbox,
+            'bias_line': self.bias_line_checkbox,
+            'loa': self.loa_checkbox,
+            'regression_line': self.regression_line_checkbox,
+            'error_bands': self.error_bands_checkbox,
+            'confidence_bands': self.confidence_bands_checkbox,
+            'custom_line': self.custom_line_widget
+        }
+
+        layout.addWidget(self.overlay_group)
+
     def _trigger_plot_update(self):
-        """Trigger a delayed plot update for performance"""
-        self.update_timer.start(self.update_delay)
+        """Trigger a plot update when overlay options change"""
+        print("[ComparisonWizard] Overlay option changed, updating plot...")
+        
+        # Update the plot immediately when overlay options change
+        if hasattr(self, 'comparison_manager') and self.comparison_manager:
+            # Get current plot configuration with updated overlay parameters
+            plot_config = self._get_plot_config()
+            
+            # Regenerate the plot with updated overlay settings
+            self.comparison_manager._on_plot_generated(plot_config)
+            
+            print(f"[ComparisonWizard] Plot updated with overlay parameters: {plot_config.get('overlay_params', {})}")
+        else:
+            # If no comparison manager, just start the timer for delayed update
+            self.update_timer.start(self.update_delay)
             
     def _delayed_update(self):
         """Perform delayed update operations"""
@@ -865,6 +1349,35 @@ class ComparisonWizardWindow(QMainWindow):
             'checked_pairs': self.get_checked_pairs()
         }
         
+        # Add overlay parameters from the overlay section
+        overlay_params = self._get_overlay_parameters()
+        config.update(overlay_params)
+        
+        # Add performance options
+        if hasattr(self, 'downsample_checkbox') and self.downsample_checkbox.isChecked():
+            try:
+                max_points = int(self.downsample_input.text())
+                config['downsample'] = max_points
+            except (ValueError, AttributeError):
+                config['downsample'] = 5000  # Default fallback
+        
+        if hasattr(self, 'fast_render_checkbox'):
+            config['fast_render'] = self.fast_render_checkbox.isChecked()
+            
+        if hasattr(self, 'cache_results_checkbox'):
+            config['cache_results'] = self.cache_results_checkbox.isChecked()
+            
+        # Add density display options
+        if hasattr(self, 'density_combo'):
+            config['density_display'] = self.density_combo.currentText().lower()
+            
+        if hasattr(self, 'bin_size_input'):
+            try:
+                bin_size = int(self.bin_size_input.text())
+                config['bin_size'] = bin_size
+            except (ValueError, AttributeError):
+                config['bin_size'] = 20  # Default fallback
+                
         # Add method-specific parameters based on current method selection
         current_item = self.method_list.currentItem()
         if current_item:
@@ -884,41 +1397,28 @@ class ComparisonWizardWindow(QMainWindow):
                     'Bland-Altman Analysis': 'bland_altman', 
                     'Residual Analysis': 'residual',
                     'Statistical Tests': 'scatter',
-                    'Lin\'s CCC': 'ccc',
-                    'RMSE': 'rmse',
-                    'Intraclass Correlation Coefficient': 'icc',
-                    'Cross-Correlation': 'cross_correlation',
-                    'Dynamic Time Warping': 'dtw'
+                    'Cross-Correlation': 'cross_correlation'
                 }
                 plot_type = method_to_plot_type.get(method_name, 'scatter')
             config['plot_type'] = plot_type
             
             # Add method-specific parameters
             if plot_type == 'bland_altman':
-                config['confidence_interval'] = method_params.get('show_ci', True)
-                config['agreement_limits'] = method_params.get('agreement_limits', 1.96)
-                config['proportional_bias'] = method_params.get('proportional_bias', False)
+                config['agreement_limits'] = method_params.get('agreement_multiplier', 1.96)
+                config['proportional_bias'] = method_params.get('test_proportional_bias', False)
+                config['percentage_difference'] = method_params.get('percentage_difference', False)
             elif plot_type == 'scatter' or plot_type == 'pearson':
                 config['confidence_level'] = method_params.get('confidence_level', 0.95)
                 config['correlation_type'] = method_params.get('correlation_type', 'pearson')
+                config['include_rmse'] = method_params.get('include_rmse', True)
             elif plot_type == 'residual':
-                config['normality_test'] = method_params.get('normality_test', 'shapiro')
-                config['outlier_detection'] = method_params.get('outlier_detection', 'iqr')
-            elif plot_type == 'ccc':
-                config['confidence_level'] = method_params.get('confidence_level', 0.95)
-                config['bias_correction'] = method_params.get('bias_correction', True)
-            elif plot_type == 'rmse':
-                config['normalize_by'] = method_params.get('normalize_by', 'none')
-                config['percentage_error'] = method_params.get('percentage_error', False)
-            elif plot_type == 'icc':
-                config['icc_type'] = method_params.get('icc_type', 'ICC(2,1)')
-                config['confidence_level'] = method_params.get('confidence_level', 0.95)
+                config['fit_method'] = method_params.get('fit_method', 'linear')
+                config['polynomial_degree'] = method_params.get('polynomial_degree', 2)
+                config['detect_outliers'] = method_params.get('detect_outliers', True)
             elif plot_type == 'cross_correlation':
                 config['max_lag'] = method_params.get('max_lag', 50)
                 config['normalize'] = method_params.get('normalize', True)
-            elif plot_type == 'dtw':
-                config['distance_metric'] = method_params.get('distance_metric', 'euclidean')
-                config['window_type'] = method_params.get('window_type', 'sakoe_chiba')
+                config['find_peak'] = method_params.get('find_peak', True)
         
         return config
 
@@ -989,7 +1489,7 @@ class ComparisonWizardWindow(QMainWindow):
     def _auto_populate_alignment_parameters(self):
         """Auto-populate alignment parameters based on selected channels"""
         # Get selected channels
-        ref_channel = self._get_selected_channel('ref')
+        ref_channel = self._get_selected_channel('reference')
         test_channel = self._get_selected_channel('test')
         
         if not ref_channel or not test_channel:
@@ -1011,21 +1511,22 @@ class ComparisonWizardWindow(QMainWindow):
             self._auto_populate_time_parameters(ref_channel, test_channel)
     
     def _get_selected_channel(self, channel_type):
-        """Get the selected channel object (ref or test)"""
-        if channel_type == 'ref':
+        """Get the selected channel object (ref/reference or test)"""
+        if channel_type in ['ref', 'reference']:
             filename = self.ref_file_combo.currentText()
             channel_name = self.ref_channel_combo.currentText()
         else:  # test
             filename = self.test_file_combo.currentText()
             channel_name = self.test_channel_combo.currentText()
         
-        if not filename or not channel_name:
-            return None
-        
-        # Find file by filename
-        if not self.file_manager or not self.channel_manager:
+        return self._get_channel_by_name(filename, channel_name)
+    
+    def _get_channel_by_name(self, filename, channel_name):
+        """Get channel object by filename and channel name"""
+        if not self.channel_manager or not self.file_manager or not filename or not channel_name:
             return None
             
+        # Find file by filename
         file_info = None
         for f in self.file_manager.get_all_files():
             if f.filename == filename:
@@ -1035,14 +1536,15 @@ class ComparisonWizardWindow(QMainWindow):
         if not file_info:
             return None
         
-        # Get channels for this file using file_id
+        # Get channels for this file
         channels = self.channel_manager.get_channels_by_file(file_info.file_id)
         
-        # Find matching channel by legend_label or channel_id
-        for channel in channels:
-            name = channel.legend_label or channel.channel_id
-            if name == channel_name:
-                return channel
+        if channels:
+            # Find channel by name (legend_label or channel_id)
+            for ch in channels:
+                if (ch.legend_label == channel_name) or (ch.channel_id == channel_name):
+                    return ch
+        
         return None
     
     def _auto_populate_index_parameters(self, ref_channel, test_channel):
@@ -1158,6 +1660,9 @@ class ComparisonWizardWindow(QMainWindow):
         """Add a new comparison pair"""
         pair_config = self._get_current_pair_config()
         if pair_config:
+            # Compute R² for the pair
+            self._compute_pair_r_squared(pair_config)
+            
             self.active_pairs.append(pair_config)
             self._update_active_pairs_table()
             self.pair_added.emit(pair_config)
@@ -1165,6 +1670,52 @@ class ComparisonWizardWindow(QMainWindow):
             # Clear pair name for next entry and update placeholder
             self.pair_name_input.clear()
             self._update_default_pair_name()
+    
+    def _compute_pair_r_squared(self, pair_config):
+        """Compute R² (coefficient of determination) for a pair"""
+        try:
+            # Get the channel data for both reference and test
+            ref_channel = self._get_selected_channel('reference')
+            test_channel = self._get_selected_channel('test')
+            
+            if not ref_channel or not test_channel:
+                pair_config['r_squared'] = None
+                return
+            
+            # Get the data arrays
+            ref_data = ref_channel.ydata
+            test_data = test_channel.ydata
+            
+            if ref_data is None or test_data is None:
+                pair_config['r_squared'] = None
+                return
+            
+            # Align the data arrays (simple truncation for now)
+            min_len = min(len(ref_data), len(test_data))
+            ref_aligned = ref_data[:min_len]
+            test_aligned = test_data[:min_len]
+            
+            # Remove invalid data points
+            valid_mask = np.isfinite(ref_aligned) & np.isfinite(test_aligned)
+            ref_clean = ref_aligned[valid_mask]
+            test_clean = test_aligned[valid_mask]
+            
+            if len(ref_clean) < 2:
+                pair_config['r_squared'] = None
+                return
+            
+            # Compute Pearson correlation coefficient
+            correlation_matrix = np.corrcoef(ref_clean, test_clean)
+            if correlation_matrix.shape == (2, 2):
+                r = correlation_matrix[0, 1]
+                r_squared = r ** 2
+                pair_config['r_squared'] = r_squared
+            else:
+                pair_config['r_squared'] = None
+                
+        except Exception as e:
+            print(f"[ComparisonWizard] Error computing R² for pair: {e}")
+            pair_config['r_squared'] = None
     
     def _get_current_pair_config(self):
         """Get configuration for current pair selection"""
@@ -1208,24 +1759,32 @@ class ComparisonWizardWindow(QMainWindow):
         return pair_config
         
     def _get_alignment_config(self):
-        """Get alignment configuration from alignment controls"""
-        config = {}
+        """Get current alignment configuration from UI controls (like mixer wizard)"""
+        mode = self.alignment_mode_combo.currentText()
         
-        if self.alignment_mode_combo.currentText() == "Index-Based":
-            config['start_index'] = self.start_index_spin.value()
-            config['end_index'] = self.end_index_spin.value()
-            config['offset'] = self.index_offset_spin.value()
+        if mode == "Index-Based":
+            index_mode = self.index_mode_combo.currentText()
+            return {
+                'alignment_method': 'index',
+                'mode': 'truncate' if index_mode == "Truncate to Shortest" else 'custom',
+                'start_index': self.start_index_spin.value() if index_mode == "Custom Range" else 0,
+                'end_index': self.end_index_spin.value() if index_mode == "Custom Range" else 500,
+                'offset': self.index_offset_spin.value()
+            }
         else:  # Time-Based
-            config['start_time'] = self.start_time_spin.value()
-            config['end_time'] = self.end_time_spin.value()
-            config['round_to'] = self.round_to_spin.value()
-            config['interpolation'] = self.interpolation_combo.currentText()
-            config['time_offset'] = self.time_offset_spin.value()
-                    
-        return config
+            time_mode = self.time_mode_combo.currentText()
+            return {
+                'alignment_method': 'time',
+                'mode': 'overlap' if time_mode == "Overlap Region" else 'custom',
+                'start_time': self.start_time_spin.value() if time_mode == "Custom Range" else 0.0,
+                'end_time': self.end_time_spin.value() if time_mode == "Custom Range" else 10.0,
+                'offset': self.time_offset_spin.value(),
+                'interpolation': self.interpolation_combo.currentText(),
+                'round_to': self.round_to_spin.value()
+            }
         
     def _get_method_parameters_from_controls(self):
-        """Extract method-specific parameters from method controls"""
+        """Extract method-specific parameters from method controls (excluding overlay parameters)"""
         parameters = {}
         
         # Get current method
@@ -1251,43 +1810,112 @@ class ComparisonWizardWindow(QMainWindow):
                     print(f"[ComparisonWizard] Error getting parameter {param_name}: {e}")
             return parameters
         
-        # Fallback to static controls (with safety checks)
+        # Fallback to static controls (with safety checks) - excluding overlay parameters
         try:
             if method_name == "Correlation Analysis":
                 if hasattr(self, 'corr_type_combo'):
                     parameters['correlation_type'] = self.corr_type_combo.currentText()
-                if hasattr(self, 'confidence_spin'):
-                    parameters['confidence_level'] = self.confidence_spin.value()
                 if hasattr(self, 'bootstrap_spin'):
                     parameters['bootstrap_samples'] = self.bootstrap_spin.value()
+                if hasattr(self, 'remove_outliers_checkbox'):
+                    parameters['remove_outliers'] = self.remove_outliers_checkbox.isChecked()
+                if hasattr(self, 'detrend_combo'):
+                    parameters['detrend_method'] = self.detrend_combo.currentText()
+                    
             elif method_name in ["Bland-Altman", "Bland-Altman Analysis"]:
                 if hasattr(self, 'agreement_spin'):
-                    parameters['agreement_limits'] = self.agreement_spin.value()
-                if hasattr(self, 'show_ci_checkbox'):
-                    parameters['show_ci'] = self.show_ci_checkbox.isChecked()
+                    parameters['agreement_multiplier'] = self.agreement_spin.value()
+                if hasattr(self, 'percentage_diff_checkbox'):
+                    parameters['percentage_difference'] = self.percentage_diff_checkbox.isChecked()
+                if hasattr(self, 'log_transform_checkbox'):
+                    parameters['log_transform'] = self.log_transform_checkbox.isChecked()
                 if hasattr(self, 'prop_bias_checkbox'):
-                    parameters['proportional_bias'] = self.prop_bias_checkbox.isChecked()
+                    parameters['test_proportional_bias'] = self.prop_bias_checkbox.isChecked()
+                    
             elif method_name == "Residual Analysis":
+                if hasattr(self, 'residual_type_combo'):
+                    parameters['residual_type'] = self.residual_type_combo.currentText()
                 if hasattr(self, 'normality_combo'):
                     parameters['normality_test'] = self.normality_combo.currentText()
-                if hasattr(self, 'outlier_combo'):
-                    parameters['outlier_detection'] = self.outlier_combo.currentText()
+                if hasattr(self, 'trend_analysis_checkbox'):
+                    parameters['trend_analysis'] = self.trend_analysis_checkbox.isChecked()
+                if hasattr(self, 'autocorr_checkbox'):
+                    parameters['autocorrelation_test'] = self.autocorr_checkbox.isChecked()
+                    
             elif method_name == "Statistical Tests":
                 if hasattr(self, 'alpha_spin'):
-                    parameters['alpha_level'] = self.alpha_spin.value()
+                    parameters['significance_level'] = self.alpha_spin.value()
                 if hasattr(self, 'test_suite_combo'):
                     parameters['test_suite'] = self.test_suite_combo.currentText()
                 if hasattr(self, 'equal_var_combo'):
-                    parameters['equal_variance'] = self.equal_var_combo.currentText()
+                    parameters['equal_variance_assumption'] = self.equal_var_combo.currentText()
                 if hasattr(self, 'normality_assume_combo'):
                     parameters['normality_assumption'] = self.normality_assume_combo.currentText()
+                if hasattr(self, 'multiple_comp_combo'):
+                    parameters['multiple_comparisons'] = self.multiple_comp_combo.currentText()
+                if hasattr(self, 'effect_size_checkbox'):
+                    parameters['effect_size_measures'] = self.effect_size_checkbox.isChecked()
+                    
         except Exception as e:
             print(f"[ComparisonWizard] Error getting static control parameters: {e}")
+        
+        # Add overlay parameters from the overlay section
+        overlay_params = self._get_overlay_parameters()
+        parameters.update(overlay_params)
                     
         return parameters
+    
+    def _get_overlay_parameters(self):
+        """Get overlay parameters from the overlay section"""
+        overlay_params = {}
         
+        try:
+            # Get current method to determine which overlays are relevant
+            current_item = self.method_list.currentItem()
+            method_name = current_item.text() if current_item else ""
+            
+            # Only include visible overlay options (changed from isEnabled to isVisible)
+            if hasattr(self, 'y_equals_x_checkbox') and self.y_equals_x_checkbox.isVisible():
+                overlay_params['show_identity_line'] = self.y_equals_x_checkbox.isChecked()
+                
+            if hasattr(self, 'ci_checkbox') and self.ci_checkbox.isVisible():
+                overlay_params['confidence_interval'] = self.ci_checkbox.isChecked()  # Match expected name
+                overlay_params['confidence_level'] = 0.95  # Default confidence level
+                
+            if hasattr(self, 'outlier_checkbox') and self.outlier_checkbox.isVisible():
+                overlay_params['highlight_outliers'] = self.outlier_checkbox.isChecked()
+                
+            if hasattr(self, 'bias_line_checkbox') and self.bias_line_checkbox.isVisible():
+                overlay_params['show_bias_line'] = self.bias_line_checkbox.isChecked()
+                
+            if hasattr(self, 'loa_checkbox') and self.loa_checkbox.isVisible():
+                overlay_params['show_limits_of_agreement'] = self.loa_checkbox.isChecked()
+                
+            if hasattr(self, 'regression_line_checkbox') and self.regression_line_checkbox.isVisible():
+                overlay_params['show_regression_line'] = self.regression_line_checkbox.isChecked()
+                
+            if hasattr(self, 'error_bands_checkbox') and self.error_bands_checkbox.isVisible():
+                overlay_params['show_error_bands'] = self.error_bands_checkbox.isChecked()
+                
+            if hasattr(self, 'confidence_bands_checkbox') and self.confidence_bands_checkbox.isVisible():
+                overlay_params['show_confidence_bands'] = self.confidence_bands_checkbox.isChecked()
+                
+            if hasattr(self, 'custom_line_checkbox') and self.custom_line_checkbox.isVisible() and self.custom_line_checkbox.isChecked():
+                try:
+                    custom_value = float(self.custom_line_edit.text())
+                    overlay_params['custom_line'] = custom_value  # Match expected name
+                except (ValueError, AttributeError):
+                    overlay_params['custom_line'] = 0.0
+            
+            print(f"[ComparisonWizard] Overlay parameters for {method_name}: {overlay_params}")
+                    
+        except Exception as e:
+            print(f"[ComparisonWizard] Error getting overlay parameters: {e}")
+            
+        return overlay_params
+
     def _update_active_pairs_table(self):
-        """Update the active pairs table"""
+        """Update the active pairs table (like mixer wizard)"""
         self.active_pair_table.setRowCount(len(self.active_pairs))
         
         for i, pair in enumerate(self.active_pairs):
@@ -1295,59 +1923,103 @@ class ComparisonWizardWindow(QMainWindow):
             pair['marker_type'] = self._get_style_for_pair(pair)
             pair['marker_color'] = self._get_color_for_pair(pair)
             
-            # Show checkbox
-            show_cb = QCheckBox()
-            show_cb.setChecked(True)
-            # Connect checkbox signal to update plots
-            show_cb.stateChanged.connect(self._on_show_checkbox_changed)
-            self.active_pair_table.setCellWidget(i, 0, show_cb)
+            # Create tooltip for the pair
+            tooltip = self._create_pair_tooltip(pair)
             
-            # Pair name with tooltip
+            # Column 0: Show checkbox
+            checkbox = QCheckBox()
+            checkbox.setChecked(True)
+            checkbox.stateChanged.connect(lambda state, row=i: self._on_show_checkbox_changed(state))
+            
+            # Center the checkbox in the cell
+            checkbox_widget = QWidget()
+            checkbox_layout = QHBoxLayout(checkbox_widget)
+            checkbox_layout.addWidget(checkbox)
+            checkbox_layout.setAlignment(Qt.AlignCenter)
+            checkbox_layout.setContentsMargins(0, 0, 0, 0)
+            checkbox_widget.setToolTip(tooltip)
+            self.active_pair_table.setCellWidget(i, 0, checkbox_widget)
+            
+            # Column 1: Style (show actual marker as it appears in plot legend)
+            style_widget = self._create_marker_widget(pair)
+            style_widget.setToolTip(tooltip)
+            self.active_pair_table.setCellWidget(i, 1, style_widget)
+            
+            # Column 2: Pair Name
             pair_name_item = QTableWidgetItem(pair['name'])
-            self._set_pair_name_tooltip_on_item(pair_name_item, pair)
-            self.active_pair_table.setItem(i, 1, pair_name_item)
+            pair_name_item.setToolTip(tooltip)
+            self.active_pair_table.setItem(i, 2, pair_name_item)
             
-            # Style - show marker with color information
-            # Extract just the symbol from the marker type (e.g., "○" from "○ Circle")
-            marker_symbol = pair['marker_type'].split()[0] if pair['marker_type'] else '○'
-            style_text = marker_symbol
-            style_item = QTableWidgetItem(style_text)
-            style_item.setToolTip(f"Marker: {pair['marker_type']}\nColor: {pair['marker_color']}")
+            # Column 3: Shape
+            shape_text = self._get_pair_shape_text(pair)
+            shape_item = QTableWidgetItem(shape_text)
+            shape_item.setToolTip(tooltip)
+            self.active_pair_table.setItem(i, 3, shape_item)
             
-            # Set text color to match the pair color
-            try:
-                from PySide6.QtGui import QColor
-                # Map emoji color names to actual colors
-                color_display_map = {
-                    '🔵 Blue': '#1f77b4',
-                    '🔴 Red': '#d62728',
-                    '🟢 Green': '#2ca02c',
-                    '🟣 Purple': '#9467bd',
-                    '🟠 Orange': '#ff7f0e',
-                    '🟤 Brown': '#8c564b',
-                    '🩷 Pink': '#e377c2',
-                    '⚫ Gray': '#7f7f7f',
-                    '🟡 Yellow': '#bcbd22',
-                    '🔶 Cyan': '#17becf'
-                }
-                color_hex = color_display_map.get(pair['marker_color'], '#1f77b4')
-                color = QColor(color_hex)
-                style_item.setForeground(color)
-            except:
-                pass  # If color parsing fails, use default color
-            self.active_pair_table.setItem(i, 2, style_item)
+            # Column 4: Actions (like mixer wizard)
+            actions_widget = QWidget()
+            actions_layout = QHBoxLayout(actions_widget)
+            actions_layout.setContentsMargins(2, 2, 2, 2)
+            actions_layout.setSpacing(2)
             
-            # Status
-            self.active_pair_table.setItem(i, 3, QTableWidgetItem("Ready"))  # Status
+            # Info button (shows individual pair statistics)
+            info_button = QPushButton("❗")
+            info_button.setMaximumWidth(25)
+            info_button.setMaximumHeight(25)
+            info_button.setToolTip("View individual pair statistics")
+            info_button.clicked.connect(lambda checked=False, p=pair: self._show_pair_info(p))
+            actions_layout.addWidget(info_button)
             
-        # Enable generate plot button if pairs exist
-        if hasattr(self, 'generate_plot_button'):
-            self.generate_plot_button.setEnabled(len(self.active_pairs) > 0)
+            # Inspect button
+            inspect_button = QPushButton("🔍")
+            inspect_button.setMaximumWidth(25)
+            inspect_button.setMaximumHeight(25)
+            inspect_button.setToolTip("Inspect pair data")
+            inspect_button.clicked.connect(lambda checked=False, p=pair: self._inspect_pair_data(p))
+            actions_layout.addWidget(inspect_button)
+            
+            # Style button
+            style_button = QPushButton("🎨")
+            style_button.setMaximumWidth(25)
+            style_button.setMaximumHeight(25)
+            style_button.setToolTip("Pair styling")
+            style_button.clicked.connect(lambda checked=False, p=pair: self._style_pair(p))
+            actions_layout.addWidget(style_button)
+            
+            # Transform button (disabled for comparison pairs)
+            transform_button = QPushButton("🔨")
+            transform_button.setMaximumWidth(25)
+            transform_button.setMaximumHeight(25)
+            transform_button.setEnabled(False)
+            transform_button.setToolTip("Transform not available for comparison pairs")
+            actions_layout.addWidget(transform_button)
+            
+            # Delete button
+            delete_button = QPushButton("🗑️")
+            delete_button.setMaximumWidth(25)
+            delete_button.setMaximumHeight(25)
+            delete_button.setToolTip("Delete comparison pair")
+            delete_button.clicked.connect(lambda checked=False, idx=i: self._delete_pair(idx))
+            actions_layout.addWidget(delete_button)
+            
+            self.active_pair_table.setCellWidget(i, 4, actions_widget)
     
     def _on_show_checkbox_changed(self, state):
         """Handle Show checkbox state changes"""
-        # No automatic plot update - only when Generate Plot button is clicked
-        pass
+        print(f"[ComparisonWizard] Show checkbox changed, state: {state}")
+        
+        # Update the plot immediately when checkbox state changes
+        if hasattr(self, 'comparison_manager') and self.comparison_manager:
+            # Update cumulative statistics based on checked pairs
+            self.comparison_manager._update_cumulative_display()
+            
+            # Get current plot configuration
+            plot_config = self._get_plot_config()
+            
+            # Regenerate the plot with only checked pairs
+            self.comparison_manager._on_plot_generated(plot_config)
+            
+            print(f"[ComparisonWizard] Plot updated with {len(self.get_checked_pairs())} visible pairs")
     
     def _set_pair_name_tooltip_on_item(self, item, pair_config):
         """Set tooltip for a pair name table item"""
@@ -1393,16 +2065,24 @@ class ComparisonWizardWindow(QMainWindow):
         """Get list of pairs that have their Show checkbox checked"""
         checked_pairs = []
         for row in range(self.active_pair_table.rowCount()):
-            checkbox = self.active_pair_table.cellWidget(row, 0)
-            if checkbox and checkbox.isChecked():
-                pair_name_item = self.active_pair_table.item(row, 1)
-                if pair_name_item:
-                    pair_name = pair_name_item.text()
-                    # Find the corresponding pair config
-                    for pair in self.active_pairs:
-                        if pair['name'] == pair_name:
-                            checked_pairs.append(pair)
-                            break
+            checkbox_widget = self.active_pair_table.cellWidget(row, 0)
+            if checkbox_widget:
+                # The checkbox is inside a QWidget with a layout
+                checkbox = None
+                for child in checkbox_widget.children():
+                    if isinstance(child, QCheckBox):
+                        checkbox = child
+                        break
+                
+                if checkbox and checkbox.isChecked():
+                    pair_name_item = self.active_pair_table.item(row, 2)  # Column 2 is pair name
+                    if pair_name_item:
+                        pair_name = pair_name_item.text()
+                        # Find the corresponding pair config
+                        for pair in self.active_pairs:
+                            if pair['name'] == pair_name:
+                                checked_pairs.append(pair)
+                                break
         return checked_pairs
     
     def get_active_pairs(self):
@@ -1478,3 +2158,354 @@ class ComparisonWizardWindow(QMainWindow):
         color_type = color_types[pair_index % len(color_types)]
         
         return color_type
+
+    def _create_pair_tooltip(self, pair):
+        """Create a detailed tooltip for a comparison pair"""
+        # Get alignment method from alignment config
+        alignment_config = pair.get('alignment_config', {})
+        alignment_method = alignment_config.get('alignment_method', 'index')
+        
+        tooltip_lines = [
+            f"Pair: {pair['name']}",
+            f"Reference: {pair['ref_file']} - {pair['ref_channel']}",
+            f"Test: {pair['test_file']} - {pair['test_channel']}",
+            f"Method: {pair.get('comparison_method', 'N/A')}",
+            f"Alignment: {alignment_method.title()}-based",
+            f"R²: {pair.get('r_squared', 'N/A')}",
+            f"Shape: {self._get_pair_shape_text(pair)}",
+            f"Marker: {pair.get('marker_type', 'Circle')}",
+            f"Color: {pair.get('marker_color', 'Blue')}"
+        ]
+        return "\n".join(tooltip_lines)
+
+    def _get_pair_shape_text(self, pair):
+        """Get the data dimensions of the aligned pair (e.g., '100x2')"""
+        try:
+            # Get the channels for this pair
+            ref_channel = self._get_channel_by_name(pair['ref_file'], pair['ref_channel'])
+            test_channel = self._get_channel_by_name(pair['test_file'], pair['test_channel'])
+            
+            if ref_channel and test_channel:
+                # Get alignment configuration
+                alignment_config = pair.get('alignment_config', {})
+                alignment_method = alignment_config.get('alignment_method', 'index')
+                
+                # Calculate aligned data dimensions
+                if alignment_method == 'index':
+                    # For index-based alignment
+                    ref_len = len(ref_channel.ydata) if ref_channel.ydata is not None else 0
+                    test_len = len(test_channel.ydata) if test_channel.ydata is not None else 0
+                    
+                    mode = alignment_config.get('mode', 'truncate')
+                    if mode == 'truncate':
+                        # Use minimum length
+                        aligned_len = min(ref_len, test_len)
+                    else:  # custom
+                        # Use custom range
+                        start_idx = alignment_config.get('start_index', 0)
+                        end_idx = alignment_config.get('end_index', min(ref_len, test_len))
+                        aligned_len = max(0, end_idx - start_idx + 1)
+                    
+                    return f"{aligned_len}x2"
+                    
+                else:  # time-based alignment
+                    # For time-based alignment, we need to estimate based on time range
+                    ref_len = len(ref_channel.ydata) if ref_channel.ydata is not None else 0
+                    test_len = len(test_channel.ydata) if test_channel.ydata is not None else 0
+                    
+                    # Use minimum as approximation for time-based alignment
+                    aligned_len = min(ref_len, test_len)
+                    return f"~{aligned_len}x2"
+            
+            # Fallback if channels can't be found
+            return "N/A"
+            
+        except Exception as e:
+            print(f"[ComparisonWizard] Error calculating pair shape: {e}")
+            return "N/A"
+    
+    def _get_color_hex_for_pair(self, pair):
+        """Get the hex color code for a comparison pair"""
+        # Map emoji color names to actual colors
+        color_display_map = {
+            '🔵 Blue': '#1f77b4',
+            '🔴 Red': '#d62728',
+            '🟢 Green': '#2ca02c',
+            '🟣 Purple': '#9467bd',
+            '🟠 Orange': '#ff7f0e',
+            '🟤 Brown': '#8c564b',
+            '🩷 Pink': '#e377c2',
+            '⚫ Gray': '#7f7f7f',
+            '🟡 Yellow': '#bcbd22',
+            '🔶 Cyan': '#17becf'
+        }
+        color_name = pair.get('marker_color', '🔵 Blue')
+        return color_display_map.get(color_name, '#1f77b4')
+
+    def _show_pair_info(self, pair):
+        """Show individual pair statistics"""
+        try:
+            # Create a dialog to show pair statistics
+            dialog = QDialog(self)
+            dialog.setWindowTitle(f"Pair Statistics: {pair['name']}")
+            dialog.setMinimumSize(500, 400)
+            
+            layout = QVBoxLayout(dialog)
+            
+            # Pair information
+            info_text = QTextEdit()
+            info_text.setReadOnly(True)
+            
+            # Build information text
+            info_lines = []
+            info_lines.append(f"=== Pair Information ===")
+            info_lines.append(f"Name: {pair['name']}")
+            info_lines.append(f"Reference: {pair['ref_file']} - {pair['ref_channel']}")
+            info_lines.append(f"Test: {pair['test_file']} - {pair['test_channel']}")
+            info_lines.append(f"Method: {pair['comparison_method']}")
+            info_lines.append(f"Alignment: {pair['alignment_config']['alignment_method'].title()}-based")
+            info_lines.append("")
+            
+            # Basic statistics
+            info_lines.append(f"=== Basic Statistics ===")
+            r2_value = pair.get('r_squared', None)
+            if r2_value is not None:
+                info_lines.append(f"R² (Coefficient of Determination): {r2_value:.6f}")
+                info_lines.append(f"R (Correlation Coefficient): {np.sqrt(r2_value):.6f}")
+                
+                # Interpret R² value
+                if r2_value >= 0.9:
+                    interpretation = "Excellent correlation"
+                elif r2_value >= 0.7:
+                    interpretation = "Strong correlation"
+                elif r2_value >= 0.5:
+                    interpretation = "Moderate correlation"
+                elif r2_value >= 0.3:
+                    interpretation = "Weak correlation"
+                else:
+                    interpretation = "Very weak correlation"
+                info_lines.append(f"Interpretation: {interpretation}")
+            else:
+                info_lines.append("R² not available (compute by generating plot)")
+            
+            info_lines.append("")
+            
+            # Data information
+            try:
+                ref_channel = self._get_selected_channel('reference')
+                test_channel = self._get_selected_channel('test')
+                
+                if ref_channel and test_channel:
+                    info_lines.append(f"=== Data Information ===")
+                    info_lines.append(f"Reference data points: {len(ref_channel.ydata) if ref_channel.ydata is not None else 'N/A'}")
+                    info_lines.append(f"Test data points: {len(test_channel.ydata) if test_channel.ydata is not None else 'N/A'}")
+                    
+                    if ref_channel.ydata is not None:
+                        info_lines.append(f"Reference range: {np.min(ref_channel.ydata):.3f} to {np.max(ref_channel.ydata):.3f}")
+                        info_lines.append(f"Reference mean: {np.mean(ref_channel.ydata):.3f}")
+                        info_lines.append(f"Reference std: {np.std(ref_channel.ydata):.3f}")
+                    
+                    if test_channel.ydata is not None:
+                        info_lines.append(f"Test range: {np.min(test_channel.ydata):.3f} to {np.max(test_channel.ydata):.3f}")
+                        info_lines.append(f"Test mean: {np.mean(test_channel.ydata):.3f}")
+                        info_lines.append(f"Test std: {np.std(test_channel.ydata):.3f}")
+                    
+            except Exception as e:
+                info_lines.append(f"Error loading data information: {str(e)}")
+            
+            info_lines.append("")
+            info_lines.append(f"=== Alignment Configuration ===")
+            alignment_config = pair.get('alignment_config', {})
+            for key, value in alignment_config.items():
+                info_lines.append(f"{key}: {value}")
+            
+            info_text.setText("\n".join(info_lines))
+            layout.addWidget(info_text)
+            
+            # Close button
+            close_button = QPushButton("Close")
+            close_button.clicked.connect(dialog.accept)
+            layout.addWidget(close_button)
+            
+            dialog.exec()
+            
+        except Exception as e:
+            print(f"[ComparisonWizard] Error showing pair info: {e}")
+            QMessageBox.warning(self, "Error", f"Could not display pair information: {str(e)}")
+
+    def _inspect_pair_data(self, pair):
+        """Inspect pair data"""
+        # This method should be implemented based on your specific requirements
+        # For example, you can use the pair information to display a dialog with data inspection
+        print(f"Inspecting data for pair: {pair['name']}")
+
+    def _style_pair(self, pair):
+        """Style a comparison pair using the marker wizard"""
+        try:
+            from marker_wizard import open_marker_wizard
+            
+            # Open the marker wizard for this pair
+            result = open_marker_wizard(pair, self)
+            
+            if result:
+                # Update the table to reflect changes
+                self._update_active_pairs_table()
+                print(f"[ComparisonWizard] Updated marker properties for pair: {pair['name']}")
+                
+                # Optionally trigger plot update if desired
+                # self._trigger_plot_update()
+                
+        except ImportError as e:
+            print(f"[ComparisonWizard] Error importing marker wizard: {e}")
+            QMessageBox.warning(self, "Error", "Marker wizard not available")
+        except Exception as e:
+            print(f"[ComparisonWizard] Error opening marker wizard: {e}")
+            QMessageBox.warning(self, "Error", f"Could not open marker wizard: {str(e)}")
+
+    def _delete_pair(self, index):
+        """Delete a comparison pair"""
+        if index >= 0 and index < len(self.active_pairs):
+            removed_pair = self.active_pairs.pop(index)
+            self._update_active_pairs_table()
+            self.pair_deleted.emit()
+            print(f"[ComparisonWizard] Pair '{removed_pair['name']}' deleted")
+
+    def _update_console_for_method(self, method_name):
+        """Update console with helpful information about the selected method"""
+        try:
+            # Get method information from comparison manager
+            method_info = None
+            if hasattr(self, 'comparison_manager') and self.comparison_manager:
+                method_info = self.comparison_manager.get_method_info(method_name)
+            
+            if method_info:
+                # Get helpful information from the method class
+                helpful_info = method_info.get('helpful_info', '')
+                if helpful_info:
+                    self.console_output.append(helpful_info)
+                    return
+            
+            # Fallback to built-in method descriptions
+            method_descriptions = {
+                'Correlation Analysis': 'Measures linear and monotonic relationships between datasets.\n• Pearson: Linear correlation (assumes normal distribution)\n• Spearman: Rank-based correlation (non-parametric)\n• Kendall: Robust to outliers, good for small samples\n• Use for: Assessing how well two variables move together',
+                
+                'Bland-Altman Analysis': 'Evaluates agreement between two measurement methods.\n• Plots difference vs average of measurements\n• Shows bias (systematic difference) and limits of agreement\n• Identifies proportional bias and outliers\n• Use for: Method comparison, clinical agreement studies',
+                
+                'Residual Analysis': 'Analyzes residuals (prediction errors) between datasets.\n• Checks for patterns in residuals (heteroscedasticity)\n• Tests normality of residuals\n• Identifies outliers and influential points\n• Use for: Validating model assumptions, quality control',
+                
+                'Statistical Tests': 'Performs comprehensive statistical comparisons.\n• t-tests for mean differences\n• F-tests for variance equality\n• Normality tests (Shapiro-Wilk, Kolmogorov-Smirnov)\n• Use for: Hypothesis testing, distribution comparison',
+                
+                'Lin\'s CCC': 'Concordance Correlation Coefficient for agreement assessment.\n• Combines precision (Pearson correlation) and accuracy (bias)\n• Values: 1 = perfect agreement, 0 = no agreement\n• More stringent than Pearson correlation\n• Use for: Method validation, reproducibility studies',
+                
+                'RMSE': 'Root Mean Square Error - measures prediction accuracy.\n• Lower values indicate better agreement\n• Sensitive to outliers\n• Same units as original data\n• Use for: Model validation, accuracy assessment',
+                
+                'Intraclass Correlation Coefficient': 'Measures reliability within groups.\n• ICC(1,1): Single measurement, random raters\n• ICC(2,1): Single measurement, fixed raters\n• ICC(3,1): Single measurement, fixed raters (consistency)\n• Use for: Inter-rater reliability, test-retest reliability',
+                
+                'Cross-Correlation': 'Measures similarity as a function of lag/displacement.\n• Finds optimal alignment between signals\n• Detects time delays and phase shifts\n• Normalized values between -1 and 1\n• Use for: Signal alignment, time series analysis',
+                
+                'Dynamic Time Warping': 'Aligns time series with different time scales.\n• Finds optimal warping path between sequences\n• Handles non-linear time scaling\n• Robust to timing variations\n• Use for: Pattern matching, sequence alignment'
+            }
+            
+            description = method_descriptions.get(method_name, f'Selected method: {method_name}')
+            self.console_output.append(description)
+            
+        except Exception as e:
+            self.console_output.append(f"Error loading method information: {str(e)}")
+
+    def _create_marker_widget(self, pair):
+        """Create a widget displaying the marker as it appears in the plot legend"""
+        from PySide6.QtWidgets import QLabel
+        from PySide6.QtGui import QPainter, QPixmap, QColor, QPen, QBrush
+        from PySide6.QtCore import Qt
+        
+        # Create a small pixmap to draw the marker
+        pixmap = QPixmap(20, 20)
+        pixmap.fill(Qt.transparent)
+        
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        # Get marker properties
+        marker_type = pair.get('marker_type', '○ Circle')
+        color_hex = self._get_color_hex_for_pair(pair)
+        color = QColor(color_hex)
+        
+        # Set up painter
+        painter.setPen(QPen(color, 1.5))
+        painter.setBrush(QBrush(color))
+        
+        # Draw marker based on type
+        center_x, center_y = 10, 10
+        size = 6
+        
+        if '○' in marker_type or 'Circle' in marker_type:
+            # Filled circle (like in the plot)
+            painter.drawEllipse(center_x - size//2, center_y - size//2, size, size)
+        elif '□' in marker_type or 'Square' in marker_type:
+            # Filled square (like in the plot)
+            painter.drawRect(center_x - size//2, center_y - size//2, size, size)
+        elif '△' in marker_type or 'Triangle' in marker_type:
+            # Filled triangle
+            from PySide6.QtGui import QPolygon
+            from PySide6.QtCore import QPoint
+            triangle = QPolygon([
+                QPoint(center_x, center_y - size//2),
+                QPoint(center_x - size//2, center_y + size//2),
+                QPoint(center_x + size//2, center_y + size//2)
+            ])
+            painter.drawPolygon(triangle)
+        elif '◇' in marker_type or 'Diamond' in marker_type:
+            # Filled diamond
+            from PySide6.QtGui import QPolygon
+            from PySide6.QtCore import QPoint
+            diamond = QPolygon([
+                QPoint(center_x, center_y - size//2),
+                QPoint(center_x + size//2, center_y),
+                QPoint(center_x, center_y + size//2),
+                QPoint(center_x - size//2, center_y)
+            ])
+            painter.drawPolygon(diamond)
+        elif '✦' in marker_type or 'Star' in marker_type:
+            # Simple star representation (filled circle with points)
+            painter.drawEllipse(center_x - size//2, center_y - size//2, size, size)
+            # Add small lines for star effect
+            painter.drawLine(center_x, center_y - size//2 - 1, center_x, center_y + size//2 + 1)
+            painter.drawLine(center_x - size//2 - 1, center_y, center_x + size//2 + 1, center_y)
+        else:
+            # Default to filled circle
+            painter.drawEllipse(center_x - size//2, center_y - size//2, size, size)
+        
+        painter.end()
+        
+        # Create label widget with the pixmap
+        label = QLabel()
+        label.setPixmap(pixmap)
+        label.setAlignment(Qt.AlignCenter)
+        label.setFixedSize(20, 20)
+        
+        return label
+
+    def _initialize_default_method_selection(self):
+        """Initialize overlay options for the default selected method"""
+        try:
+            # Get the currently selected method (should be the first one)
+            current_item = self.method_list.currentItem()
+            if current_item:
+                method_name = current_item.text()
+                print(f"[ComparisonWizard] Initializing overlay options for default method: {method_name}")
+                
+                # Manually trigger the method selection logic
+                self._on_method_selected(current_item)
+                
+                # Set the method controls stack to show the first method
+                if self.method_controls_stack.count() > 0:
+                    self.method_controls_stack.setCurrentIndex(0)
+                
+                # Ensure overlay signals are connected after everything is set up
+                print("[ComparisonWizard] Re-connecting overlay signals after initialization")
+                self._connect_overlay_signals()
+                    
+        except Exception as e:
+            print(f"[ComparisonWizard] Error initializing default method: {e}")
+            import traceback
+            traceback.print_exc()

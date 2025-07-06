@@ -19,68 +19,39 @@ class BlandAltmanComparison(BaseComparison):
     """
     
     name = "Bland-Altman Analysis"
-    description = "Assess agreement between two measurement methods using Bland-Altman plots and statistics"
+    description = "Bland-Altman plot for assessing agreement between two measurement methods"
     category = "Agreement"
     version = "1.0.0"
     
+    # Helpful information for the console
+    helpful_info = """Bland-Altman Analysis - Evaluates agreement between measurement methods
+• Plots difference vs average of measurements
+• Shows bias (systematic difference between methods)
+• Limits of agreement: mean ± 1.96×SD of differences
+• Identifies proportional bias (correlation between difference and average)
+• Good agreement: Most points within limits, no systematic bias
+• Use for: Method comparison, clinical agreement studies, validation"""
+    
     parameters = {
-        'confidence_level': {
-            'type': float,
-            'default': 0.95,
-            'min': 0.8,
-            'max': 0.999,
-            'description': 'Confidence Level',
-            'tooltip': 'Confidence level for limits of agreement and statistical tests (0.95 = 95%)'
-        },
         'agreement_multiplier': {
             'type': float,
             'default': 1.96,
             'min': 1.0,
             'max': 3.0,
             'description': 'Agreement Multiplier',
-            'tooltip': 'Multiplier for limits of agreement\n1.96 = 95% limits\n2.58 = 99% limits\n1.64 = 90% limits'
+            'tooltip': 'Multiplier for limits of agreement\n1.96 = 95% limits\n2.58 = 99% limits'
         },
         'percentage_difference': {
             'type': bool,
             'default': False,
             'description': 'Percentage Differences',
-            'tooltip': 'Calculate percentage differences instead of absolute differences\nUseful when data magnitude varies widely'
-        },
-        'log_transform': {
-            'type': bool,
-            'default': False,
-            'description': 'Log Transform',
-            'tooltip': 'Apply log transformation before analysis\nUseful for data with proportional bias or skewed distributions'
-        },
-        'show_ci': {
-            'type': bool,
-            'default': True,
-            'description': 'Show Confidence Intervals',
-            'tooltip': 'Display confidence intervals for bias and limits of agreement'
+            'tooltip': 'Calculate percentage differences instead of absolute differences'
         },
         'test_proportional_bias': {
             'type': bool,
             'default': True,
             'description': 'Test Proportional Bias',
-            'tooltip': 'Test whether bias changes with measurement magnitude\nImportant for method comparison studies'
-        },
-        'outlier_detection': {
-            'type': bool,
-            'default': True,
-            'description': 'Detect Outliers',
-            'tooltip': 'Identify points outside limits of agreement as potential outliers'
-        },
-        'bias_test': {
-            'type': bool,
-            'default': True,
-            'description': 'Test Fixed Bias',
-            'tooltip': 'Test whether the mean bias is significantly different from zero'
-        },
-        'normality_test': {
-            'type': bool,
-            'default': False,
-            'description': 'Test Normality',
-            'tooltip': 'Test whether differences are normally distributed\nBland-Altman assumes normal distribution of differences'
+            'tooltip': 'Test whether bias changes with measurement magnitude'
         }
     }
     

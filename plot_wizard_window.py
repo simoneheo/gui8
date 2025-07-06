@@ -35,25 +35,21 @@ class PlotWizardWindow(QMainWindow):
         selector_layout = QHBoxLayout()
         self.file_dropdown = QComboBox()
         self.channel_dropdown = QComboBox()
-        self.type_dropdown = QComboBox()
-        self.type_dropdown.addItems(["Line", "Scatter", "Spectrogram", "Bar"])
-        self.legend_entry = QLineEdit()
-        self.legend_entry.setPlaceholderText("Legend Name")
         self.add_btn = QPushButton("Add to Plot")
 
+        selector_layout.addWidget(QLabel("File:"))
         selector_layout.addWidget(self.file_dropdown)
+        selector_layout.addWidget(QLabel("Channel:"))
         selector_layout.addWidget(self.channel_dropdown)
-        selector_layout.addWidget(self.type_dropdown)
-        selector_layout.addWidget(self.legend_entry)
         selector_layout.addWidget(self.add_btn)
 
         left_layout.addLayout(selector_layout)
 
         # Config Tables
         self.line_config_table = QTableWidget(0, 6)
-        self.line_config_table.setHorizontalHeaderLabels(["Subplot#", "Legend", "Color", "Line", "Marker", "Y Axis"])
-        self.subplot_config_table = QTableWidget(0, 7)
-        self.subplot_config_table.setHorizontalHeaderLabels(["Subplot#", "Xlabel", "Ylabel", "Legend Label", "Legend", "Legend Pos", "Advanced"])
+        self.line_config_table.setHorizontalHeaderLabels(["Subplot#", "Channel Name", "Type", "Size", "Actions", ""])
+        self.subplot_config_table = QTableWidget(0, 3)
+        self.subplot_config_table.setHorizontalHeaderLabels(["Subplot#", "Subplot Name", "Actions"])
 
         left_layout.addWidget(QLabel("Line Configurations"))
         left_layout.addWidget(self.line_config_table)

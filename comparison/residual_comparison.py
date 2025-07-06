@@ -14,74 +14,51 @@ class ResidualComparison(BaseComparison):
     """
     Residual analysis comparison method.
     
-    Analyzes residuals (differences) between two datasets to identify
-    patterns, trends, and statistical properties of the differences.
+    Analyzes residuals (differences) between two datasets,
+    focusing on the patterns and statistics of residuals.
     """
     
     name = "Residual Analysis"
-    description = "Analyze residuals and difference patterns between two datasets"
+    description = "Analyze residuals between reference and test data with statistical tests"
     category = "Statistical"
     version = "1.0.0"
     
+    # Helpful information for the console
+    helpful_info = """Residual Analysis - Analyzes prediction errors between datasets
+• Residuals = Reference - Test (or Test - Reference)
+• Checks for patterns: heteroscedasticity, non-linearity
+• Tests normality of residuals (Shapiro-Wilk, Kolmogorov-Smirnov)
+• Identifies outliers and influential points
+• Good model: Residuals randomly distributed around zero
+• Use for: Validating model assumptions, quality control"""
+    
     parameters = {
-        'residual_type': {
+        'fit_method': {
             'type': str,
-            'default': 'absolute',
-            'choices': ['absolute', 'relative', 'standardized', 'studentized'],
-            'description': 'Residual Type',
-            'tooltip': 'Absolute: Raw differences (test - ref)\nRelative: Percentage differences\nStandardized: Divided by standard deviation\nStudentized: Normalized for outlier detection'
+            'default': 'linear',
+            'choices': ['linear', 'polynomial', 'lowess'],
+            'description': 'Fitting Method',
+            'tooltip': 'Method for fitting the relationship between variables'
         },
-        'trend_analysis': {
+        'polynomial_degree': {
+            'type': int,
+            'default': 2,
+            'min': 1,
+            'max': 5,
+            'description': 'Polynomial Degree',
+            'tooltip': 'Degree of polynomial fit (only used when fit_method is polynomial)'
+        },
+        'show_residual_stats': {
             'type': bool,
             'default': True,
-            'description': 'Trend Analysis',
-            'tooltip': 'Analyze trends and patterns in residuals over time or measurement order'
+            'description': 'Show Residual Statistics',
+            'tooltip': 'Display statistics about the residuals'
         },
-        'normality_test': {
-            'type': str,
-            'default': 'shapiro',
-            'choices': ['shapiro', 'kstest', 'jarque_bera', 'anderson', 'all'],
-            'description': 'Normality Test',
-            'tooltip': 'Shapiro-Wilk: Most powerful for small samples\nKS test: Kolmogorov-Smirnov\nJarque-Bera: Based on skewness/kurtosis\nAnderson-Darling: More sensitive to tails\nAll: Run all tests'
-        },
-        'autocorrelation_test': {
+        'detect_outliers': {
             'type': bool,
             'default': True,
-            'description': 'Autocorrelation Test',
-            'tooltip': 'Test for serial correlation in residuals\nImportant for time series data'
-        },
-        'outlier_detection': {
-            'type': str,
-            'default': 'iqr',
-            'choices': ['iqr', 'zscore', 'modified_zscore', 'isolation_forest', 'all'],
-            'description': 'Outlier Detection',
-            'tooltip': 'IQR: Interquartile range (robust)\nZ-score: Standard deviation based\nModified Z-score: Median-based (very robust)\nIsolation Forest: Machine learning approach\nAll: Use multiple methods'
-        },
-        'outlier_threshold': {
-            'type': float,
-            'default': 3.0,
-            'min': 1.0,
-            'max': 5.0,
-            'description': 'Outlier Threshold',
-            'tooltip': 'Threshold for outlier detection in standard deviations\n2.0 = more sensitive, 3.0 = balanced, 4.0 = conservative'
-        },
-        'heteroscedasticity_test': {
-            'type': bool,
-            'default': True,
-            'description': 'Test Heteroscedasticity',
-            'tooltip': 'Test whether residual variance changes with fitted values\nImportant for validating model assumptions'
-        },
-        'runs_test': {
-            'type': bool,
-            'default': True,
-            'description': 'Runs Test',
-            'tooltip': 'Test for randomness in residual patterns\nDetects systematic trends or clustering'
-        },
-        'durbin_watson_test': {
-            'type': bool,
-            'default': True,
-            'description': 'Durbin-Watson Test',
-            'tooltip': 'Test for first-order autocorrelation\nValues near 2.0 indicate no autocorrelation'
+            'description': 'Detect Outliers',
+            'tooltip': 'Identify outliers in the residuals'
         }
     }
     
@@ -121,7 +98,7 @@ class ResidualComparison(BaseComparison):
             'method': self.name,
             'n_samples': len(ref_clean),
             'valid_ratio': valid_ratio,
-            'residual_type': self.params['residual_type'],
+            'residual_type': self.params['fit_method'],
             'residual_statistics': self._calculate_residual_statistics(residuals),
             'plot_data': {
                 'residuals': residuals,
@@ -133,16 +110,11 @@ class ResidualComparison(BaseComparison):
         }
         
         # Trend analysis
-        if self.params['trend_analysis']:
+        if self.params['fit_method'] != 'linear':
             results['trend_analysis'] = self._analyze_trends(residuals, time_array)
         
         # Normality tests
-        if self.params['normality_test']:
-            results['normality_tests'] = self._test_normality(residuals)
-        
-        # Autocorrelation tests
-        if self.params['autocorrelation_test']:
-            results['autocorrelation_tests'] = self._test_autocorrelation(residuals)
+        results['normality_tests'] = self._test_normality(residuals)
         
         # Outlier analysis
         results['outlier_analysis'] = self._analyze_outliers(residuals)
@@ -156,28 +128,21 @@ class ResidualComparison(BaseComparison):
     
     def _calculate_residuals(self, ref_data: np.ndarray, test_data: np.ndarray) -> np.ndarray:
         """Calculate residuals based on the specified type."""
-        residual_type = self.params['residual_type']
+        fit_method = self.params['fit_method']
         
-        if residual_type == 'absolute':
+        if fit_method == 'linear':
             return test_data - ref_data
         
-        elif residual_type == 'relative':
-            # Avoid division by zero
-            with np.errstate(divide='ignore', invalid='ignore'):
-                residuals = (test_data - ref_data) / ref_data
-                residuals[~np.isfinite(residuals)] = 0
-            return residuals
+        elif fit_method == 'polynomial':
+            # Fit a polynomial to the data
+            coefficients = np.polyfit(ref_data, test_data, self.params['polynomial_degree'])
+            polynomial = np.poly1d(coefficients)
+            return test_data - polynomial(ref_data)
         
-        elif residual_type == 'standardized':
-            raw_residuals = test_data - ref_data
-            residual_std = np.std(raw_residuals, ddof=1)
-            return raw_residuals / residual_std if residual_std > 0 else raw_residuals
-        
-        elif residual_type == 'studentized':
-            raw_residuals = test_data - ref_data
-            # Simple studentization (without leverage)
-            residual_std = np.std(raw_residuals, ddof=1)
-            return raw_residuals / residual_std if residual_std > 0 else raw_residuals
+        elif fit_method == 'lowess':
+            # Fit a LOWESS (Locally Weighted Scatterplot Smoothing) regression
+            lowess = stats.lowess(test_data, ref_data, frac=0.3)
+            return test_data - lowess[:, 1]
         
         else:
             return test_data - ref_data
@@ -279,46 +244,14 @@ class ResidualComparison(BaseComparison):
         
         return tests
     
-    def _test_autocorrelation(self, residuals: np.ndarray) -> Dict[str, Any]:
-        """Test residuals for autocorrelation."""
-        try:
-            # Durbin-Watson test
-            dw_stat = self._durbin_watson(residuals)
-            
-            # Ljung-Box test
-            lb_stat, lb_p_value = self._ljung_box_test(residuals)
-            
-            # Autocorrelation function
-            max_lag = min(20, len(residuals) // 4)
-            autocorr = [np.corrcoef(residuals[:-i], residuals[i:])[0, 1] 
-                       for i in range(1, max_lag + 1)]
-            
-            return {
-                'durbin_watson': {
-                    'statistic': dw_stat,
-                    'interpretation': self._interpret_durbin_watson(dw_stat)
-                },
-                'ljung_box': {
-                    'statistic': lb_stat,
-                    'p_value': lb_p_value,
-                    'autocorrelated': lb_p_value < 0.05
-                },
-                'autocorrelation_function': {
-                    'lags': list(range(1, max_lag + 1)),
-                    'values': autocorr
-                }
-            }
-        
-        except Exception as e:
-            return {'error': str(e)}
-    
     def _analyze_outliers(self, residuals: np.ndarray) -> Dict[str, Any]:
         """Analyze outliers in residuals."""
-        threshold = self.params['outlier_threshold']
+        if not self.params['detect_outliers']:
+            return {'outliers': 'Outliers detection disabled'}
         
         # Z-score method
         z_scores = np.abs(stats.zscore(residuals))
-        z_outliers = np.where(z_scores > threshold)[0]
+        z_outliers = np.where(z_scores > 3.0)[0]
         
         # IQR method
         q25, q75 = np.percentile(residuals, [25, 75])
@@ -330,14 +263,14 @@ class ResidualComparison(BaseComparison):
         # Modified Z-score method (using MAD)
         mad = np.median(np.abs(residuals - np.median(residuals)))
         modified_z_scores = 0.6745 * (residuals - np.median(residuals)) / mad if mad > 0 else np.zeros_like(residuals)
-        mad_outliers = np.where(np.abs(modified_z_scores) > threshold)[0]
+        mad_outliers = np.where(np.abs(modified_z_scores) > 3.0)[0]
         
         return {
             'z_score_outliers': {
                 'indices': z_outliers.tolist(),
                 'count': len(z_outliers),
                 'percentage': (len(z_outliers) / len(residuals)) * 100,
-                'threshold': threshold
+                'threshold': 3.0
             },
             'iqr_outliers': {
                 'indices': iqr_outliers.tolist(),
@@ -350,7 +283,7 @@ class ResidualComparison(BaseComparison):
                 'indices': mad_outliers.tolist(),
                 'count': len(mad_outliers),
                 'percentage': (len(mad_outliers) / len(residuals)) * 100,
-                'threshold': threshold
+                'threshold': 3.0
             }
         }
     
@@ -393,43 +326,6 @@ class ResidualComparison(BaseComparison):
         except Exception as e:
             return {'error': str(e)}
     
-    def _durbin_watson(self, residuals: np.ndarray) -> float:
-        """Calculate Durbin-Watson statistic."""
-        diff = np.diff(residuals)
-        return np.sum(diff**2) / np.sum(residuals**2)
-    
-    def _interpret_durbin_watson(self, dw_stat: float) -> str:
-        """Interpret Durbin-Watson statistic."""
-        if dw_stat < 1.5:
-            return "Positive autocorrelation"
-        elif dw_stat > 2.5:
-            return "Negative autocorrelation"
-        else:
-            return "No autocorrelation"
-    
-    def _ljung_box_test(self, residuals: np.ndarray, lags: int = 10) -> tuple:
-        """Perform Ljung-Box test for autocorrelation."""
-        n = len(residuals)
-        lags = min(lags, n // 4)
-        
-        # Calculate autocorrelations
-        autocorrs = []
-        for lag in range(1, lags + 1):
-            if lag < n:
-                autocorr = np.corrcoef(residuals[:-lag], residuals[lag:])[0, 1]
-                autocorrs.append(autocorr)
-            else:
-                autocorrs.append(0)
-        
-        # Ljung-Box statistic
-        lb_stat = n * (n + 2) * sum([(autocorr**2) / (n - lag) 
-                                    for lag, autocorr in enumerate(autocorrs, 1)])
-        
-        # P-value from chi-square distribution
-        p_value = 1 - stats.chi2.cdf(lb_stat, lags)
-        
-        return lb_stat, p_value
-    
     def _moving_average(self, data: np.ndarray, window_size: int) -> np.ndarray:
         """Calculate moving average."""
         return np.convolve(data, np.ones(window_size)/window_size, mode='valid')
@@ -466,14 +362,6 @@ class ResidualComparison(BaseComparison):
             else:
                 interpretations['trend'] = "No significant trend in residuals"
         
-        # Autocorrelation interpretation
-        if 'autocorrelation_tests' in results:
-            autocorr = results['autocorrelation_tests']
-            if 'error' not in autocorr and autocorr['ljung_box']['autocorrelated']:
-                interpretations['autocorrelation'] = "Residuals show autocorrelation"
-            else:
-                interpretations['autocorrelation'] = "No significant autocorrelation"
-        
         # Outlier interpretation
         outliers = results['outlier_analysis']
         z_outlier_pct = outliers['z_score_outliers']['percentage']
@@ -503,8 +391,7 @@ class ResidualComparison(BaseComparison):
             residuals = test_data - ref_data
             
             # Get analysis parameters from config
-            normality_test = plot_config.get('normality_test', 'shapiro') if plot_config else 'shapiro'
-            outlier_detection = plot_config.get('outlier_detection', 'iqr') if plot_config else 'iqr'
+            fit_method = plot_config.get('fit_method', 'linear') if plot_config else 'linear'
             
             # Add zero line for reference
             ax.axhline(0, color='black', linestyle='-', alpha=0.5, linewidth=1, label='Zero residual')
@@ -526,13 +413,10 @@ class ResidualComparison(BaseComparison):
             ax.axhline(mean_residual - 2*std_residual, color='red', linestyle=':', alpha=0.7)
             
             # Detect and highlight outliers
-            if outlier_detection == 'iqr':
-                q25, q75 = np.percentile(residuals, [25, 75])
-                iqr = q75 - q25
-                outlier_mask = (residuals < q25 - 1.5*iqr) | (residuals > q75 + 1.5*iqr)
-            else:  # zscore
-                z_scores = np.abs(stats.zscore(residuals))
-                outlier_mask = z_scores > 3.0
+            if fit_method == 'linear':
+                outlier_mask = np.zeros_like(residuals, dtype=bool)
+            else:
+                outlier_mask = np.zeros_like(residuals, dtype=bool)
             
             # Plot normal points
             normal_mask = ~outlier_mask
@@ -547,12 +431,13 @@ class ResidualComparison(BaseComparison):
             
             # Add trend line if there's a significant trend
             try:
-                slope, intercept, r_value, p_value, _ = stats.linregress(ref_data, residuals)
-                if p_value < 0.05:  # Significant trend
-                    x_line = np.array([np.min(ref_data), np.max(ref_data)])
-                    y_line = slope * x_line + intercept
-                    ax.plot(x_line, y_line, 'g-', linewidth=2, alpha=0.7,
-                           label=f'Trend (p={p_value:.3f})')
+                if fit_method != 'linear':
+                    slope, intercept, r_value, p_value, _ = stats.linregress(ref_data, residuals)
+                    if p_value < 0.05:  # Significant trend
+                        x_line = np.array([np.min(ref_data), np.max(ref_data)])
+                        y_line = slope * x_line + intercept
+                        ax.plot(x_line, y_line, 'g-', linewidth=2, alpha=0.7,
+                               label=f'Trend (p={p_value:.3f})')
             except:
                 pass
             
@@ -561,16 +446,17 @@ class ResidualComparison(BaseComparison):
             stats_text += f'SD = {std_residual:.4f}\n'
             
             try:
-                if normality_test == 'shapiro':
+                if fit_method == 'linear':
                     stat, p_val = stats.shapiro(residuals)
                     stats_text += f'Shapiro p = {p_val:.3f}\n'
                     normal_status = "Normal" if p_val > 0.05 else "Non-normal"
                     stats_text += f'Distribution: {normal_status}\n'
-                elif normality_test == 'kstest':
-                    stat, p_val = stats.kstest(residuals, 'norm')
-                    stats_text += f'KS test p = {p_val:.3f}\n'
-                    normal_status = "Normal" if p_val > 0.05 else "Non-normal"
-                    stats_text += f'Distribution: {normal_status}\n'
+                elif fit_method == 'polynomial':
+                    # Implement polynomial normality test
+                    pass
+                elif fit_method == 'lowess':
+                    # Implement LOWESS normality test
+                    pass
             except:
                 pass
             

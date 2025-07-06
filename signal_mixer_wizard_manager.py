@@ -908,6 +908,26 @@ class SignalMixerWizardManager:
             if len(ref_data) == 0 or len(test_data) == 0:
                 raise ValueError("Channel data is empty")
             
+            # Check if both channels have the same xdata for index-based alignment
+            shared_xdata = None
+            if (hasattr(ref_channel, 'xdata') and ref_channel.xdata is not None and
+                hasattr(test_channel, 'xdata') and test_channel.xdata is not None):
+                
+                # Check if xdata arrays are the same length and have identical values
+                if len(ref_channel.xdata) == len(test_channel.xdata):
+                    try:
+                        if np.allclose(ref_channel.xdata, test_channel.xdata, rtol=1e-10, atol=1e-10):
+                            print("[SignalMixerWizardManager] Index-based alignment: channels have identical xdata, preserving for mixed channel")
+                            shared_xdata = ref_channel.xdata.copy()
+                        else:
+                            print("[SignalMixerWizardManager] Index-based alignment: channels have different xdata values")
+                    except Exception as e:
+                        print(f"[SignalMixerWizardManager] Error comparing xdata: {e}")
+                else:
+                    print("[SignalMixerWizardManager] Index-based alignment: channels have different xdata lengths")
+            else:
+                print("[SignalMixerWizardManager] Index-based alignment: one or both channels missing xdata")
+            
             # Get configuration parameters
             mode = config.get('mode', 'truncate')
             
@@ -920,6 +940,11 @@ class SignalMixerWizardManager:
                 ref_aligned = ref_data[:min_length].copy()
                 test_aligned = test_data[:min_length].copy()
                 actual_range = (0, min_length - 1)
+                
+                # If we have shared xdata, truncate it to match the aligned data
+                aligned_xdata = None
+                if shared_xdata is not None:
+                    aligned_xdata = shared_xdata[:min_length].copy()
                 
             else:  # custom
                 # Custom range with validation
@@ -947,6 +972,16 @@ class SignalMixerWizardManager:
                 test_aligned = test_data[start_idx:end_idx+1].copy()
                 actual_range = (start_idx, end_idx)
                 
+                # If we have shared xdata, slice it to match the custom range
+                aligned_xdata = None
+                if shared_xdata is not None:
+                    # Make sure we don't exceed the xdata bounds
+                    if end_idx < len(shared_xdata):
+                        aligned_xdata = shared_xdata[start_idx:end_idx+1].copy()
+                    else:
+                        print(f"[SignalMixerWizardManager] Warning: custom range exceeds xdata bounds, xdata will not be preserved")
+                        aligned_xdata = None
+                
             # Apply offset if specified
             offset = config.get('offset', 0)
             if offset != 0:
@@ -956,6 +991,14 @@ class SignalMixerWizardManager:
                         raise ValueError(f"Positive offset ({offset}) too large for test data length ({len(test_aligned)})")
                     test_aligned = test_aligned[offset:]
                     ref_aligned = ref_aligned[:len(test_aligned)]
+                    
+                    # Adjust xdata if we have it
+                    if aligned_xdata is not None:
+                        if offset < len(aligned_xdata):
+                            aligned_xdata = aligned_xdata[:len(test_aligned)]
+                        else:
+                            print(f"[SignalMixerWizardManager] Warning: offset exceeds xdata bounds, xdata will not be preserved")
+                            aligned_xdata = None
                 else:
                     # Negative offset: shift ref data forward, truncate test data
                     offset_abs = abs(offset)
@@ -963,6 +1006,17 @@ class SignalMixerWizardManager:
                         raise ValueError(f"Negative offset magnitude ({offset_abs}) too large for ref data length ({len(ref_aligned)})")
                     ref_aligned = ref_aligned[offset_abs:]
                     test_aligned = test_aligned[:len(ref_aligned)]
+                    
+                    # Adjust xdata if we have it
+                    if aligned_xdata is not None:
+                        if offset_abs < len(aligned_xdata):
+                            aligned_xdata = aligned_xdata[offset_abs:offset_abs+len(ref_aligned)]
+                        else:
+                            print(f"[SignalMixerWizardManager] Warning: negative offset exceeds xdata bounds, xdata will not be preserved")
+                            aligned_xdata = None
+            else:
+                # No offset, keep aligned_xdata as is
+                pass
             
             # Final validation
             if len(ref_aligned) != len(test_aligned):
@@ -971,7 +1025,8 @@ class SignalMixerWizardManager:
             if len(ref_aligned) == 0:
                 raise ValueError("No data points remaining after alignment")
             
-            return {
+            # Prepare result with time_data if we have shared xdata
+            result = {
                 'ref_data': ref_aligned,
                 'test_data': test_aligned,
                 'alignment_method': 'index',
@@ -979,6 +1034,15 @@ class SignalMixerWizardManager:
                 'n_points': len(ref_aligned),
                 'offset_applied': offset
             }
+            
+            # Add time_data if we have preserved xdata
+            if aligned_xdata is not None:
+                result['time_data'] = aligned_xdata
+                print(f"[SignalMixerWizardManager] Preserved xdata for mixed channel ({len(aligned_xdata)} points)")
+            else:
+                print("[SignalMixerWizardManager] No shared xdata to preserve, mixed channel will use indices")
+            
+            return result
             
         except Exception as e:
             error_msg = f"Index alignment failed: {str(e)}"

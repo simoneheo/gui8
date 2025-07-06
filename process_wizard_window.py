@@ -467,16 +467,20 @@ class ProcessWizardWindow(QMainWindow):
         # Get selected file
         selected_file_id = self.file_selector.currentData()
         if not selected_file_id:
+            print("[ProcessWizard] No file selected in _update_channel_selector")
             return
 
         # Get channels for selected file
         file_channels = self.channel_manager.get_channels_by_file(selected_file_id)
+        print(f"[ProcessWizard] Found {len(file_channels)} total channels for file {selected_file_id}")
         
         # Filter for RAW channels only
         filtered_channels = [ch for ch in file_channels if ch.type == SourceType.RAW]
+        print(f"[ProcessWizard] Found {len(filtered_channels)} RAW channels")
 
         # Add channels to selector
         for ch in filtered_channels:
+            print(f"[ProcessWizard] Adding channel: {ch.legend_label} (ID: {ch.channel_id})")
             self.channel_selector.addItem(ch.legend_label, ch)
 
         # Restore selection if possible, otherwise select first channel
@@ -491,64 +495,53 @@ class ProcessWizardWindow(QMainWindow):
         
         if not selection_restored and self.channel_selector.count() > 0:
             self.channel_selector.setCurrentIndex(0)
+            selected_channel = self.channel_selector.currentData()
+            if selected_channel:
+                print(f"[ProcessWizard] Auto-selected first channel: {selected_channel.legend_label} (ID: {selected_channel.channel_id})")
 
     def get_active_channel_info(self):
         """Get the currently selected channel info."""
         # During filter addition, preserve the explicitly set input_ch
         if (hasattr(self, '_adding_filter') and self._adding_filter and 
             hasattr(self, 'input_ch') and self.input_ch):
+            print(f"[ProcessWizard] get_active_channel_info: using input_ch during filter addition: {self.input_ch.channel_id}")
             return self.input_ch
         
         # Use the explicitly set input_ch if available
         if hasattr(self, 'input_ch') and self.input_ch:
+            print(f"[ProcessWizard] get_active_channel_info: using explicitly set input_ch: {self.input_ch.channel_id}")
             return self.input_ch
         
-        # Use the input channel combobox selection
+        # Use the input channel combobox selection if cached lineage is available
         if (hasattr(self, '_cached_lineage') and self._cached_lineage and 
+            hasattr(self, 'input_channel_combobox') and
             self.input_channel_combobox.currentIndex() >= 0 and 
             self.input_channel_combobox.currentIndex() < len(self._cached_lineage)):
-            return self._cached_lineage[self.input_channel_combobox.currentIndex()]
+            channel = self._cached_lineage[self.input_channel_combobox.currentIndex()]
+            print(f"[ProcessWizard] get_active_channel_info: using cached lineage channel: {channel.channel_id}")
+            return channel
         
         # Fallback to main channel selector
-        if self.channel_selector.currentIndex() < 0:
-            return None
-            
-        channel = self.channel_selector.currentData()
-        if channel is None:
-            return None
-            
-        return channel
+        if (hasattr(self, 'channel_selector') and 
+            self.channel_selector.currentIndex() >= 0):
+            channel = self.channel_selector.currentData()
+            if channel is not None:
+                print(f"[ProcessWizard] get_active_channel_info: using channel selector: {channel.channel_id}")
+                return channel
+        
+        print("[ProcessWizard] get_active_channel_info: no active channel found")
+        return None
 
-    def _update_step_table(self):
-        """Update the unified step table with the current channel lineage."""
-        active_channel = self.get_active_channel_info()
-        if not active_channel:
-            print("[ProcessWizard] No active channel found")
+    def _build_lineage_for_channel(self, channel):
+        """Build lineage for a given channel and cache it."""
+        if not channel:
+            self._cached_lineage = []
             return
-
-        print(f"[ProcessWizard] Active channel: {active_channel.channel_id} (step {active_channel.step}, file {active_channel.file_id})")
-        print(f"[ProcessWizard] Active channel lineage_id: {active_channel.lineage_id}")
+            
+        print(f"[ProcessWizard] Building lineage for channel: {channel.channel_id} (step {channel.step}, file {channel.file_id})")
         
-        # Check if channel is in channel manager
-        channel_in_manager = self.channel_manager.has_channel(active_channel.channel_id)
-        print(f"[ProcessWizard] Channel in manager: {channel_in_manager}")
-        
-        # Check if lineage_id is in channel manager
-        lineage_in_manager = self.channel_manager.has_channel(active_channel.lineage_id)
-        print(f"[ProcessWizard] Lineage ID in manager: {lineage_in_manager}")
-        
-        # Check total channels in manager
-        total_channels = self.channel_manager.get_channel_count()
-        print(f"[ProcessWizard] Total channels in manager: {total_channels}")
-        
-        # Check channels by file
-        file_channels = self.channel_manager.get_channels_by_file(active_channel.file_id)
-        print(f"[ProcessWizard] Channels in file {active_channel.file_id}: {len(file_channels)}")
-        for ch in file_channels:
-            print(f"[ProcessWizard]   - {ch.channel_id} (step {ch.step})")
-        
-        lineage_dict = self.channel_manager.get_channels_by_lineage(active_channel.lineage_id)
-        print(f"[ProcessWizard] Lineage dict keys: {list(lineage_dict.keys())}")
+        # Get all channels in the lineage
+        lineage_dict = self.channel_manager.get_channels_by_lineage(channel.lineage_id)
         
         # Collect all channels from the lineage (parents, children, siblings)
         all_lineage_channels = []
@@ -556,23 +549,14 @@ class ProcessWizardWindow(QMainWindow):
         all_lineage_channels.extend(lineage_dict.get('children', []))
         all_lineage_channels.extend(lineage_dict.get('siblings', []))
         
-        print(f"[ProcessWizard] All lineage channels: {len(all_lineage_channels)}")
-        for ch in all_lineage_channels:
-            print(f"[ProcessWizard]   - {ch.channel_id} (step {ch.step}, file {ch.file_id})")
-        
         # Filter by file_id and sort by step
-        lineage = [ch for ch in all_lineage_channels if ch.file_id == active_channel.file_id]
+        lineage = [ch for ch in all_lineage_channels if ch.file_id == channel.file_id]
         lineage.sort(key=lambda ch: ch.step)
-        
-        print(f"[ProcessWizard] Filtered lineage (same file): {len(lineage)}")
-        for ch in lineage:
-            print(f"[ProcessWizard]   - {ch.channel_id} (step {ch.step})")
         
         # If no lineage found, get all channels from the same file and lineage_id
         if not lineage:
-            print(f"[ProcessWizard] No lineage found, getting all channels from same file and lineage_id")
-            file_channels = self.channel_manager.get_channels_by_file(active_channel.file_id)
-            lineage = [ch for ch in file_channels if ch.lineage_id == active_channel.lineage_id]
+            file_channels = self.channel_manager.get_channels_by_file(channel.file_id)
+            lineage = [ch for ch in file_channels if ch.lineage_id == channel.lineage_id]
             # Remove duplicates based on channel_id
             seen_ids = set()
             unique_lineage = []
@@ -582,21 +566,30 @@ class ProcessWizardWindow(QMainWindow):
                     unique_lineage.append(ch)
             lineage = unique_lineage
             lineage.sort(key=lambda ch: ch.step)
-            print(f"[ProcessWizard] Found {len(lineage)} unique channels with same lineage_id: {[ch.channel_id for ch in lineage]}")
         
         # Filter lineage based on current tab
         current_tab_index = self.tab_widget.currentIndex()
         filtered_lineage = self._filter_lineage_by_tab(lineage, current_tab_index)
         
-        # Cache lineage for dropdown logic
+        # Cache lineage
         self._cached_lineage = filtered_lineage
         
-        # Update input channel combobox
-        self._update_input_channel_combobox()
+        print(f"[ProcessWizard] Built lineage with {len(filtered_lineage)} channels")
+        for ch in filtered_lineage:
+            print(f"[ProcessWizard]   - {ch.channel_id} (step {ch.step})")
 
-
-            
-
+    def _update_step_table(self):
+        """Update the unified step table with the current channel lineage."""
+        # Use cached lineage if available, otherwise build it
+        if not hasattr(self, '_cached_lineage') or not self._cached_lineage:
+            active_channel = self.get_active_channel_info()
+            if not active_channel:
+                print("[ProcessWizard] No active channel found for step table update")
+                return
+            self._build_lineage_for_channel(active_channel)
+        
+        filtered_lineage = self._cached_lineage
+        print(f"[ProcessWizard] Updating step table with {len(filtered_lineage)} channels")
         
         self.step_table.setRowCount(len(filtered_lineage))
 
@@ -1006,13 +999,32 @@ class ProcessWizardWindow(QMainWindow):
         if self._adding_filter:
             return
             
+        # Get selected file info for debugging
+        selected_file_id = self.file_selector.currentData()
+        selected_file_name = self.file_selector.currentText()
+        print(f"[ProcessWizard] File selection changed to: {selected_file_name} (ID: {selected_file_id})")
+        
         # Clear input_ch so we auto-select the most recent channel in the new file
         self.input_ch = None
+        
+        # Clear cached lineage to ensure we don't use old file's channels
+        self._cached_lineage = []
         
         # Update channel selector when file changes
         self._update_channel_selector()
         
-        # Update table and plot (this will auto-select the most recent channel)
+        # Force immediate update of lineage and Input Channel dropdown
+        # Get the newly selected channel from the channel selector
+        if self.channel_selector.count() > 0:
+            selected_channel = self.channel_selector.currentData()
+            if selected_channel:
+                print(f"[ProcessWizard] Building lineage for newly selected channel: {selected_channel.channel_id}")
+                # Build lineage for the new channel
+                self._build_lineage_for_channel(selected_channel)
+                # Update Input Channel dropdown with the new lineage
+                self._update_input_channel_combobox()
+        
+        # Update table and plot (this will now use the updated Input Channel dropdown)
         self._update_step_table()
         self._update_plot()
 
@@ -1032,11 +1044,19 @@ class ProcessWizardWindow(QMainWindow):
         if self._adding_filter:
             return
         
+        print(f"[ProcessWizard] Channel selection changed to: {selected_channel.legend_label} (ID: {selected_channel.channel_id})")
+        
         # Clear input_ch so we auto-select the most recent channel in the new lineage
         # This ensures we show the most recent channel in the selected lineage
         self.input_ch = None
         
-        # Update both table and plot (this will auto-select the most recent channel in the lineage)
+        # Build lineage for the newly selected channel
+        self._build_lineage_for_channel(selected_channel)
+        
+        # Update Input Channel dropdown with the new lineage
+        self._update_input_channel_combobox()
+        
+        # Update both table and plot (this will now use the updated Input Channel dropdown)
         self._update_step_table()
         self._update_plot()
 
@@ -1084,6 +1104,14 @@ class ProcessWizardWindow(QMainWindow):
         self._update_file_selector()
         self._update_channel_selector()
 
+        # CRITICAL: Rebuild the lineage to include the new channel
+        # Build lineage for the new channel to include it in the cached lineage
+        print(f"[ProcessWizard] Rebuilding lineage to include new channel")
+        self._build_lineage_for_channel(new_channel)
+        
+        # Update Input Channel dropdown with the new lineage
+        self._update_input_channel_combobox()
+
         # Switch to appropriate tab based on created channel type
         if new_channel and hasattr(new_channel, 'tags'):
             if "spectrogram" in new_channel.tags:
@@ -1102,7 +1130,7 @@ class ProcessWizardWindow(QMainWindow):
             print(f"[ProcessWizard] input_ch not set before UI update")
         
         # Update step table and plot with the new channel properly selected
-        self._update_step_table()  # This should show the new channel selected
+        self._update_step_table()  # This should now show the new channel in the updated lineage
         
         # Verify the combobox was updated correctly
         current_index = self.input_channel_combobox.currentIndex()

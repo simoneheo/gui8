@@ -25,79 +25,32 @@ class StatisticalComparison(BaseComparison):
     version = "1.0.0"
     
     parameters = {
-        'test_suite': {
+        'test_type': {
             'type': str,
-            'default': 'comprehensive',
-            'choices': ['basic', 'comprehensive', 'nonparametric', 'robust'],
-            'description': 'Test Suite',
-            'tooltip': 'Basic: t-test, F-test\nComprehensive: Multiple parametric tests\nNonparametric: Rank-based tests\nRobust: Outlier-resistant tests'
+            'default': 'auto',
+            'choices': ['auto', 't_test', 'wilcoxon', 'ks_test'],
+            'description': 'Test Type',
+            'tooltip': 'Statistical test to perform\nAuto: Automatically select appropriate test'
         },
-        'significance_level': {
+        'alpha': {
             'type': float,
             'default': 0.05,
             'min': 0.001,
             'max': 0.1,
-            'description': 'Significance Level (α)',
-            'tooltip': 'Type I error rate for hypothesis tests\n0.05 = 5% chance of false positive\n0.01 = 1% chance (more conservative)'
+            'description': 'Significance Level',
+            'tooltip': 'Significance level for statistical tests (0.05 = 5%)'
         },
-        'equal_variance_assumption': {
-            'type': str,
-            'default': 'test',
-            'choices': ['assume_equal', 'assume_unequal', 'test'],
-            'description': 'Equal Variance',
-            'tooltip': 'Assume equal: Use pooled variance\nAssume unequal: Use Welch\'s t-test\nTest: Automatically test and decide'
-        },
-        'normality_assumption': {
-            'type': str,
-            'default': 'test',
-            'choices': ['assume_normal', 'assume_nonnormal', 'test'],
-            'description': 'Normality Assumption',
-            'tooltip': 'Assume normal: Use parametric tests\nAssume non-normal: Use nonparametric tests\nTest: Automatically test and decide'
-        },
-        'multiple_comparisons': {
-            'type': str,
-            'default': 'bonferroni',
-            'choices': ['none', 'bonferroni', 'holm', 'fdr_bh'],
-            'description': 'Multiple Comparisons',
-            'tooltip': 'None: No correction\nBonferroni: Conservative correction\nHolm: Step-down method\nFDR: False discovery rate (Benjamini-Hochberg)'
-        },
-        'effect_size_measures': {
+        'paired': {
             'type': bool,
             'default': True,
-            'description': 'Effect Size Measures',
-            'tooltip': 'Calculate effect sizes (Cohen\'s d, eta-squared, etc.)\nHelps interpret practical significance beyond statistical significance'
+            'description': 'Paired Data',
+            'tooltip': 'Whether the data represents paired measurements'
         },
-        'confidence_intervals': {
+        'descriptive_stats': {
             'type': bool,
             'default': True,
-            'description': 'Confidence Intervals',
-            'tooltip': 'Calculate confidence intervals for means, differences, and effect sizes'
-        },
-        'bootstrap_tests': {
-            'type': bool,
-            'default': False,
-            'description': 'Bootstrap Tests',
-            'tooltip': 'Use bootstrap resampling for robust statistical tests\nSlower but more reliable for small samples or non-normal data'
-        },
-        'bootstrap_samples': {
-            'type': int,
-            'default': 1000,
-            'min': 100,
-            'max': 10000,
-            'description': 'Bootstrap Samples',
-            'tooltip': 'Number of bootstrap resamples for bootstrap tests\nMore samples = more accurate but slower'
-        },
-        'outlier_handling': {
-            'type': str,
-            'default': 'identify',
-            'choices': ['ignore', 'identify', 'remove', 'robust'],
-            'description': 'Outlier Handling',
-            'tooltip': 'Ignore: No outlier detection\nIdentify: Report outliers but keep them\nRemove: Exclude outliers from analysis\nRobust: Use outlier-resistant tests'
-        },
-        'paired_data': {
-            'type': bool,
-            'default': False,
-            'description': 'Whether the data represents paired observations'
+            'description': 'Descriptive Statistics',
+            'tooltip': 'Include descriptive statistics in the analysis'
         }
     }
     
@@ -129,8 +82,8 @@ class StatisticalComparison(BaseComparison):
             'n_ref': len(ref_clean),
             'n_test': len(test_clean),
             'valid_ratio': valid_ratio,
-            'alpha_level': self.params['significance_level'],
-            'paired_data': self.params['paired_data'],
+            'alpha_level': self.params['alpha'],
+            'paired_data': self.params['paired'],
             'descriptive_statistics': self._calculate_descriptive_stats(ref_clean, test_clean),
             'assumption_tests': {},
             'statistical_tests': {},
@@ -141,16 +94,14 @@ class StatisticalComparison(BaseComparison):
         results['assumption_tests'] = self._test_assumptions(ref_clean, test_clean)
         
         # Perform statistical tests based on suite
-        test_suite = self.params['test_suite']
+        test_type = self.params['test_type']
         
-        if test_suite in ['basic', 'comprehensive']:
-            results['statistical_tests'].update(self._perform_parametric_tests(ref_clean, test_clean, results['assumption_tests']))
-        
-        if test_suite in ['nonparametric', 'comprehensive']:
-            results['statistical_tests'].update(self._perform_nonparametric_tests(ref_clean, test_clean))
-        
-        if test_suite == 'comprehensive':
-            results['statistical_tests'].update(self._perform_distribution_tests(ref_clean, test_clean))
+        if test_type == 't_test':
+            results['statistical_tests'].update(self._perform_t_test(ref_clean, test_clean))
+        elif test_type == 'wilcoxon':
+            results['statistical_tests'].update(self._perform_wilcoxon_test(ref_clean, test_clean))
+        elif test_type == 'ks_test':
+            results['statistical_tests'].update(self._perform_ks_test(ref_clean, test_clean))
         
         # Calculate effect sizes
         results['effect_sizes'] = self._calculate_effect_sizes(ref_clean, test_clean)
@@ -189,21 +140,21 @@ class StatisticalComparison(BaseComparison):
         assumptions = {}
         
         # Test normality
-        if self.params['normality_assumption'] == 'test':
+        if self.params['test_type'] == 't_test':
             assumptions['normality'] = self._test_normality_assumption(ref_data, test_data)
         else:
             assumptions['normality'] = {
-                'ref_normal': self.params['normality_assumption'] == 'assume_normal',
-                'test_normal': self.params['normality_assumption'] == 'assume_normal',
+                'ref_normal': self.params['test_type'] == 'wilcoxon',
+                'test_normal': self.params['test_type'] == 'wilcoxon',
                 'assumed': True
             }
         
         # Test equal variances
-        if self.params['equal_variance_assumption'] == 'test':
+        if self.params['test_type'] == 't_test':
             assumptions['equal_variance'] = self._test_equal_variance_assumption(ref_data, test_data)
         else:
             assumptions['equal_variance'] = {
-                'equal_variances': self.params['equal_variance_assumption'] == 'assume_equal',
+                'equal_variances': self.params['test_type'] == 'wilcoxon',
                 'assumed': True
             }
         
@@ -211,7 +162,7 @@ class StatisticalComparison(BaseComparison):
     
     def _test_normality_assumption(self, ref_data: np.ndarray, test_data: np.ndarray) -> Dict[str, Any]:
         """Test normality assumption for both datasets."""
-        alpha = self.params['significance_level']
+        alpha = self.params['alpha']
         
         # Test reference data
         if len(ref_data) < 5000:
@@ -243,7 +194,7 @@ class StatisticalComparison(BaseComparison):
     
     def _test_equal_variance_assumption(self, ref_data: np.ndarray, test_data: np.ndarray) -> Dict[str, Any]:
         """Test equal variance assumption."""
-        alpha = self.params['significance_level']
+        alpha = self.params['alpha']
         
         # Levene's test (more robust)
         levene_stat, levene_p = stats.levene(ref_data, test_data)
@@ -266,48 +217,34 @@ class StatisticalComparison(BaseComparison):
             'f_p_value': f_p
         }
     
-    def _perform_parametric_tests(self, ref_data: np.ndarray, test_data: np.ndarray, 
-                                 assumptions: Dict[str, Any]) -> Dict[str, Any]:
-        """Perform parametric statistical tests."""
+    def _perform_t_test(self, ref_data: np.ndarray, test_data: np.ndarray) -> Dict[str, Any]:
+        """Perform t-test."""
         tests = {}
-        alpha = self.params['significance_level']
+        alpha = self.params['alpha']
         
-        # Choose appropriate t-test based on assumptions and data pairing
-        if self.params['paired_data']:
-            # Paired t-test
-            if len(ref_data) == len(test_data):
-                stat, p_value = stats.ttest_rel(ref_data, test_data)
-                tests['paired_ttest'] = {
-                    'statistic': stat,
-                    'p_value': p_value,
-                    'significant': p_value < alpha,
-                    'test_type': 'paired_ttest'
-                }
+        # Independent samples t-test
+        if self.params['test_type'] == 't_test':
+            stat, p_value = stats.ttest_ind(ref_data, test_data, equal_var=True)
+            test_type = 'independent_ttest_equal_var'
         else:
-            # Independent samples t-test
-            if assumptions['equal_variance']['equal_variances']:
-                stat, p_value = stats.ttest_ind(ref_data, test_data, equal_var=True)
-                test_type = 'independent_ttest_equal_var'
-            else:
-                stat, p_value = stats.ttest_ind(ref_data, test_data, equal_var=False)
-                test_type = 'welch_ttest'
-            
-            tests['independent_ttest'] = {
-                'statistic': stat,
-                'p_value': p_value,
-                'significant': p_value < alpha,
-                'test_type': test_type
-            }
+            stat, p_value = stats.ttest_ind(ref_data, test_data, equal_var=False)
+            test_type = 'welch_ttest'
+        
+        tests['independent_ttest'] = {
+            'statistic': stat,
+            'p_value': p_value,
+            'significant': p_value < alpha,
+            'test_type': test_type
+        }
         
         return tests
     
-    def _perform_nonparametric_tests(self, ref_data: np.ndarray, test_data: np.ndarray) -> Dict[str, Any]:
-        """Perform non-parametric statistical tests."""
+    def _perform_wilcoxon_test(self, ref_data: np.ndarray, test_data: np.ndarray) -> Dict[str, Any]:
+        """Perform Wilcoxon signed-rank test."""
         tests = {}
-        alpha = self.params['significance_level']
+        alpha = self.params['alpha']
         
-        if self.params['paired_data'] and len(ref_data) == len(test_data):
-            # Wilcoxon signed-rank test
+        if self.params['test_type'] == 'wilcoxon':
             try:
                 stat, p_value = stats.wilcoxon(ref_data, test_data)
                 tests['wilcoxon'] = {
@@ -328,21 +265,12 @@ class StatisticalComparison(BaseComparison):
                 'test_type': 'mann_whitney_u'
             }
         
-        # Kruskal-Wallis test (equivalent to Mann-Whitney for 2 groups)
-        stat, p_value = stats.kruskal(ref_data, test_data)
-        tests['kruskal_wallis'] = {
-            'statistic': stat,
-            'p_value': p_value,
-            'significant': p_value < alpha,
-            'test_type': 'kruskal_wallis'
-        }
-        
         return tests
     
-    def _perform_distribution_tests(self, ref_data: np.ndarray, test_data: np.ndarray) -> Dict[str, Any]:
-        """Perform tests comparing distributions."""
+    def _perform_ks_test(self, ref_data: np.ndarray, test_data: np.ndarray) -> Dict[str, Any]:
+        """Perform Kolmogorov-Smirnov test."""
         tests = {}
-        alpha = self.params['significance_level']
+        alpha = self.params['alpha']
         
         # Kolmogorov-Smirnov test
         stat, p_value = stats.ks_2samp(ref_data, test_data)
@@ -352,19 +280,6 @@ class StatisticalComparison(BaseComparison):
             'significant': p_value < alpha,
             'test_type': 'ks_2sample'
         }
-        
-        # Anderson-Darling test
-        try:
-            stat, critical_values, significance_level = stats.anderson_ksamp([ref_data, test_data])
-            tests['anderson_darling'] = {
-                'statistic': stat,
-                'critical_values': critical_values.tolist(),
-                'significance_level': significance_level,
-                'significant': stat > critical_values[2],  # 5% level
-                'test_type': 'anderson_darling_2sample'
-            }
-        except Exception as e:
-            tests['anderson_darling'] = {'error': str(e)}
         
         return tests
     
@@ -479,7 +394,7 @@ class StatisticalComparison(BaseComparison):
             
             # Get parameters from config
             alpha = plot_config.get('alpha_level', 0.05) if plot_config else 0.05
-            test_suite = plot_config.get('test_suite', 'basic') if plot_config else 'basic'
+            test_type = plot_config.get('test_type', 'auto') if plot_config else 'auto'
             equal_var = plot_config.get('equal_variance', 'test') if plot_config else 'test'
             normality = plot_config.get('normality_assumption', 'test') if plot_config else 'test'
             

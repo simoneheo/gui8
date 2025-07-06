@@ -18,40 +18,20 @@ class CrossCorrelationComparison(BaseComparison):
             'default': 50,
             'min': 1,
             'max': 1000,
-            'description': 'Max Lag',
-            'tooltip': 'Maximum lag to compute cross-correlation\nHigher values capture longer-term relationships but increase computation time'
+            'description': 'Maximum Lag',
+            'tooltip': 'Maximum lag to compute cross-correlation'
         },
         'normalize': {
             'type': bool,
             'default': True,
             'description': 'Normalize',
-            'tooltip': 'Normalize cross-correlation by signal energies\nRecommended for comparing signals with different amplitudes'
-        },
-        'detrend': {
-            'type': bool,
-            'default': True,
-            'description': 'Detrend',
-            'tooltip': 'Remove linear trends before cross-correlation\nHelps focus on signal relationships rather than trends'
+            'tooltip': 'Normalize cross-correlation values'
         },
         'find_peak': {
             'type': bool,
             'default': True,
             'description': 'Find Peak',
-            'tooltip': 'Automatically find and report the peak cross-correlation and its lag'
-        },
-        'confidence_bands': {
-            'type': bool,
-            'default': True,
-            'description': 'Confidence Bands',
-            'tooltip': 'Calculate confidence bands for cross-correlation\nHelps identify significant correlations'
-        },
-        'confidence_level': {
-            'type': float,
-            'default': 0.95,
-            'min': 0.8,
-            'max': 0.999,
-            'description': 'Confidence Level',
-            'tooltip': 'Confidence level for significance testing (0.95 = 95%)'
+            'tooltip': 'Automatically find the peak cross-correlation and its lag'
         }
     }
 

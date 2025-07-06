@@ -899,34 +899,46 @@ class ComparisonWizardManager(QObject):
     def _generate_dynamic_plot_content(self, ax, all_ref_data, all_test_data, plot_config, checked_pairs):
         """Generate plot content using dynamic method dispatch from comparison registry"""
         try:
-            plot_type = plot_config.get('plot_type', 'scatter')
+            # Get the comparison method name from the first checked pair
+            method_name = None
+            if checked_pairs:
+                method_name = checked_pairs[0].get('comparison_method')
             
-            # Find the comparison method that matches this plot type
-            comparison_method = None
+            # Fallback to plot_config if not found in pairs
+            if not method_name:
+                method_name = plot_config.get('comparison_method', 'Correlation Analysis')
+            
+            # Try to create the comparison method instance
             method_instance = None
-            
-            for method_name in self.comparison_registry.get_all_methods():
-                method_info = self.comparison_registry.get_method_info(method_name)
-                if method_info and method_info.get('plot_type') == plot_type:
-                    # Create an instance of the comparison method
-                    method_instance = self.comparison_registry.create_method(method_name)
-                    if method_instance:
-                        comparison_method = method_name
-                        break
+            if COMPARISON_AVAILABLE and method_name:
+                # Get method parameters from plot config
+                method_params = plot_config.get('method_parameters', {})
+                # Also include overlay parameters
+                overlay_params = {k: v for k, v in plot_config.items() if k.startswith('show_') or k in ['confidence_interval', 'custom_line']}
+                method_params.update(overlay_params)
+                
+                method_instance = self.comparison_registry.create_method(method_name, **method_params)
             
             if method_instance and hasattr(method_instance, 'generate_plot_content'):
-                print(f"[ComparisonWizard] Using dynamic plot generation for {comparison_method} (plot_type: {plot_type})")
+                print(f"[ComparisonWizard] Using dynamic plot generation for {method_name}")
                 method_instance.generate_plot_content(ax, all_ref_data, all_test_data, plot_config, checked_pairs)
+                return True
             else:
                 # Fallback to hardcoded methods for compatibility
-                print(f"[ComparisonWizard] No dynamic method found for plot_type: {plot_type}, using fallback")
+                plot_type = plot_config.get('plot_type', 'scatter')
+                print(f"[ComparisonWizard] No dynamic method found for {method_name}, using fallback for plot_type: {plot_type}")
                 self._generate_fallback_plot_content(ax, all_ref_data, all_test_data, plot_config, plot_type, checked_pairs)
+                return False
                 
         except Exception as e:
             print(f"[ComparisonWizard] Error in dynamic plot generation: {e}")
+            import traceback
+            traceback.print_exc()
             # Ultimate fallback
+            plot_type = plot_config.get('plot_type', 'scatter')
             ax.text(0.5, 0.5, f'Error generating {plot_type} plot: {str(e)}', 
                    ha='center', va='center', transform=ax.transAxes)
+            return False
     
     def _generate_fallback_plot_content(self, ax, all_ref_data, all_test_data, plot_config, plot_type, checked_pairs):
         """Fallback plot generation for backward compatibility"""
@@ -1025,11 +1037,13 @@ class ComparisonWizardManager(QObject):
         
     def _generate_pearson_plot_content(self, ax, all_ref_data, all_test_data, plot_config):
         """Generate Pearson correlation plot content"""
-        # Add 1:1 line
-        min_val = min(np.min(all_ref_data), np.min(all_test_data))
-        max_val = max(np.max(all_ref_data), np.max(all_test_data))
-        ax.plot([min_val, max_val], [min_val, max_val], 'k--', alpha=0.8, 
-               linewidth=2, label='1:1 line')
+        # Add 1:1 line only if requested
+        show_identity_line = plot_config.get('show_identity_line', True)  # Default to True for backward compatibility
+        if show_identity_line:
+            min_val = min(np.min(all_ref_data), np.min(all_test_data))
+            max_val = max(np.max(all_ref_data), np.max(all_test_data))
+            ax.plot([min_val, max_val], [min_val, max_val], 'k--', alpha=0.8, 
+                   linewidth=2, label='1:1 line')
         
         # Calculate correlation statistics based on selected type
         correlation_type = plot_config.get('correlation_type', 'pearson')
@@ -1125,25 +1139,33 @@ class ComparisonWizardManager(QObject):
         # Get agreement limits multiplier (default 1.96 for 95% limits)
         agreement_limits = plot_config.get('agreement_limits', 1.96)
         
-        ax.axhline(mean_diff, color='red', linestyle='-', linewidth=2, 
-                  label=f'Mean bias: {mean_diff:.3f}')
+        # Show bias line only if requested (check overlay parameters)
+        show_bias_line = plot_config.get('show_bias_line', True)  # Default to True for backward compatibility
+        if show_bias_line:
+            ax.axhline(mean_diff, color='red', linestyle='-', linewidth=2, 
+                      label=f'Mean bias: {mean_diff:.3f}')
         
-        # Add limits of agreement (always show for Bland-Altman)
-        upper_loa = mean_diff + agreement_limits * std_diff
-        lower_loa = mean_diff - agreement_limits * std_diff
-        
-        ax.axhline(upper_loa, color='red', linestyle='--', linewidth=2,
-                  label=f'Upper LoA: {upper_loa:.3f}')
-        ax.axhline(lower_loa, color='red', linestyle='--', linewidth=2,
-                  label=f'Lower LoA: {lower_loa:.3f}')
+        # Show limits of agreement only if requested (check overlay parameters)
+        show_loa = plot_config.get('show_limits_of_agreement', True)  # Default to True for backward compatibility
+        if show_loa:
+            upper_loa = mean_diff + agreement_limits * std_diff
+            lower_loa = mean_diff - agreement_limits * std_diff
+            
+            ax.axhline(upper_loa, color='red', linestyle='--', linewidth=2,
+                      label=f'Upper LoA: {upper_loa:.3f}')
+            ax.axhline(lower_loa, color='red', linestyle='--', linewidth=2,
+                      label=f'Lower LoA: {lower_loa:.3f}')
         
         # Add confidence intervals for the limits if requested
-        if plot_config.get('confidence_interval', False):
+        if plot_config.get('confidence_interval', False) and show_loa:
             n = len(all_diffs)
             if n > 2:
                 # Calculate confidence intervals for the limits
                 se_loa = std_diff * np.sqrt(3/n)  # Standard error for LoA
                 t_critical = 1.96  # For 95% CI
+                
+                upper_loa = mean_diff + agreement_limits * std_diff
+                lower_loa = mean_diff - agreement_limits * std_diff
                 
                 # Upper LoA confidence interval
                 ax.axhline(upper_loa + t_critical * se_loa, color='red', linestyle=':', alpha=0.7,
@@ -1174,9 +1196,10 @@ class ComparisonWizardManager(QObject):
                 print(f"[ComparisonWizard] Error calculating proportional bias: {e}")
         
         # Add custom line if specified
-        if plot_config.get('custom_line'):
+        custom_line_value = plot_config.get('custom_line')
+        if custom_line_value is not None:
             try:
-                custom_val = float(plot_config['custom_line'])
+                custom_val = float(custom_line_value)
                 ax.axhline(custom_val, color='green', linestyle=':', linewidth=2,
                           label=f'Custom: {custom_val}')
             except (ValueError, TypeError):
@@ -1188,16 +1211,19 @@ class ComparisonWizardManager(QObject):
         
     def _generate_scatter_plot_content(self, ax, all_ref_data, all_test_data, plot_config):
         """Generate scatter plot content"""
-        # Add 1:1 line
-        min_val = min(np.min(all_ref_data), np.min(all_test_data))
-        max_val = max(np.max(all_ref_data), np.max(all_test_data))
-        ax.plot([min_val, max_val], [min_val, max_val], 'k--', alpha=0.8, 
-               linewidth=2, label='1:1 line')
+        # Add 1:1 line only if requested
+        show_identity_line = plot_config.get('show_identity_line', True)  # Default to True for backward compatibility
+        if show_identity_line:
+            min_val = min(np.min(all_ref_data), np.min(all_test_data))
+            max_val = max(np.max(all_ref_data), np.max(all_test_data))
+            ax.plot([min_val, max_val], [min_val, max_val], 'k--', alpha=0.8, 
+                   linewidth=2, label='1:1 line')
         
         # Add custom line if specified
-        if plot_config.get('custom_line'):
+        custom_line_value = plot_config.get('custom_line')
+        if custom_line_value is not None:
             try:
-                custom_val = float(plot_config['custom_line'])
+                custom_val = float(custom_line_value)
                 ax.axhline(custom_val, color='green', linestyle=':', linewidth=2,
                           label=f'y = {custom_val}')
             except (ValueError, TypeError):
