@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
     QGroupBox, QSpinBox, QHeaderView
 )
 from PySide6.QtCore import Qt, QEvent, Signal
+from PySide6.QtGui import QFont
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 import matplotlib.pyplot as plt
@@ -246,7 +247,48 @@ class ProcessWizardWindow(QMainWindow):
         self.param_table.setColumnWidth(0, 120)  # Parameter column width
         
         console_layout.addWidget(self.console_output)
-        console_layout.addWidget(self.param_table)
+        
+        # Create tab widget for parameter table and script
+        self.param_tab_widget = QTabWidget()
+        
+        # Parameters tab
+        params_tab = QWidget()
+        params_layout = QVBoxLayout(params_tab)
+        params_layout.addWidget(self.param_table)
+        self.param_tab_widget.addTab(params_tab, "Parameters")
+        
+        # Script tab
+        script_tab = QWidget()
+        script_layout = QVBoxLayout(script_tab)
+        
+        # Script editor
+        self.script_editor = QTextEdit()
+        self.script_editor.setPlaceholderText("Python script will appear here when a filter is selected...")
+        self.script_editor.setFont(QFont("Consolas", 10))
+        
+        # Script controls
+        script_controls_layout = QHBoxLayout()
+        self.script_readonly_checkbox = QCheckBox("Read-only")
+        self.script_readonly_checkbox.setChecked(True)
+        self.script_readonly_checkbox.stateChanged.connect(self._on_script_readonly_changed)
+        self.sync_from_params_btn = QPushButton("Sync from Parameters")
+        self.sync_from_params_btn.clicked.connect(self._sync_script_from_params)
+        self.sync_to_params_btn = QPushButton("Sync to Parameters")
+        self.sync_to_params_btn.clicked.connect(self._sync_script_to_params)
+        
+        script_controls_layout.addWidget(self.script_readonly_checkbox)
+        script_controls_layout.addStretch()
+        script_controls_layout.addWidget(self.sync_from_params_btn)
+        script_controls_layout.addWidget(self.sync_to_params_btn)
+        
+        script_layout.addWidget(self.script_editor)
+        script_layout.addLayout(script_controls_layout)
+        self.param_tab_widget.addTab(script_tab, "Script")
+        
+        # Connect tab change to update script when switching to script tab
+        self.param_tab_widget.currentChanged.connect(self._on_param_tab_changed)
+        
+        console_layout.addWidget(self.param_tab_widget)
         
         # Channel Name Entry (above Add Filter button)
         channel_name_layout = QHBoxLayout()
@@ -853,8 +895,17 @@ class ProcessWizardWindow(QMainWindow):
 
     def _update_time_series_plot(self, lineage, active_channel):
         """Update the time series plot."""
-        # Filter for time series channels and RAW channels (which should also display in time series)
-        channels = [ch for ch in lineage if "time-series" in ch.tags or ch.step == 0]
+        # Filter for time series channels - include all channels that aren't specifically spectrograms or bar charts
+        channels = []
+        for ch in lineage:
+            # Include channels that:
+            # 1. Have "time-series" in tags, OR
+            # 2. Are raw channels (step == 0), OR  
+            # 3. Don't have spectrogram or bar-chart tags (default to time series)
+            if ("time-series" in ch.tags or 
+                ch.step == 0 or 
+                ("spectrogram" not in ch.tags and "bar-chart" not in ch.tags)):
+                channels.append(ch)
         
         # Clear the plot
         self.ax.clear()
@@ -1460,6 +1511,148 @@ class ProcessWizardWindow(QMainWindow):
         """Handle window close event"""
         self.wizard_closed.emit()
         event.accept()
+    
+    def _on_param_tab_changed(self, index):
+        """Handle parameter tab change to update script when switching to script tab"""
+        if index == 1:  # Script tab selected
+            self._sync_script_from_params()
+    
+    def _on_script_readonly_changed(self, state):
+        """Handle script read-only checkbox change"""
+        self.script_editor.setReadOnly(state == Qt.Checked)
+        self.sync_to_params_btn.setEnabled(state != Qt.Checked)
+    
+    def _sync_script_from_params(self):
+        """Generate script from current parameters"""
+        if not hasattr(self.wizard_manager, 'pending_step') or not self.wizard_manager.pending_step:
+            self.script_editor.setPlainText("# No filter selected\n# Select a filter from the list to generate script")
+            return
+        
+        step_cls = self.wizard_manager.pending_step
+        step_name = step_cls.name
+        
+        # Get current parameters from table
+        params = self._get_params_from_table()
+        
+        # Generate script
+        script = self._generate_script(step_cls, params)
+        self.script_editor.setPlainText(script)
+    
+    def _sync_script_to_params(self):
+        """Parse script and update parameter table (basic implementation)"""
+        script_text = self.script_editor.toPlainText()
+        
+        # This is a basic implementation - could be enhanced with actual Python AST parsing
+        # For now, just show a message that this feature is under development
+        self.wizard_manager.ui.console_output.setPlainText(
+            "Script-to-parameters synchronization is under development.\n"
+            "For now, please use the Parameters tab to modify values."
+        )
+    
+    def _get_params_from_table(self):
+        """Extract parameters from the parameter table"""
+        params = {}
+        for row in range(self.param_table.rowCount()):
+            key_item = self.param_table.item(row, 0)
+            if key_item:
+                key = key_item.text().strip()
+                if key:
+                    # Check if the value cell contains a widget (dropdown) or text item
+                    widget = self.param_table.cellWidget(row, 1)
+                    if widget:
+                        # It's a QComboBox dropdown or QTextEdit
+                        if hasattr(widget, 'currentText'):  # QComboBox
+                            val = widget.currentText().strip()
+                        elif hasattr(widget, 'toPlainText'):  # QTextEdit
+                            val = widget.toPlainText().strip()
+                        else:
+                            val = ""
+                    else:
+                        # It's a regular text item
+                        val_item = self.param_table.item(row, 1)
+                        val = val_item.text().strip() if val_item else ""
+                    
+                    if val:
+                        # Try to convert to appropriate type
+                        try:
+                            if '.' in val and val.replace('.', '').replace('-', '').isdigit():
+                                params[key] = float(val)
+                            elif val.replace('-', '').isdigit():
+                                params[key] = int(val)
+                            else:
+                                params[key] = val  # Keep as string
+                        except ValueError:
+                            params[key] = val  # Keep as string if conversion fails
+        return params
+    
+    def _generate_script(self, step_cls, params):
+        """Generate Python script for the processing step"""
+        step_name = step_cls.name
+        
+        # Get current channel info
+        current_channel = self.get_active_channel_info()
+        channel_name = "input_channel"
+        if current_channel:
+            channel_name = f"'{current_channel.channel_id}'"
+        
+        # Format parameters for script
+        param_lines = []
+        for key, value in params.items():
+            if isinstance(value, str):
+                param_lines.append(f"    '{key}': '{value}'")
+            else:
+                param_lines.append(f"    '{key}': {value}")
+        
+        params_str = "{\n" + ",\n".join(param_lines) + "\n}" if param_lines else "{}"
+        
+        # Generate the script
+        script = f"""# Generated script for {step_name} processing step
+# Edit this script to customize the processing behavior
+# The script will be executed when you click 'Apply Operation'
+
+import numpy as np
+import scipy.signal
+import copy
+
+# Input channel is available as 'parent_channel'
+# Parameters:
+params = {params_str}
+
+# Method 1: Use the built-in processing step
+step_instance = registry.get_step('{step_name}')
+if step_instance:
+    # Parse parameters using the step's parameter parser
+    parsed_params = step_instance.parse_input(params)
+    # Apply the step to get the result
+    result = step_instance.apply(parent_channel, parsed_params)
+    
+    # Handle single channel or multiple channels
+    if isinstance(result, list):
+        result_channels = result
+    else:
+        result_channel = result
+else:
+    # Method 2: Custom processing (edit this section)
+    # Access input data
+    input_data = parent_channel.ydata
+    input_time = parent_channel.xdata
+    
+    # Example: Apply your custom processing here
+    processed_data = input_data.copy()
+    # processed_data = your_custom_function(input_data, **params)
+    
+    # Create result channel
+    result_channel = copy.deepcopy(parent_channel)
+    result_channel.ydata = processed_data
+    result_channel.xdata = input_time  # or modify if needed
+    result_channel.description = f'{{parent_channel.description}} -> {step_name}'
+
+# IMPORTANT: The script must define 'result_channel' or 'result_channels'
+# result_channel = your_single_processed_channel
+# result_channels = [channel1, channel2, ...]  # for multiple outputs
+"""
+        
+        return script
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

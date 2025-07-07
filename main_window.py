@@ -1634,3 +1634,14 @@ Recommendations:
         
         # Clean up
         del self._pre_wizard_channels
+        
+        # Refresh main window UI to show new channels
+        self.refresh_channel_table()
+        self.refresh_file_table()
+        
+        # Update plot with current channels
+        if self.selected_file_id:
+            channels = self._get_filtered_channels(self.selected_file_id)
+            self.plot_manager.update_plot(channels)
+            self.plot_manager.plot_canvas.fig.canvas.draw()
+            self.plot_manager.plot_canvas.fig.canvas.flush_events()
