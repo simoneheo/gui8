@@ -11,7 +11,7 @@ class LogicMixer(BaseMixer):
     name = "logic"
     category = "logical"
     description = "Performs logic operation between two signals (e.g., A * (B > threshold))."
-    tags = ["composed", "logical"]
+    tags = ["mixed", "logical"]
     params = [
         {"name": "operator", "type": "str", "default": "gt", "help": "gt, lt, ge, le, eq, ne"},
         {"name": "threshold", "type": "float", "default": 0.5, "help": "Threshold for B"},

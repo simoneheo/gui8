@@ -11,7 +11,7 @@ class UnaryMixer(BaseMixer):
     name = "unary"
     category = "transform"
     description = "Applies unary operations to a single signal."
-    tags = ["composed", "unary"]
+    tags = ["mixed", "unary"]
     params = [
         {"name": "operation", "type": "str", "default": "abs", "help": "abs, normalize, zscore, invert, square, sqrt"},
         {"name": "label", "type": "str", "default": "C", "help": "Output channel label"}

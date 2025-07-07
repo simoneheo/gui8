@@ -64,8 +64,21 @@ class resample_step(BaseStep):
     category = "General"
     description = "Resample the signal to a target sampling rate."
     tags = ["time-series"]
-    params = [{'name': 'target_fs', 'type': 'float', 'default': '10.0', 'help': 'Target sampling frequency (Hz)'}, 
-    {'name': 'method', 'type': 'str', 'default': 'linear', 'options': ['linear', 'spline', 'nearest'], 'help': 'Interpolation method'}]
+    params = [
+        {
+            'name': 'target_fs', 
+            'type': 'float', 
+            'default': '10.0', 
+            'help': 'Target sampling frequency (Hz). Smart default is calculated based on the original sampling rate: high-frequency signals (>1000 Hz) suggest 10x-20x downsampling, medium-frequency (100-1000 Hz) suggest 4x-10x downsampling, low-frequency (<100 Hz) suggest 2x-4x downsampling, rounded to convenient values.'
+        }, 
+        {
+            'name': 'method', 
+            'type': 'str', 
+            'default': 'linear', 
+            'options': ['linear', 'spline', 'nearest'], 
+            'help': 'Interpolation method: linear (fast, good for most signals), spline (smooth, good for curves), nearest (preserves exact values, good for step functions)'
+        }
+    ]
 
     @classmethod
     def get_info(cls): return f"{cls.name} — {cls.description} (Category: {cls.category})"

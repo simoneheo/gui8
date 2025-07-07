@@ -11,7 +11,7 @@ class ThresholdMaskMixer(BaseMixer):
     name = "threshold_mask"
     category = "masking"
     description = "Applies a binary mask to A based on thresholding A itself."
-    tags = ["composed", "masking"]
+    tags = ["mixed", "masking"]
     params = [
         {"name": "threshold", "type": "float", "default": 0.0, "help": "Threshold value"},
         {"name": "mode", "type": "str", "default": "gt", "help": "gt, lt, ge, le, eq, ne"},

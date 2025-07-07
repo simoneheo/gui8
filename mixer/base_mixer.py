@@ -9,13 +9,13 @@ except ImportError:
             return cls()
     
     class SourceType:
-        COMPOSED = "composed"
+        MIXED = "mixed"
 import numpy as np
 from typing import Any, Dict
 
 class BaseMixer(ABC):
     """
-    Base class for signal mixers (composed channels).
+    Base class for signal mixers (mixed channels).
     Supports operations like A+B, A*B, abs(A), A*(B>0.5), etc.
     """
 
@@ -44,9 +44,9 @@ class BaseMixer(ABC):
             xdata=xdata,
             ydata=ydata,
             legend_label=label,
-            description=f"Composed signal: {expr}",
-            tags=["composed", "time-series"],
-            type=SourceType.COMPOSED,
+            description=f"Mixed signal: {expr}",
+            tags=["mixed", "time-series"],
+            type=SourceType.MIXED,
             params=params,
             metadata={"expression": expr}
         )

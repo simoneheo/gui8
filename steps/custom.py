@@ -15,7 +15,7 @@ class custom_step(BaseStep):
     params = [
         {
             "name": "function", 
-            "type": "string", 
+            "type": "multiline", 
             "default": "y_new = y * 2", 
             "help": """Custom Python function to apply to the data.
 
@@ -45,6 +45,20 @@ Example functions:
 • y_new = np.diff(y)  # First derivative
 • y_new = np.cumsum(y)  # Cumulative sum
 • y_new = scipy.signal.hilbert(y).real  # Hilbert transform (real part)
+
+Multi-line example:
+# Initialize output
+y_new = np.zeros_like(y)
+
+# Custom processing loop
+for i in range(len(y)):
+    if y[i] > 0:
+        y_new[i] = y[i] * 2
+    else:
+        y_new[i] = 0
+        
+# Apply smoothing
+y_new = np.convolve(y_new, np.ones(3)/3, mode='same')
 
 """
         }

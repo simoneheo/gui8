@@ -53,7 +53,11 @@ class ParseWizardWindow(QMainWindow):
             'date_format': 'auto',
             'time_column': None,
             'column_names': [],
-            'column_types': {}
+            'column_types': {},
+            'downsample_enabled': False,
+            'downsample_method': 'Every Nth row',
+            'downsample_factor': 10,
+            'downsample_window': 10
         }
         
         # UI update timer
@@ -73,7 +77,7 @@ class ParseWizardWindow(QMainWindow):
     def _init_ui(self):
         """Initialize the user interface"""
         self.setWindowTitle("🔨 Parse Wizard - Manual File Parsing")
-        self.setMinimumSize(1400, 900)
+        self.setMinimumSize(1500, 950)
         
         # Create central widget
         central_widget = QWidget()
@@ -92,11 +96,11 @@ class ParseWizardWindow(QMainWindow):
         self._build_left_panel(main_splitter)
         self._build_right_panel(main_splitter)
         
-        # Set splitter proportions (35% left, 65% right)
-        main_splitter.setSizes([490, 910])
+        # Set splitter proportions (40% left, 60% right) - more space for left panel controls
+        main_splitter.setSizes([560, 840])
         
     def _build_left_panel(self, main_splitter):
-        """Build the left control panel"""
+        """Build the left control panel with compact grouped controls"""
         # Create left panel container
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
@@ -108,28 +112,15 @@ class ParseWizardWindow(QMainWindow):
         title_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #2c3e50; padding: 5px;")
         left_layout.addWidget(title_label)
         
-        # Create scrollable area for controls
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll_widget = QWidget()
-        scroll_layout = QVBoxLayout(scroll_widget)
-        scroll_layout.setContentsMargins(5, 5, 5, 5)
-        scroll_layout.setSpacing(10)
-        
-        # Add control groups
-        self._create_file_selection_group(scroll_layout)
-        self._create_basic_parsing_group(scroll_layout)
-        self._create_advanced_parsing_group(scroll_layout)
-        self._create_column_configuration_group(scroll_layout)
-        self._create_datetime_configuration_group(scroll_layout)
-        self._create_action_buttons_group(scroll_layout)
+        # Add control groups without scrolling - more compact layout
+        self._create_file_selection_group(left_layout)
+        self._create_basic_parsing_group(left_layout)
+        self._create_advanced_parsing_group(left_layout)
+        self._create_datetime_configuration_group(left_layout)
+        self._create_action_buttons_group(left_layout)
         
         # Add stretch to push everything to top
-        scroll_layout.addStretch()
-        
-        scroll_area.setWidget(scroll_widget)
-        left_layout.addWidget(scroll_area)
+        left_layout.addStretch()
         
         main_splitter.addWidget(left_panel)
         
@@ -214,7 +205,7 @@ class ParseWizardWindow(QMainWindow):
         layout.addWidget(group)
         
     def _create_advanced_parsing_group(self, layout):
-        """Create advanced parsing parameters group"""
+        """Create advanced parsing parameters group - more compact"""
         group = QGroupBox("🔧 Advanced Parsing")
         group.setStyleSheet("QGroupBox { font-weight: bold; }")
         group_layout = QFormLayout(group)
@@ -254,40 +245,60 @@ class ParseWizardWindow(QMainWindow):
         self.na_values_input.textChanged.connect(self._trigger_preview_update)
         group_layout.addRow("NA Values:", self.na_values_input)
         
-        layout.addWidget(group)
+        # Downsampling section - more compact
+        downsample_frame = QFrame()
+        downsample_layout = QVBoxLayout(downsample_frame)
+        downsample_layout.setContentsMargins(0, 5, 0, 5)
         
-    def _create_column_configuration_group(self, layout):
-        """Create column configuration group"""
-        group = QGroupBox("📊 Column Configuration")
-        group.setStyleSheet("QGroupBox { font-weight: bold; }")
-        group_layout = QVBoxLayout(group)
+        # Downsampling checkbox
+        self.downsample_checkbox = QCheckBox("Enable downsampling (for large files)")
+        self.downsample_checkbox.setChecked(False)
+        self.downsample_checkbox.toggled.connect(self._on_downsample_toggled)
+        self.downsample_checkbox.setToolTip("Downsample data to reduce file size and improve performance")
+        downsample_layout.addWidget(self.downsample_checkbox)
         
-        # Column names input
-        names_layout = QHBoxLayout()
-        names_layout.addWidget(QLabel("Column Names:"))
-        self.column_names_input = QLineEdit()
-        self.column_names_input.setPlaceholderText("Leave blank to use detected headers")
-        self.column_names_input.setToolTip("Comma-separated list of column names (useful for non-ASCII headers or when no header row exists)")
-        self.column_names_input.textChanged.connect(self._trigger_preview_update)
-        names_layout.addWidget(self.column_names_input)
-        group_layout.addLayout(names_layout)
+        # Compact row for downsample controls
+        downsample_controls_layout = QHBoxLayout()
         
-        # Column types table
-        types_label = QLabel("Column Types:")
-        group_layout.addWidget(types_label)
+        # Downsample method
+        self.downsample_method_combo = QComboBox()
+        self.downsample_method_combo.addItems([
+            "Every Nth row", "Moving average", "Random sampling"
+        ])
+        self.downsample_method_combo.setEnabled(False)
+        self.downsample_method_combo.currentTextChanged.connect(self._on_downsample_method_changed)
+        self.downsample_method_combo.setToolTip("Method for downsampling data")
+        downsample_controls_layout.addWidget(QLabel("Method:"))
+        downsample_controls_layout.addWidget(self.downsample_method_combo)
         
-        self.column_types_table = QTableWidget()
-        self.column_types_table.setColumnCount(3)
-        self.column_types_table.setHorizontalHeaderLabels(["Column", "Detected Type", "Override Type"])
-        self.column_types_table.horizontalHeader().setStretchLastSection(True)
-        self.column_types_table.setMaximumHeight(200)
-        group_layout.addWidget(self.column_types_table)
+        # Downsample factor
+        self.downsample_factor_spin = QSpinBox()
+        self.downsample_factor_spin.setRange(2, 100)
+        self.downsample_factor_spin.setValue(10)
+        self.downsample_factor_spin.setEnabled(False)
+        self.downsample_factor_spin.valueChanged.connect(self._trigger_preview_update)
+        self.downsample_factor_spin.setToolTip("Downsampling factor (e.g., 10 = keep every 10th row)")
+        downsample_controls_layout.addWidget(QLabel("Factor:"))
+        downsample_controls_layout.addWidget(self.downsample_factor_spin)
+        
+        # Downsample window size (for moving average)
+        self.downsample_window_spin = QSpinBox()
+        self.downsample_window_spin.setRange(2, 1000)
+        self.downsample_window_spin.setValue(10)
+        self.downsample_window_spin.setEnabled(False)
+        self.downsample_window_spin.valueChanged.connect(self._trigger_preview_update)
+        self.downsample_window_spin.setToolTip("Window size for moving average downsampling")
+        downsample_controls_layout.addWidget(QLabel("Window:"))
+        downsample_controls_layout.addWidget(self.downsample_window_spin)
+        
+        downsample_layout.addLayout(downsample_controls_layout)
+        group_layout.addRow("Downsampling:", downsample_frame)
         
         layout.addWidget(group)
         
     def _create_datetime_configuration_group(self, layout):
-        """Create datetime and X-axis configuration group"""
-        group = QGroupBox("📊 X-Axis & Date/Time Configuration")
+        """Create datetime and X-axis configuration group - more compact"""
+        group = QGroupBox("📅 Date/Time & X-Axis Configuration")
         group.setStyleSheet("QGroupBox { font-weight: bold; }")
         group_layout = QFormLayout(group)
         
@@ -344,6 +355,12 @@ class ParseWizardWindow(QMainWindow):
         self.reset_button.clicked.connect(self._reset_to_defaults)
         group_layout.addWidget(self.reset_button)
         
+        # Re-enable large file warnings button
+        self.enable_warnings_button = QPushButton("⚠️ Re-enable Large File Warnings")
+        self.enable_warnings_button.clicked.connect(self._enable_large_file_warnings)
+        self.enable_warnings_button.setToolTip("Re-enable large file size warnings that were previously disabled")
+        group_layout.addWidget(self.enable_warnings_button)
+        
         # Separator
         separator = QFrame()
         separator.setFrameShape(QFrame.HLine)
@@ -375,21 +392,31 @@ class ParseWizardWindow(QMainWindow):
         layout.addWidget(group)
         
     def _build_right_panel(self, main_splitter):
-        """Build the right data preview panel"""
+        """Build the right panel with data preview and column configuration"""
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(5, 5, 5, 5)
         right_layout.setSpacing(10)
         
         # Title
-        title_label = QLabel("📊 Data Preview")
+        title_label = QLabel("📊 Data Preview & Column Configuration")
         title_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #2c3e50; padding: 5px;")
         right_layout.addWidget(title_label)
         
-        # Info label
+        # Data Preview Section
+        self._create_data_preview_section(right_layout)
+        
+        # Column Configuration Section
+        self._create_column_configuration_section(right_layout)
+        
+        main_splitter.addWidget(right_panel)
+    
+    def _create_data_preview_section(self, layout):
+        """Create the data preview section"""
+        # Preview info label
         self.preview_info_label = QLabel("Load a file to see preview")
         self.preview_info_label.setStyleSheet("color: #666; font-size: 11px; padding: 5px;")
-        right_layout.addWidget(self.preview_info_label)
+        layout.addWidget(self.preview_info_label)
         
         # Data table
         self.data_table = QTableWidget()
@@ -397,14 +424,45 @@ class ParseWizardWindow(QMainWindow):
         self.data_table.horizontalHeader().setStretchLastSection(True)
         self.data_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.data_table.setSelectionBehavior(QTableWidget.SelectRows)
-        right_layout.addWidget(self.data_table)
+        self.data_table.setMaximumHeight(200)  # Limit preview table height
+        layout.addWidget(self.data_table)
         
         # Parse status
         self.parse_status_label = QLabel("Status: Ready")
         self.parse_status_label.setStyleSheet("padding: 5px; background-color: #f0f0f0; border: 1px solid #ccc;")
-        right_layout.addWidget(self.parse_status_label)
+        layout.addWidget(self.parse_status_label)
+    
+    def _create_column_configuration_section(self, layout):
+        """Create the column configuration section with longer table"""
+        # Column Configuration Group
+        group = QGroupBox("📊 Column Configuration")
+        group.setStyleSheet("QGroupBox { font-weight: bold; }")
+        group_layout = QVBoxLayout(group)
         
-        main_splitter.addWidget(right_panel)
+        # Column names input
+        names_layout = QHBoxLayout()
+        names_layout.addWidget(QLabel("Column Names:"))
+        self.column_names_input = QLineEdit()
+        self.column_names_input.setPlaceholderText("Leave blank to use detected headers")
+        self.column_names_input.setToolTip("Comma-separated list of column names (useful for non-ASCII headers or when no header row exists)")
+        self.column_names_input.textChanged.connect(self._trigger_preview_update)
+        names_layout.addWidget(self.column_names_input)
+        group_layout.addLayout(names_layout)
+        
+        # Column types table - make it much longer
+        types_label = QLabel("Column Types:")
+        types_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        group_layout.addWidget(types_label)
+        
+        self.column_types_table = QTableWidget()
+        self.column_types_table.setColumnCount(3)
+        self.column_types_table.setHorizontalHeaderLabels(["Column", "Detected Type", "Override Type"])
+        self.column_types_table.horizontalHeader().setStretchLastSection(True)
+        # Remove maximum height restriction to allow table to expand
+        self.column_types_table.setMinimumHeight(300)  # Set minimum height instead
+        group_layout.addWidget(self.column_types_table)
+        
+        layout.addWidget(group)
         
     def _connect_signals(self):
         """Connect all signal handlers"""
@@ -476,20 +534,9 @@ class ParseWizardWindow(QMainWindow):
         if not self.raw_lines:
             return
             
-        # Detect delimiter
-        delimiter = self._detect_delimiter()
-        delimiter_map = {
-            ',': 'Comma (,)',
-            '\t': 'Tab (\\t)',
-            ';': 'Semicolon (;)',
-            '|': 'Pipe (|)',
-            ' ': 'Space'
-        }
-        if delimiter in delimiter_map:
-            self.delimiter_combo.setCurrentText(delimiter_map[delimiter])
-        else:
-            self.delimiter_combo.setCurrentText('Custom...')
-            self.custom_delimiter_input.setText(delimiter)
+        # Since autoparse failed, default delimiter to None instead of auto-detecting
+        # This encourages user to manually choose the appropriate delimiter
+        self.delimiter_combo.setCurrentText('None')
             
         # Detect header row
         header_row = self._detect_header_row()
@@ -583,6 +630,24 @@ class ParseWizardWindow(QMainWindow):
             self.parse_params['date_format'] = text
             
         self._trigger_preview_update()
+    
+    def _on_downsample_toggled(self, checked):
+        """Handle downsample checkbox toggle"""
+        self.downsample_method_combo.setEnabled(checked)
+        self.downsample_factor_spin.setEnabled(checked)
+        
+        # Enable window spin only for moving average method
+        method = self.downsample_method_combo.currentText()
+        self.downsample_window_spin.setEnabled(checked and method == "Moving average")
+        
+        self._trigger_preview_update()
+    
+    def _on_downsample_method_changed(self, method):
+        """Handle downsample method change"""
+        # Show/hide window size control based on method
+        show_window = method == "Moving average"
+        self.downsample_window_spin.setEnabled(self.downsample_checkbox.isChecked() and show_window)
+        self._trigger_preview_update()
         
     def _trigger_preview_update(self):
         """Trigger delayed preview update"""
@@ -635,7 +700,11 @@ class ParseWizardWindow(QMainWindow):
             'na_values': [v.strip() for v in self.na_values_input.text().split(',') if v.strip()],
             'parse_dates': self.parse_dates_checkbox.isChecked(),
             'date_format': self.custom_date_format_input.text() if self.custom_date_format_input.isVisible() else self.date_format_combo.currentText(),
-            'column_names': [v.strip() for v in self.column_names_input.text().split(',') if v.strip()] if self.column_names_input.text().strip() else []
+            'column_names': [v.strip() for v in self.column_names_input.text().split(',') if v.strip()] if self.column_names_input.text().strip() else [],
+            'downsample_enabled': self.downsample_checkbox.isChecked(),
+            'downsample_method': self.downsample_method_combo.currentText(),
+            'downsample_factor': self.downsample_factor_spin.value(),
+            'downsample_window': self.downsample_window_spin.value()
         })
         
     def _parse_delete_rows(self, delete_spec: str) -> set:
@@ -691,6 +760,51 @@ class ParseWizardWindow(QMainWindow):
             return set()
             
         return rows_to_delete
+    
+    def _apply_downsampling(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Apply downsampling to DataFrame based on parse parameters"""
+        if not self.parse_params.get('downsample_enabled', False):
+            return df
+        
+        try:
+            method = self.parse_params.get('downsample_method', 'Every Nth row')
+            factor = self.parse_params.get('downsample_factor', 10)
+            window = self.parse_params.get('downsample_window', 10)
+            
+            if method == "Every Nth row":
+                # Keep every Nth row
+                return df.iloc[::factor].copy()
+            
+            elif method == "Moving average":
+                # Apply moving average downsampling
+                numeric_cols = df.select_dtypes(include=[np.number]).columns
+                
+                # Create downsampled dataframe
+                downsampled_indices = np.arange(0, len(df), factor)
+                result_df = df.iloc[downsampled_indices].copy()
+                
+                # Apply moving average to numeric columns
+                for col in numeric_cols:
+                    if col in df.columns:
+                        # Calculate moving average for the original data
+                        moving_avg = df[col].rolling(window=window, center=True).mean()
+                        # Sample the moving average at downsampled indices
+                        result_df[col] = moving_avg.iloc[downsampled_indices].values
+                
+                return result_df
+            
+            elif method == "Random sampling":
+                # Random sampling
+                n_samples = max(1, len(df) // factor)
+                return df.sample(n=min(n_samples, len(df)), random_state=42).sort_index()
+            
+            else:
+                # Default to every Nth row if method not recognized
+                return df.iloc[::factor].copy()
+                
+        except Exception as e:
+            print(f"Error applying downsampling: {e}")
+            return df  # Return original data if downsampling fails
     
     def _parse_preview_data(self) -> Optional[pd.DataFrame]:
         """Parse preview data using current parameters"""
@@ -751,6 +865,9 @@ class ParseWizardWindow(QMainWindow):
                     encoding=self.parse_params['encoding'],
                     on_bad_lines='skip'
                 )
+            
+            # Apply downsampling if enabled
+            df = self._apply_downsampling(df)
             
             return df
             
@@ -971,7 +1088,11 @@ class ParseWizardWindow(QMainWindow):
             'date_format': 'auto',
             'time_column': None,
             'column_names': [],
-            'column_types': {}
+            'column_types': {},
+            'downsample_enabled': False,
+            'downsample_method': 'Every Nth row',
+            'downsample_factor': 10,
+            'downsample_window': 10
         }
         
         # Update UI controls
@@ -988,7 +1109,35 @@ class ParseWizardWindow(QMainWindow):
         self.column_names_input.setText('')
         self.encoding_combo.setCurrentText('utf-8')
         
+        # Reset downsampling controls
+        self.downsample_checkbox.setChecked(False)
+        self.downsample_method_combo.setCurrentText('Every Nth row')
+        self.downsample_factor_spin.setValue(10)
+        self.downsample_window_spin.setValue(10)
+        
         self._trigger_preview_update()
+    
+    def _enable_large_file_warnings(self):
+        """Re-enable large file warnings in the main window"""
+        try:
+            # Access the main window through parent
+            if hasattr(self.parent_window, 'show_large_file_warnings'):
+                self.parent_window.show_large_file_warnings = True
+                QMessageBox.information(self, "Warnings Enabled", 
+                                      "Large file warnings have been re-enabled.\n\n"
+                                      "You will now receive warnings when loading files larger than "
+                                      f"{getattr(self.parent_window, 'large_file_threshold_mb', 50)} MB.")
+                self.log_message("Large file warnings re-enabled via Manual Parse")
+            else:
+                QMessageBox.warning(self, "Cannot Enable", 
+                                  "Could not access main window settings to enable warnings.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to enable warnings: {str(e)}")
+    
+    def log_message(self, message):
+        """Helper method to log messages to parent window if available"""
+        if hasattr(self.parent_window, 'log_message'):
+            self.parent_window.log_message(message, "info")
         
     def _parse_and_create_channels(self):
         """Parse the full file and create channels"""
@@ -1139,6 +1288,9 @@ class ParseWizardWindow(QMainWindow):
                     encoding=self.parse_params['encoding'],
                     on_bad_lines='skip'
                 )
+            
+            # Apply downsampling if enabled
+            df = self._apply_downsampling(df)
             
             return df
             

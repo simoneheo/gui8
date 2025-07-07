@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QTableWidgetItem, QComboBox
+from PySide6.QtWidgets import QTableWidgetItem, QComboBox, QTextEdit
 from PySide6.QtCore import Qt
 import time
 import itertools
@@ -48,23 +48,71 @@ class ProcessWizardManager:
     def _validate_initialization(self) -> bool:
         """Validate initialization parameters"""
         if not self.ui:
-            print("[ProcessWizardManager] ERROR: UI reference not provided")
             return False
             
         if not self.registry:
-            print("[ProcessWizardManager] ERROR: Registry not provided")
             return False
             
         if not self.channel_lookup:
-            print("[ProcessWizardManager] ERROR: Channel lookup function not provided")
             return False
             
         return True
         
     def _log_state_change(self, message: str):
         """Log state changes for debugging and monitoring"""
-        timestamp = time.strftime("%H:%M:%S")
-        print(f"[ProcessWizardManager {timestamp}] {message}")
+        pass
+        
+    def _calculate_smart_target_fs(self, original_fs: float) -> float:
+        """Calculate a smart default target sampling frequency based on the original fs"""
+        if original_fs <= 0:
+            return 10.0  # Fallback default
+        
+        # Common downsampling ratios and their typical use cases
+        downsample_options = [
+            (1.0, "Same rate"),      # No downsampling
+            (0.5, "Half rate"),      # 2x downsampling
+            (0.25, "Quarter rate"),  # 4x downsampling
+            (0.1, "Tenth rate"),     # 10x downsampling
+            (0.05, "Twentieth rate"), # 20x downsampling
+            (0.01, "Hundredth rate") # 100x downsampling
+        ]
+        
+        # Choose based on original sampling frequency
+        if original_fs >= 1000:
+            # High frequency signals - suggest 10x or 20x downsampling
+            target_ratio = 0.1 if original_fs >= 5000 else 0.05
+        elif original_fs >= 100:
+            # Medium frequency signals - suggest 4x or 10x downsampling
+            target_ratio = 0.25 if original_fs >= 500 else 0.1
+        elif original_fs >= 10:
+            # Low frequency signals - suggest 2x or 4x downsampling
+            target_ratio = 0.5 if original_fs >= 50 else 0.25
+        else:
+            # Very low frequency - minimal downsampling
+            target_ratio = 0.5
+        
+        # Calculate target frequency
+        target_fs = original_fs * target_ratio
+        
+        # Round to nice numbers
+        if target_fs >= 100:
+            # Round to nearest 10
+            target_fs = round(target_fs / 10) * 10
+        elif target_fs >= 10:
+            # Round to nearest 5
+            target_fs = round(target_fs / 5) * 5
+        elif target_fs >= 1:
+            # Round to nearest 1
+            target_fs = round(target_fs)
+        else:
+            # Round to nearest 0.1
+            target_fs = round(target_fs, 1)
+        
+        # Ensure minimum reasonable value
+        if target_fs < 0.1:
+            target_fs = 0.1
+        
+        return target_fs
         
     def get_stats(self) -> Dict:
         """Get comprehensive processing statistics"""
@@ -124,7 +172,10 @@ class ProcessWizardManager:
                 # Use the actual sampling frequency from the selected channel, rounded to 3 decimal places
                 rounded_fs = round(current_channel.fs_median, 3)
                 param_value = str(rounded_fs)
-                print(f"[ProcessWizardManager] Dynamic prefill: {param_name}={rounded_fs} (from channel.fs_median)")
+            elif param_name == "target_fs" and current_channel and hasattr(current_channel, 'fs_median') and current_channel.fs_median:
+                # Smart default for target sampling frequency based on original fs
+                smart_target_fs = self._calculate_smart_target_fs(current_channel.fs_median)
+                param_value = str(smart_target_fs)
             else:
                 # Use static default value
                 param_value = str(default_value)
@@ -143,9 +194,11 @@ class ProcessWizardManager:
             param_name_item.setToolTip(tooltip)
             self.ui.param_table.setItem(i, 0, param_name_item)
             
-            # Check if parameter has predefined options for dropdown
+            # Check parameter type and create appropriate control
+            param_type = p.get("type", "string")
+            
             if "options" in p and p["options"]:
-                # Create dropdown combo box
+                # Create dropdown combo box for parameters with predefined options
                 combo = QComboBox()
                 combo.addItems([str(option) for option in p["options"]])
                 
@@ -157,13 +210,34 @@ class ProcessWizardManager:
                 
                 combo.setToolTip(tooltip)
                 self.ui.param_table.setCellWidget(i, 1, combo)
+                
+            elif param_type == "multiline":
+                # Create multiline text editor for code/long text
+                text_edit = QTextEdit()
+                text_edit.setPlainText(param_value)
+                text_edit.setToolTip(tooltip)
+                text_edit.setMaximumHeight(150)  # Limit height to fit in table
+                text_edit.setMinimumHeight(80)   # Ensure readable height
+                
+                # Set font for better code readability
+                from PySide6.QtGui import QFont
+                font = QFont("Consolas", 9)
+                if not font.exactMatch():
+                    font = QFont("Courier New", 9)
+                text_edit.setFont(font)
+                
+                self.ui.param_table.setCellWidget(i, 1, text_edit)
+                
+                # Increase row height for multiline parameters
+                self.ui.param_table.setRowHeight(i, 100)
+                
             else:
-                # Create regular text item
+                # Create regular text item for single-line parameters
                 param_value_item = QTableWidgetItem(param_value)
                 param_value_item.setToolTip(tooltip)
                 self.ui.param_table.setItem(i, 1, param_value_item)
         
-        print(f"[ProcessWizardManager] Populated parameter table with {len(params)} parameters")
+
     
     def _update_channel_name_entry(self, step_name: str):
         """Update the channel name entry with a default name based on current channel and step."""
@@ -183,22 +257,17 @@ class ProcessWizardManager:
             # Set the default name in the UI entry field
             if hasattr(self.ui, 'channel_name_entry'):
                 self.ui.channel_name_entry.setText(default_name)
-                print(f"[ProcessWizardManager] Set default channel name: {default_name}")
             
         except Exception as e:
-            print(f"[ProcessWizardManager] Error updating channel name entry: {e}")
+            pass
     
     def on_input_submitted(self, user_input_dict: dict):
         """Handle input submission with parameters from table."""
         if not self.pending_step:
-            print("[ProcessWizardManager] No pending step to apply")
             return
 
-        print(f"[ProcessWizardManager] Received params from table: {user_input_dict}")
-        
         try:
             params = self.pending_step.parse_input(user_input_dict)
-            print(f"[ProcessWizardManager] Parsed parameters: {params}")
         except Exception as e:
             self.ui.console_output.setPlainText(f"Parameter parsing error: {e}")
             return
@@ -206,14 +275,10 @@ class ProcessWizardManager:
         # Get the parent channel
         parent_channel = self.channel_lookup()
         if not parent_channel:
-            print("[ProcessWizardManager] No parent channel selected")
             return
-
-        print(f"[ProcessWizardManager] Selected channel: {parent_channel.channel_id} (step {parent_channel.step})")
 
         # Get all channels in the lineage
         lineage_dict = self.ui.channel_manager.get_channels_by_lineage(parent_channel.lineage_id)
-        print(f"[ProcessWizardManager] Found lineage dict for {parent_channel.lineage_id}")
         
         # Collect all channels from the lineage (parents, children, siblings)
         all_lineage_channels = []
@@ -221,17 +286,10 @@ class ProcessWizardManager:
         all_lineage_channels.extend(lineage_dict.get('children', []))
         all_lineage_channels.extend(lineage_dict.get('siblings', []))
         
-        print(f"[ProcessWizardManager] Found {len(all_lineage_channels)} channels in lineage {parent_channel.lineage_id}")
-
         # Use the most recent channel in the lineage as the parent, or fall back to the original
         if all_lineage_channels:
             parent_channel = max(all_lineage_channels, key=lambda ch: ch.step)
-            print(f"[ProcessWizardManager] Using parent channel {parent_channel.channel_id} (step {parent_channel.step})")
-        else:
-            print(f"[ProcessWizardManager] No lineage channels found, using original parent {parent_channel.channel_id}")
 
-        print(f"[ProcessWizardManager] Applying step to parent channel {parent_channel.channel_id}")
-        
         # Update statistics
         self._stats['total_steps_applied'] += 1
         self._stats['last_step_time'] = time.time()
@@ -280,7 +338,6 @@ class ProcessWizardManager:
                     custom_name = self.ui.channel_name_entry.text().strip()
                     new_channel.legend_label = custom_name
                     new_channel.ylabel = custom_name
-                    print(f"[ProcessWizardManager] Applied custom name: {custom_name}")
                 
                 # Assign a unique color to the new channel based on existing channels in the file
                 if not hasattr(new_channel, 'color') or new_channel.color is None:
@@ -303,8 +360,6 @@ class ProcessWizardManager:
                         color_index = len(file_channels) % len(colors)
                         new_channel.color = colors[color_index]
                 
-                print(f"[ProcessWizardManager] Created new channel {new_channel.channel_id} (step {new_channel.step}, lineage {parent_channel.lineage_id}, color {new_channel.color})")
-                
                 # Add the new channel to the manager
                 self.ui.channel_manager.add_channel(new_channel)
             
@@ -314,7 +369,6 @@ class ProcessWizardManager:
             # Set the most recent new channel as the input for next step
             if new_channels:
                 self.ui.input_ch = new_channels[-1]  # Use the last created channel
-                print(f"[ProcessWizardManager] Set input_ch to new channel: {new_channels[-1].channel_id}")
             
             # Store step name before clearing pending_step
             step_name = self.pending_step.name if self.pending_step else "Unknown step"
@@ -384,13 +438,14 @@ class ProcessWizardManager:
             if key_item:
                 key = key_item.text().strip()
                 if key:
-                    # Check if the value cell contains a widget (dropdown) or text item
+                    # Check if the value cell contains a widget (dropdown, text editor) or text item
                     widget = self.ui.param_table.cellWidget(row, 1)
                     if widget:
-                        # It's a QComboBox dropdown
-                        from PySide6.QtWidgets import QComboBox
+                        # Handle different widget types
                         if isinstance(widget, QComboBox):
                             val = widget.currentText().strip()
+                        elif isinstance(widget, QTextEdit):
+                            val = widget.toPlainText().strip()
                         else:
                             val = ""
                     else:
@@ -409,9 +464,7 @@ class ProcessWizardManager:
                             user_input_dict[key] = val  # Keep as string if conversion fails
         
         try:
-            print(f"[ProcessWizardManager] User input dict from table: {user_input_dict}")
             params = self.pending_step.parse_input(user_input_dict)
-            print(f"[ProcessWizardManager] Final parsed parameters: {params}")
             
             # Debug: Check what the step class expects vs what we're providing
             step_params = self.pending_step.get_prompt().get("params", [])
@@ -479,7 +532,6 @@ class ProcessWizardManager:
                     custom_name = self.ui.channel_name_entry.text().strip()
                     new_channel.legend_label = custom_name
                     new_channel.ylabel = custom_name
-                    print(f"[ProcessWizardManager] Applied custom name: {custom_name}")
                 
                 # Assign a unique color to the new channel based on existing channels in the file
                 if not hasattr(new_channel, 'color') or new_channel.color is None:
@@ -501,8 +553,6 @@ class ProcessWizardManager:
                         # If all colors are used, cycle through them based on total channel count
                         color_index = len(file_channels) % len(colors)
                         new_channel.color = colors[color_index]
-                
-                print(f"[ProcessWizardManager] Created new channel {new_channel.channel_id} (step {new_channel.step}, lineage {parent_channel.lineage_id}, color {new_channel.color})")
                 
                 # Add the new channel to the manager
                 self.ui.channel_manager.add_channel(new_channel)
@@ -526,7 +576,6 @@ class ProcessWizardManager:
         # Set the most recent new channel as the input for next step
         if new_channels:
             self.ui.input_ch = new_channels[-1]  # Use the last created channel
-            print(f"[ProcessWizardManager] Set input_ch to new channel: {new_channels[-1].channel_id}")
         
         print(f"[ProcessWizardManager] Created {len(new_channels)} new channel(s)")
         

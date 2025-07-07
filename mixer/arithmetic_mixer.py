@@ -12,7 +12,7 @@ class ArithmeticMixer(BaseMixer):
     name = "arithmetic"
     category = "basic"
     description = "Performs arithmetic operations between two signals."
-    tags = ["composed", "arithmetic"]
+    tags = ["mixed", "arithmetic"]
     params = [
         {"name": "operation", "type": "str", "default": "add", "help": "add, sub, mul, div, mod"},
         {"name": "label", "type": "str", "default": "C", "help": "Output channel label"}

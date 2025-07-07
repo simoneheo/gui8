@@ -48,6 +48,10 @@ class MainWindowUI(QWidget):
         # Track selected file for channel filtering
         self.selected_file_id = None
         
+        # File size warning settings
+        self.large_file_threshold_mb = 50  # MB threshold for large file warning
+        self.show_large_file_warnings = True  # Can be disabled via Manual Parse
+        
         # Setup UI
         self.init_ui()
         
@@ -57,6 +61,12 @@ class MainWindowUI(QWidget):
         # Initialize UI state
         self.log_message("Welcome! Load files by clicking 'Load File' button or drag & drop into the file table")
         self.log_message("Supported data: CSV, TXT, TSV files with time series or tabular data")
+        self.log_message("")  # Empty line for separation
+        self.log_message("Available Wizards:")
+        self.log_message("• Process Wizard - Apply signal processing filters (resample, smooth, filter, transform)")
+        self.log_message("• Mix Wizard - Combine multiple channels with arithmetic operations (A+B, A-B, A*B, A/B)")
+        self.log_message("• Compare Wizard - Statistical comparison between channels (correlation, Bland-Altman, regression)")
+        self.log_message("• Plot Wizard - Create customized multi-subplot visualizations with advanced styling")
     
     def init_ui(self):
         main_splitter = QSplitter(Qt.Horizontal, self)
@@ -154,7 +164,7 @@ class MainWindowUI(QWidget):
         
         # Add filter toggle
         self.show_all_types_checkbox = QCheckBox("Show all data types")
-        self.show_all_types_checkbox.setToolTip("Show all data types (RAW, PROCESSED, COMPOSED, etc.)\nBy default, only RAW channels are shown")
+        self.show_all_types_checkbox.setToolTip("Show all data types (RAW, PROCESSED, MIXED, etc.)\nBy default, only RAW channels are shown")
         self.show_all_types_checkbox.setChecked(False)  # Default to RAW only
         self.show_all_types_checkbox.stateChanged.connect(self._on_channel_filter_changed)
         
@@ -261,6 +271,12 @@ class MainWindowUI(QWidget):
                 if self.file_manager.has_file_path(file_path):
                     self.log_message(f"File already loaded: {file_path.name}", "warning")
                     continue
+                
+                # Check file size and warn if large
+                file_size_mb = file_path.stat().st_size / (1024 * 1024)
+                if file_size_mb >= self.large_file_threshold_mb and self.show_large_file_warnings:
+                    if not self._show_large_file_warning(file_path, file_size_mb):
+                        continue  # User cancelled loading
                 
                 # Parse the file
                 self.log_message(f"Parsing: {file_path.name}", "processing")
@@ -434,18 +450,9 @@ class MainWindowUI(QWidget):
             self.channel_count_label.setText("Channels: 0 (0 visible)")
             return
         
-        # Get channels only from selected file
+        # Get filtered channels from selected file
+        channels = self._get_filtered_channels()
         all_channels = self.channel_manager.get_channels_by_file(self.selected_file_id)
-        
-        # Filter channels based on type toggle
-        show_all_types = self.show_all_types_checkbox.isChecked()
-        if show_all_types:
-            # Show all types
-            channels = all_channels
-        else:
-            # Show only RAW channels by default
-            from channel import SourceType
-            channels = [ch for ch in all_channels if ch.type == SourceType.RAW]
         
         self.channel_table.setRowCount(len(channels))
         
@@ -546,6 +553,7 @@ class MainWindowUI(QWidget):
         
         # Update count label with filtering information
         visible_channels = [ch for ch in channels if ch.show]
+        show_all_types = self.show_all_types_checkbox.isChecked()
         
         if show_all_types:
             self.channel_count_label.setText(f"Channels: {len(channels)} ({len(visible_channels)} visible)")
@@ -572,11 +580,31 @@ class MainWindowUI(QWidget):
         # Most actions are now handled by individual buttons in the actions column
         pass
     
+    def _get_filtered_channels(self, file_id: str = None):
+        """Get channels for the selected file with current filter applied"""
+        if file_id is None:
+            file_id = self.selected_file_id
+        
+        if not file_id:
+            return []
+        
+        # Get all channels from the file
+        all_channels = self.channel_manager.get_channels_by_file(file_id)
+        
+        # Apply filter based on "Show all data types" toggle
+        show_all_types = self.show_all_types_checkbox.isChecked()
+        if show_all_types:
+            return all_channels
+        else:
+            # Show only RAW channels by default
+            from channel import SourceType
+            return [ch for ch in all_channels if ch.type == SourceType.RAW]
+
     def _on_channel_filter_changed(self):
         """Handle change in channel type filter"""
         self.refresh_channel_table()
         show_all = self.show_all_types_checkbox.isChecked()
-        self.log_message(f"Channel filter: {'All types' if show_all else 'RAW only'}")
+
         
         # Warning when showing all types about plot preview limitations
         if show_all:
@@ -616,7 +644,7 @@ class MainWindowUI(QWidget):
             # Toggle visibility
             new_state = not channel.show
             self.channel_manager.set_channel_visibility(channel_id, new_state)
-            self.log_message(f"{'Showing' if new_state else 'Hiding'}: {channel.ylabel}")
+
             
             # Refresh the channel table to update button appearance
             self.refresh_channel_table()
@@ -628,7 +656,7 @@ class MainWindowUI(QWidget):
             # Open the comprehensive metadata wizard
             wizard = MetadataWizard(channel, self)
             wizard.exec()
-            self.log_message(f"Viewed metadata for: {channel.ylabel}")
+
     
     def _inspect_channel_data(self, channel_id: str):
         """Open the data inspection wizard for this channel"""
@@ -638,23 +666,24 @@ class MainWindowUI(QWidget):
             wizard = InspectionWizard(channel, self)
             wizard.data_updated.connect(self.handle_channel_data_updated)
             wizard.exec()
-            self.log_message(f"Inspected data: {channel.ylabel}")
+
     
     def handle_channel_data_updated(self, channel_id: str):
         """Handle when channel data is updated via inspection/transform wizards"""
         channel = self.channel_manager.get_channel(channel_id)
         if channel and self.selected_file_id:
-            channels = self.channel_manager.get_channels_by_file(self.selected_file_id)
+            # Get filtered channels respecting the current filter toggle
+            channels = self._get_filtered_channels()
             
             # Refresh all UI components immediately
             self.refresh_channel_table()  # Update channel table with new statistics
-            self.plot_manager.update_plot(channels)  # Update plot canvas
+            self.plot_manager.update_plot(channels)  # Update plot canvas with filtered channels
             
             # Force plot canvas to redraw immediately
             self.plot_manager.plot_canvas.fig.canvas.draw()
             self.plot_manager.plot_canvas.fig.canvas.flush_events()
             
-            self.log_message(f"Updated channel data: {channel.ylabel}", "success")
+
     
     def _transform_channel_data(self, channel_id: str):
         """Open the data transformation wizard for this channel"""
@@ -664,7 +693,7 @@ class MainWindowUI(QWidget):
             wizard = TransformWizard(channel, self)
             wizard.data_updated.connect(self.handle_channel_data_updated)
             wizard.exec()
-            self.log_message(f"Transformed data: {channel.ylabel}", "success")
+
     
     def _delete_channel(self, channel_id: str):
         """Delete a channel with confirmation"""
@@ -679,7 +708,7 @@ class MainWindowUI(QWidget):
             if reply == QMessageBox.Yes:
                 self.channel_manager.remove_channel(channel_id)
                 self.refresh_channel_table()
-                self.log_message(f"Deleted channel: {channel.ylabel}", "success")
+
     
     def _show_file_info(self, file_id: str):
         """Show detailed information about a file"""
@@ -732,7 +761,7 @@ Error Information:
             """
             
             QMessageBox.information(self, f"File Info - {file_obj.filename}", info_text.strip())
-            self.log_message(f"Viewed file info: {file_obj.filename}")
+
     
     def _show_raw_file_preview(self, file_id: str):
         """Show a preview of the raw file content before parsing"""
@@ -788,7 +817,7 @@ Error Information:
             
             # Show dialog
             dialog.exec()
-            self.log_message(f"Previewed raw file: {file_obj.filename}")
+
             
         except Exception as e:
             QMessageBox.critical(self, "Preview Error", f"Could not preview file:\n{str(e)}")
@@ -831,6 +860,72 @@ Error Information:
                 
         except Exception as e:
             return f"Error reading file: {str(e)}", 'unknown'
+    
+    def _show_large_file_warning(self, file_path: Path, file_size_mb: float) -> bool:
+        """Show warning dialog for large files and suggest downsampling"""
+        try:
+            from PySide6.QtWidgets import QMessageBox, QCheckBox
+            
+            # Create custom dialog with checkbox
+            dialog = QMessageBox(self)
+            dialog.setWindowTitle("Large File Warning")
+            dialog.setIcon(QMessageBox.Warning)
+            
+            # Main warning text
+            warning_text = f"""⚠️ Large File Detected: {file_path.name}
+
+File Size: {file_size_mb:.1f} MB
+Expected slow loading and processing times.
+
+This large file may cause:
+• Slow parsing and loading
+• High memory usage
+• Delayed response times during processing
+
+Recommendations:
+• Consider using downsampling to reduce file size
+• Use Manual Parse (✂️ icon) with downsample option
+• Process in smaller chunks if possible"""
+            
+            dialog.setText(warning_text)
+            dialog.setInformativeText("Would you like to continue loading this file?")
+            
+            # Add buttons
+            continue_button = dialog.addButton("Continue Loading", QMessageBox.AcceptRole)
+            downsample_button = dialog.addButton("Use Manual Parse (Downsample)", QMessageBox.ActionRole)
+            cancel_button = dialog.addButton("Cancel", QMessageBox.RejectRole)
+            
+            # Create checkbox for disabling warnings
+            checkbox = QCheckBox("Don't show this warning again (can be re-enabled in Manual Parse)")
+            dialog.setCheckBox(checkbox)
+            
+            # Show dialog and handle response
+            dialog.exec()
+            clicked_button = dialog.clickedButton()
+            
+            # Handle checkbox state
+            if checkbox.isChecked():
+                self.show_large_file_warnings = False
+                self.log_message("Large file warnings disabled. Can be re-enabled in Manual Parse settings.", "info")
+            
+            if clicked_button == continue_button:
+                self.log_message(f"User chose to continue loading large file: {file_path.name}", "info")
+                return True
+            elif clicked_button == downsample_button:
+                self.log_message(f"User chose Manual Parse with downsample for: {file_path.name}", "info")
+                # Create a temporary file object to open Manual Parse
+                from file import File
+                temp_file = File(file_path)
+                self.file_manager.add_file(temp_file)
+                self._show_parse_wizard(temp_file.file_id)
+                return False
+            else:
+                self.log_message(f"User cancelled loading large file: {file_path.name}", "info")
+                return False
+                
+        except Exception as e:
+            self.log_message(f"Error showing large file warning: {str(e)}", "error")
+            return True  # Default to continue if error occurs
     
     def _refresh_file_to_original(self, file_id: str):
         """Refresh all channels in a file back to their original state"""
@@ -929,17 +1024,18 @@ Error Information:
         """Handle when a channel is updated via line wizard"""
         channel = self.channel_manager.get_channel(channel_id)
         if channel and self.selected_file_id:
-            channels = self.channel_manager.get_channels_by_file(self.selected_file_id)
+            # Get filtered channels respecting the current filter toggle
+            channels = self._get_filtered_channels()
             
             # Refresh all UI components immediately
             self.refresh_channel_table()  # Update channel table with new properties
-            self.plot_manager.update_plot(channels)  # Update plot canvas
+            self.plot_manager.update_plot(channels)  # Update plot canvas with filtered channels
             
             # Force plot canvas to redraw immediately
             self.plot_manager.plot_canvas.fig.canvas.draw()
             self.plot_manager.plot_canvas.fig.canvas.flush_events()
             
-            self.log_message(f"Updated line properties: {channel.ylabel}", "success")
+
 
     def show_mix_wizard(self):
         """Show the Mix Wizard dialog."""
@@ -948,6 +1044,9 @@ Error Information:
             if not self.file_manager.get_all_files():
                 QMessageBox.information(self, "No Data", "Please load some files first before using the mixer wizard.")
                 return
+            
+            # Track channels before opening wizard
+            self._track_channels_before_wizard_open()
             
             # Import and create the signal mixer wizard window directly
             # (This wizard has different architecture - window creates manager internally)
@@ -960,11 +1059,13 @@ Error Information:
                 parent=self
             )
             
+            # Connect to wizard close signal
+            self.mixer_wizard_window.wizard_closed.connect(
+                lambda: self._on_mixer_wizard_closed()
+            )
+            
             # Show the wizard window
             self.mixer_wizard_window.show()
-            
-            # Log success
-            self.log_message("Mix Wizard opened")
             
         except Exception as e:
             self.log_message(f"Error opening Mix Wizard: {str(e)}", "error")
@@ -977,22 +1078,29 @@ Error Information:
                 QMessageBox.information(self, "No Data", "Please load some files first before using the process wizard.")
                 return
             
+            # Track channels before opening wizard
+            self._track_channels_before_wizard_open()
+            
             # Import the window class directly since ProcessWizard has different structure
             from process_wizard_window import ProcessWizardWindow
             
             # Create the process wizard window (it creates its own manager internally)
+            # Pass the currently selected file ID from the main window as the default
             self.process_wizard_window = ProcessWizardWindow(
                 file_manager=self.file_manager,
                 channel_manager=self.channel_manager,
                 signal_bus=None,  # Add signal bus if available
-                parent=self
+                parent=self,
+                default_file_id=self.selected_file_id  # Pass the currently selected file
+            )
+            
+            # Connect to wizard close signal
+            self.process_wizard_window.wizard_closed.connect(
+                lambda: self._on_process_wizard_closed()
             )
             
             # Show the wizard window
             self.process_wizard_window.show()
-            
-            # Log success
-            self.log_message("Process Wizard opened")
             
         except Exception as e:
             self.log_message(f"Error opening Process Wizard: {str(e)}", "error")
@@ -1016,9 +1124,6 @@ Error Information:
             # Show the wizard window
             self.comparison_wizard_manager.show()
             
-            # Log success
-            self.log_message("Comparison Wizard opened")
-            
         except Exception as e:
             self.log_message(f"Error opening Comparison Wizard: {str(e)}", "error")
             traceback.print_exc()
@@ -1040,9 +1145,6 @@ Error Information:
             
             # Show the wizard window
             self.plot_wizard_manager.show()
-            
-            # Log the successful launch
-            self.log_message("Plot Wizard launched successfully")
             
         except Exception as e:
             self.log_message(f"Error launching Plot Wizard: {str(e)}", "error")
@@ -1094,9 +1196,6 @@ Error Information:
             
             # Show the wizard window
             self.export_wizard_manager.show()
-            
-            # Log success
-            self.log_message("Export Wizard opened")
             
         except Exception as e:
             self.log_message(f"Error opening Export Wizard: {str(e)}", "error")
@@ -1273,3 +1372,265 @@ Error Information:
         else:
             self.log_message("No valid files to process", "error")
             event.ignore()
+    
+    def _track_channels_before_wizard_open(self):
+        """Track channels before wizard opens to calculate creation statistics"""
+        # Get all current channels by file and type with detailed information
+        self._pre_wizard_channels = {}
+        for file_obj in self.file_manager.get_all_files():
+            channels = self.channel_manager.get_channels_by_file(file_obj.file_id)
+            channel_details = []
+            for ch in channels:
+                channel_details.append({
+                    'id': ch.channel_id,
+                    'name': ch.ylabel or ch.legend_label or ch.channel_id,
+                    'type': ch.type,
+                    'dimensions': getattr(ch, 'ydata', None).shape if hasattr(ch, 'ydata') and ch.ydata is not None else None,
+                    'step': getattr(ch, 'step', 0)
+                })
+            self._pre_wizard_channels[file_obj.file_id] = {
+                'filename': file_obj.filename,
+                'channels': channel_details
+            }
+    
+    def _on_process_wizard_closed(self):
+        """Handle when Process Wizard is closed"""
+        if not hasattr(self, '_pre_wizard_channels'):
+            return
+        
+        # Calculate new channels created with detailed information
+        new_channels = []
+        for file_obj in self.file_manager.get_all_files():
+            current_channels = self.channel_manager.get_channels_by_file(file_obj.file_id)
+            
+            # Get pre-wizard channel info for this file
+            pre_wizard_channels = {}
+            if file_obj.file_id in self._pre_wizard_channels:
+                for ch_info in self._pre_wizard_channels[file_obj.file_id]['channels']:
+                    pre_wizard_channels[ch_info['id']] = ch_info
+            
+            # Find new channels and their parent information
+            for channel in current_channels:
+                if channel.channel_id not in pre_wizard_channels:
+                    # Find the parent channel (look in current channel manager, not just pre-wizard)
+                    parent_info = None
+                    if hasattr(channel, 'parent_ids') and channel.parent_ids:
+                        # Get the most recent parent
+                        for parent_id in channel.parent_ids:
+                            parent_channel = self.channel_manager.get_channel(parent_id)
+                            if parent_channel:
+                                parent_info = {
+                                    'name': parent_channel.ylabel or parent_channel.legend_label or parent_channel.channel_id
+                                }
+                                break
+                    
+                    # Get dimensions
+                    dimensions = None
+                    if hasattr(channel, 'ydata') and channel.ydata is not None:
+                        if hasattr(channel.ydata, 'shape'):
+                            dimensions = channel.ydata.shape
+                        else:
+                            dimensions = (len(channel.ydata),)
+                    
+                    new_channels.append({
+                        'name': channel.ylabel or channel.legend_label or channel.channel_id,
+                        'type': channel.type.value if hasattr(channel.type, 'value') else str(channel.type),
+                        'filename': file_obj.filename,
+                        'parent_name': parent_info['name'] if parent_info else 'Unknown',
+                        'dimensions': dimensions,
+                        'step': getattr(channel, 'step', 0)
+                    })
+        
+        # Report statistics
+        if new_channels:
+            # Overall summary
+            self.log_message(f"Process Wizard created {len(new_channels)} new channels:", "success")
+            
+            # Build tree structure by grouping channels by lineage and sorting by step
+            trees = self._build_channel_tree(new_channels)
+            
+            # Display each tree
+            for tree in trees:
+                self._display_channel_tree(tree, 0)
+        else:
+            self.log_message("Process Wizard closed - no new channels created", "info")
+        
+        # Clean up
+        del self._pre_wizard_channels
+        
+        # Refresh main window UI to show new channels
+        self.refresh_channel_table()
+        self.refresh_file_table()
+        
+        # Update plot with current channels
+        if self.selected_file_id:
+            channels = self._get_filtered_channels(self.selected_file_id)
+            self.plot_manager.update_plot(channels)
+            self.plot_manager.plot_canvas.fig.canvas.draw()
+            self.plot_manager.plot_canvas.fig.canvas.flush_events()
+        
+        # Refresh main window UI to show new channels
+        self.refresh_channel_table()
+        self.refresh_file_table()
+        
+        # Update plot with current channels
+        if self.selected_file_id:
+            channels = self._get_filtered_channels(self.selected_file_id)
+            self.plot_manager.update_plot(channels)
+            self.plot_manager.plot_canvas.fig.canvas.draw()
+            self.plot_manager.plot_canvas.fig.canvas.flush_events()
+    
+    def _build_channel_tree(self, new_channels):
+        """Build tree structure from new channels showing processing lineage"""
+        # Group channels by their root lineage and build hierarchy
+        trees = {}
+        
+        for ch in new_channels:
+            # Find the root of this processing chain
+            root_name = self._find_root_channel_name(ch)
+            
+            if root_name not in trees:
+                trees[root_name] = {
+                    'name': root_name,
+                    'filename': ch['filename'],
+                    'children': [],
+                    'step': 0,
+                    'is_new': False  # Root is not new, it existed before
+                }
+            
+            # Add this channel to the tree structure
+            self._add_channel_to_tree(trees[root_name], ch)
+        
+        return list(trees.values())
+    
+    def _find_root_channel_name(self, channel_info):
+        """Find the root (original) channel name for a processing chain"""
+        # Walk up the parent chain until we find the root
+        current_name = channel_info['name']
+        seen_names = set([current_name])
+        
+        # Try to find the parent through the channel manager
+        try:
+            # Get the actual channel object to trace lineage
+            for ch in self.channel_manager.get_all_channels():
+                if (ch.ylabel or ch.legend_label or ch.channel_id) == current_name:
+                    # Walk up the parent chain
+                    while hasattr(ch, 'parent_ids') and ch.parent_ids:
+                        parent_id = ch.parent_ids[0]  # Take first parent
+                        parent_ch = self.channel_manager.get_channel(parent_id)
+                        if parent_ch:
+                            parent_name = parent_ch.ylabel or parent_ch.legend_label or parent_ch.channel_id
+                            if parent_name in seen_names:  # Avoid circular references
+                                break
+                            seen_names.add(parent_name)
+                            current_name = parent_name
+                            ch = parent_ch
+                        else:
+                            break
+                    break
+        except:
+            # Fallback: try to extract from the name pattern
+            if ' - ' in channel_info['name']:
+                # Assume the first part before " - " is the root
+                current_name = channel_info['name'].split(' - ')[0]
+        
+        return current_name
+    
+    def _add_channel_to_tree(self, tree_node, channel_info):
+        """Recursively add a channel to the tree structure"""
+        # If this channel is a direct child of the current node
+        if channel_info['parent_name'] == tree_node['name']:
+            tree_node['children'].append({
+                'name': channel_info['name'],
+                'filename': channel_info['filename'],
+                'parent_name': channel_info['parent_name'],
+                'dimensions': channel_info['dimensions'],
+                'step': channel_info['step'],
+                'children': [],
+                'is_new': True
+            })
+        else:
+            # Check if it belongs to any of the children
+            for child in tree_node['children']:
+                self._add_channel_to_tree(child, channel_info)
+    
+    def _display_channel_tree(self, tree_node, indent_level):
+        """Display a channel tree with proper indentation"""
+        indent = "  " * indent_level
+        
+        if tree_node['is_new']:
+            dim_str = f"{tree_node['dimensions']}" if tree_node['dimensions'] else "(?)"
+            self.log_message(f"{indent}└─ {tree_node['name']} {dim_str}", "info")
+        else:
+            # This is the root node, show the filename context
+            if indent_level == 0:
+                self.log_message(f"{indent}{tree_node['filename']} / {tree_node['name']}:", "info")
+        
+        # Display children
+        for child in tree_node['children']:
+            self._display_channel_tree(child, indent_level + 1)
+    
+    def _on_mixer_wizard_closed(self):
+        """Handle when Mix Wizard is closed"""
+        if not hasattr(self, '_pre_wizard_channels'):
+            return
+        
+        # Calculate new channels created
+        new_channels = []
+        for file_obj in self.file_manager.get_all_files():
+            current_channels = self.channel_manager.get_channels_by_file(file_obj.file_id)
+            
+            # Get pre-wizard channel info for this file
+            pre_wizard_channels = {}
+            if file_obj.file_id in self._pre_wizard_channels:
+                for ch_info in self._pre_wizard_channels[file_obj.file_id]['channels']:
+                    pre_wizard_channels[ch_info['id']] = ch_info
+            
+            # Find new channels and their parent information
+            for channel in current_channels:
+                if channel.channel_id not in pre_wizard_channels:
+                    # Find the parent channel (look in current channel manager)
+                    parent_info = None
+                    if hasattr(channel, 'parent_ids') and channel.parent_ids:
+                        # Get the most recent parent
+                        for parent_id in channel.parent_ids:
+                            parent_channel = self.channel_manager.get_channel(parent_id)
+                            if parent_channel:
+                                parent_info = {
+                                    'name': parent_channel.ylabel or parent_channel.legend_label or parent_channel.channel_id
+                                }
+                                break
+                    
+                    # Get dimensions
+                    dimensions = None
+                    if hasattr(channel, 'ydata') and channel.ydata is not None:
+                        if hasattr(channel.ydata, 'shape'):
+                            dimensions = channel.ydata.shape
+                        else:
+                            dimensions = (len(channel.ydata),)
+                    
+                    new_channels.append({
+                        'name': channel.ylabel or channel.legend_label or channel.channel_id,
+                        'type': channel.type.value if hasattr(channel.type, 'value') else str(channel.type),
+                        'filename': file_obj.filename,
+                        'parent_name': parent_info['name'] if parent_info else 'Unknown',
+                        'dimensions': dimensions,
+                        'step': getattr(channel, 'step', 0)
+                    })
+        
+        # Report statistics
+        if new_channels:
+            # Overall summary
+            self.log_message(f"Mix Wizard created {len(new_channels)} new channels:", "success")
+            
+            # Build tree structure by grouping channels by lineage and sorting by step
+            trees = self._build_channel_tree(new_channels)
+            
+            # Display each tree
+            for tree in trees:
+                self._display_channel_tree(tree, 0)
+        else:
+            self.log_message("Mix Wizard closed - no new channels created", "info")
+        
+        # Clean up
+        del self._pre_wizard_channels

@@ -4,9 +4,7 @@
 try:
     from mixer.mixer_registry import MixerRegistry, load_all_mixers
     MIXER_AVAILABLE = True
-    print("[SignalMixerWizardManager] Mixer registry imported successfully")
 except ImportError as e:
-    print(f"[SignalMixerWizardManager] Warning: Could not import mixer registry: {e}")
     MIXER_AVAILABLE = False
     # Create a dummy MixerRegistry if mixer module is not available
     class MixerRegistry:
@@ -19,7 +17,7 @@ except ImportError as e:
             return None
     
     def load_all_mixers(directory):
-        print(f"[SignalMixerWizardManager] Warning: Mixer module not available")
+        pass
 
 import traceback
 import time
@@ -84,11 +82,9 @@ class SignalMixerWizardManager:
     def _validate_managers(self) -> bool:
         """Validate that required managers are available and functional"""
         if not self.file_manager:
-            print("[SignalMixerWizardManager] ERROR: File manager not provided")
             return False
             
         if not self.channel_manager:
-            print("[SignalMixerWizardManager] ERROR: Channel manager not provided")
             return False
             
         # Validate manager functionality
@@ -98,7 +94,6 @@ class SignalMixerWizardManager:
             self.channel_manager.get_channel_count()
             return True
         except Exception as e:
-            print(f"[SignalMixerWizardManager] ERROR: Manager validation failed: {e}")
             return False
             
     def _initialize_mixers(self):
@@ -119,7 +114,7 @@ class SignalMixerWizardManager:
     def _log_state_change(self, message: str):
         """Log state changes for debugging and monitoring"""
         timestamp = time.strftime("%H:%M:%S")
-        print(f"[SignalMixerWizardManager {timestamp}] {message}")
+        # Debug logging disabled
         
     def get_stats(self) -> Dict:
         """Get comprehensive mixer statistics"""
@@ -156,7 +151,6 @@ class SignalMixerWizardManager:
             return all_channels
             
         except Exception as e:
-            print(f"[SignalMixerWizardManager] Error getting channels: {e}")
             return []
 
     def get_channel_display_name(self, channel):
@@ -184,7 +178,6 @@ class SignalMixerWizardManager:
                 'range': float(np.max(channel.ydata) - np.min(channel.ydata))
             }
         except Exception as e:
-            print(f"[SignalMixerWizardManager] Error calculating stats: {e}")
             return {}
 
     def validate_channels_for_mixing(self, channel_a, channel_b):
@@ -348,7 +341,6 @@ class SignalMixerWizardManager:
             return selected_files
             
         except Exception as e:
-            print(f"[SignalMixerWizardManager] Error getting files: {e}")
             return []
 
     def get_all_parsed_files(self):
@@ -435,13 +427,12 @@ class SignalMixerWizardManager:
             return max(matching_channels, key=lambda ch: ch.step)
                     
         except Exception as e:
-            print(f"[SignalMixerWizardManager] Error getting channel: {e}")
+            pass
             
         return None
 
     def find_best_channel_pair(self):
-        """Find the best pair of channels based on priority rules."""
-        print("[SignalMixerWizardManager] Finding best channel pair")
+        """Find the best pair of channels based on smart matching priority rules."""
         
         # Get selected files
         selected_files = self.get_available_files()
@@ -452,61 +443,76 @@ class SignalMixerWizardManager:
         all_channels = []
         for file_info in selected_files:
             file_channels = self.channel_manager.get_channels_by_file(file_info.file_id)
-            all_channels.extend(file_channels)
+            # Only include channels with valid data
+            for ch in file_channels:
+                if ch.show and ch.xdata is not None and ch.ydata is not None and len(ch.ydata) > 0:
+                    all_channels.append(ch)
         
         if len(all_channels) < 1:
             return None, None
         
-        # Priority 1: Try to find two channels with matching xdata and ydata lengths
+        # PRIORITY 1: Smart match - Two DIFFERENT channels with SAME SIZE from DIFFERENT files
         for i, ch1 in enumerate(all_channels):
-            if ch1.xdata is None or ch1.ydata is None:
-                continue
             len1_x, len1_y = len(ch1.xdata), len(ch1.ydata)
             
             for j, ch2 in enumerate(all_channels[i+1:], i+1):
-                if ch2.xdata is None or ch2.ydata is None:
-                    continue
                 len2_x, len2_y = len(ch2.xdata), len(ch2.ydata)
                 
-                if len1_x == len2_x and len1_y == len2_y:
-                    print(f"[SignalMixerWizardManager] Found matching lengths: {len1_x}x{len1_y}")
+                # Must be different channels with same size from different files
+                if (ch1.channel_id != ch2.channel_id and 
+                    ch1.file_id != ch2.file_id and
+                    len1_x == len2_x and len1_y == len2_y):
                     return ch1, ch2
         
-        print("[SignalMixerWizardManager] No matching lengths found, trying other priorities")
+        # PRIORITY 2: Smart match - Two DIFFERENT channels with SAME SIZE from SAME file
+        for i, ch1 in enumerate(all_channels):
+            len1_x, len1_y = len(ch1.xdata), len(ch1.ydata)
+            
+            for j, ch2 in enumerate(all_channels[i+1:], i+1):
+                len2_x, len2_y = len(ch2.xdata), len(ch2.ydata)
+                
+                # Must be different channels with same size (can be same file)
+                if (ch1.channel_id != ch2.channel_id and 
+                    len1_x == len2_x and len1_y == len2_y):
+                    return ch1, ch2
         
-        # Priority 2: If 2+ files selected, use 1st/2nd files, 1st channel, last step
+        # PRIORITY 3: If 2+ files selected, use 1st/2nd files, 1st channel, last step
         if len(selected_files) >= 2:
-            file1_channels = self.channel_manager.get_channels_by_file(selected_files[0].file_id)
-            file2_channels = self.channel_manager.get_channels_by_file(selected_files[1].file_id)
+            file1_channels = [ch for ch in all_channels if ch.file_id == selected_files[0].file_id]
+            file2_channels = [ch for ch in all_channels if ch.file_id == selected_files[1].file_id]
             
             if file1_channels and file2_channels:
                 # Get last step channels for each file
                 ch1 = max(file1_channels, key=lambda ch: ch.step)
                 ch2 = max(file2_channels, key=lambda ch: ch.step)
-                print(f"[SignalMixerWizardManager] Using 1st/2nd files, last steps: {ch1.step}, {ch2.step}")
                 return ch1, ch2
         
-        # Priority 3: If only one file, use 1st/2nd channels, last step
+        # PRIORITY 4: If only one file, use 1st/2nd channels, last step
         if len(selected_files) == 1:
-            file_channels = self.channel_manager.get_channels_by_file(selected_files[0].file_id)
+            file_channels = [ch for ch in all_channels if ch.file_id == selected_files[0].file_id]
             if len(file_channels) >= 2:
-                # Get the two highest step channels
+                # Get the two highest step channels that are different
                 sorted_channels = sorted(file_channels, key=lambda ch: ch.step, reverse=True)
-                print(f"[SignalMixerWizardManager] Using 1st/2nd channels from single file, steps: {sorted_channels[0].step}, {sorted_channels[1].step}")
-                return sorted_channels[0], sorted_channels[1]
+                # Ensure we pick different channels
+                for i, ch1 in enumerate(sorted_channels):
+                    for ch2 in sorted_channels[i+1:]:
+                        if ch1.channel_id != ch2.channel_id:
+                            return ch1, ch2
+                
+                # Fallback if all channels are the same - use top 2 steps
+                if len(sorted_channels) >= 2:
+                    return sorted_channels[0], sorted_channels[1]
         
-        # Priority 4: If only one channel exists, use it for both rows with last two steps
-        if len(all_channels) == 1:
-            ch = all_channels[0]
-            print(f"[SignalMixerWizardManager] Only one channel available, using for both rows: {ch.channel_id}")
-            return ch, ch
-        
-        # Fallback: Use first two available channels
+        # PRIORITY 5: Fallback - Use first two available channels if they're different
         if len(all_channels) >= 2:
-            print("[SignalMixerWizardManager] Fallback: using first two available channels")
+            for i, ch1 in enumerate(all_channels):
+                for ch2 in all_channels[i+1:]:
+                    if ch1.channel_id != ch2.channel_id:
+                        return ch1, ch2
+            
+            # If no different channels found, use first two
             return all_channels[0], all_channels[1]
         elif len(all_channels) == 1:
-            print("[SignalMixerWizardManager] Fallback: using single channel for both rows")
             return all_channels[0], all_channels[0]
         
         return None, None
@@ -516,18 +522,13 @@ class SignalMixerWizardManager:
         try:
             # Get templates from the centralized template registry
             templates = MixerRegistry.get_all_templates()
-            print(f"[SignalMixerWizardManager] Retrieved {len(templates)} templates from registry")
             return templates
         except Exception as e:
-            print(f"[SignalMixerWizardManager] Error getting templates: {e}")
-            
             # Fallback to mixer names if template registry fails
             try:
                 mixer_names = MixerRegistry.all_mixers()
-                print(f"[SignalMixerWizardManager] Fallback: using {len(mixer_names)} mixer names")
                 return [(name, "mixed") for name in mixer_names]
             except Exception as e2:
-                print(f"[SignalMixerWizardManager] Fallback also failed: {e2}")
                 return []
 
     def generate_next_label(self, current_row_count):
@@ -537,12 +538,10 @@ class SignalMixerWizardManager:
     def process_mixer_expression(self, expression, channel_context, channel_name=None):
         """Process a mixer expression and return the result."""
         try:
-            print(f"[SignalMixerWizardManager] Processing expression: {expression}")
             if not expression or '=' not in expression:
                 return None, "Invalid expression. Use format: C = A + B"
 
             label, formula = map(str.strip, expression.split('=', 1))
-            print(f"[SignalMixerWizardManager] Label: {label}, Formula: {formula}")
             
             # Add mixed channels to context using their step table labels (C, D, E, etc.)
             context = {**channel_context}
@@ -550,30 +549,24 @@ class SignalMixerWizardManager:
                 # Use stored step table label if available, otherwise generate one
                 step_label = getattr(mixed_channel, 'step_table_label', chr(ord('C') + i))
                 context[step_label] = mixed_channel
-                print(f"[SignalMixerWizardManager] Added mixed channel {step_label}: {mixed_channel.legend_label}")
-            
-            print(f"[SignalMixerWizardManager] Context channels: {list(context.keys())}")
             
             # Validate that required channels exist
             for ch_name, ch_obj in context.items():
                 if ch_obj is None:
                     return None, f"Channel {ch_name} is not available"
-                print(f"[SignalMixerWizardManager] Channel {ch_name}: {ch_obj.legend_label} (xdata: {len(ch_obj.xdata) if ch_obj.xdata is not None else 'None'}, ydata: {len(ch_obj.ydata) if ch_obj.ydata is not None else 'None'})")
 
             mixer_cls = self._resolve_mixer_class(formula)
             if mixer_cls is None:
                 return None, f"Could not resolve mixer for expression: {formula}"
-
-            print(f"[SignalMixerWizardManager] Using mixer class: {mixer_cls}")
             
             # Parse operation from formula
             operation_params = self._parse_operation_params(formula, label)
             mixer = mixer_cls(label=label, **operation_params)
-            print(f"[SignalMixerWizardManager] Created mixer with params: {operation_params}")
             
             new_channel = mixer.apply(context)
-            print(f"[SignalMixerWizardManager] Created new channel: {new_channel.channel_id}")
-            print(f"[SignalMixerWizardManager] New channel data: xdata={len(new_channel.xdata) if new_channel.xdata is not None else 'None'}, ydata={len(new_channel.ydata) if new_channel.ydata is not None else 'None'}")
+
+            # Check if channels A and B have identical x-axis data and share it with the mixed channel
+            self._share_identical_xdata_if_possible(new_channel, context)
 
             # Set channel description to the expression
             new_channel.description = expression
@@ -586,7 +579,6 @@ class SignalMixerWizardManager:
             if channel_name:
                 # Use the provided channel name for display purposes
                 new_channel.legend_label = channel_name
-                print(f"[SignalMixerWizardManager] Set channel name to: {channel_name}")
             else:
                 # Fallback to generating a name based on the mixer operation
                 mixer_name = self._get_mixer_name_from_class(mixer_cls)
@@ -596,16 +588,12 @@ class SignalMixerWizardManager:
                     original_name = new_channel.channel_id
                 
                 new_channel.legend_label = f"{original_name} - {mixer_name}"
-                print(f"[SignalMixerWizardManager] Generated channel name: {new_channel.legend_label}")
-            
-            print(f"[SignalMixerWizardManager] Channel can be referenced in expressions as: {label}")
             
             # Check if a channel with this label already exists
             existing_index = None
             for i, existing_channel in enumerate(self.mixed_channels):
                 if getattr(existing_channel, 'step_table_label', None) == label:
                     existing_index = i
-                    print(f"[SignalMixerWizardManager] Found existing channel with label {label}, will overwrite")
                     break
 
             # Register new channel
@@ -655,7 +643,7 @@ class SignalMixerWizardManager:
                 params['expression'] = formula
                 return params
         except (KeyError, AttributeError):
-            print("[SignalMixerWizardManager] ExpressionMixer not available for parameter parsing")
+            pass
         
         # Legacy simple operation parsing for other mixers
         if '%' in formula_clean:
@@ -683,10 +671,9 @@ class SignalMixerWizardManager:
                 if (hasattr(expression_mixer, 'parse_expression_for_mixer') and 
                     expression_mixer.parse_expression_for_mixer(formula)) or \
                    any(func in formula_clean for func in ['sqrt', 'sin', 'cos', 'abs', 'exp', 'log', 'mean', 'sum', 'np.', '**', '(', ')']):
-                    print(f"[SignalMixerWizardManager] Using ExpressionMixer for formula: {formula}")
-                return expression_mixer
+                    return expression_mixer
         except (KeyError, AttributeError):
-            print("[SignalMixerWizardManager] ExpressionMixer not available, using fallback logic")
+            pass
         
         # Legacy simple mixer resolution
         try:
@@ -695,7 +682,7 @@ class SignalMixerWizardManager:
                 if arithmetic_mixer:
                     return arithmetic_mixer
         except KeyError:
-            print("[SignalMixerWizardManager] ArithmeticMixer not available")
+            pass
             
         try:
             if any(fn in formula_clean for fn in ['abs', 'normalize', 'zscore']):
@@ -703,7 +690,7 @@ class SignalMixerWizardManager:
                 if unary_mixer:
                     return unary_mixer
         except KeyError:
-            print("[SignalMixerWizardManager] UnaryMixer not available")
+            pass
             
         try:
             if any(op in formula_clean for op in ['>', '<', '>=', '<=', '==', '!=']):
@@ -711,7 +698,7 @@ class SignalMixerWizardManager:
                 if logic_mixer:
                     return logic_mixer
         except KeyError:
-            print("[SignalMixerWizardManager] LogicMixer not available")
+            pass
             
         try:
             if any(fn in formula_clean for fn in ['clip', 'threshold']):
@@ -719,20 +706,47 @@ class SignalMixerWizardManager:
                 if threshold_mixer:
                     return threshold_mixer
         except KeyError:
-            print("[SignalMixerWizardManager] ThresholdMixer not available")
+            pass
         
         # Try to get any available mixer as fallback
         try:
             available_mixers = MixerRegistry.all_mixers()
             if available_mixers:
                 first_mixer = MixerRegistry.get(available_mixers[0])
-                print(f"[SignalMixerWizardManager] Using fallback mixer: {available_mixers[0]}")
                 return first_mixer
         except (KeyError, IndexError):
             pass
         
-        print(f"[SignalMixerWizardManager] No suitable mixer found for formula: {formula}")
         return None
+
+    def _share_identical_xdata_if_possible(self, new_channel, context):
+        """Check if channels A and B have identical x-axis data and share it with the mixed channel."""
+        try:
+            # Get channels A and B from context
+            channel_a = context.get('A')
+            channel_b = context.get('B')
+            
+            # Only proceed if we have both channels
+            if not channel_a or not channel_b:
+                return
+            
+            # Check if both channels have x-axis data
+            if (not hasattr(channel_a, 'xdata') or channel_a.xdata is None or 
+                not hasattr(channel_b, 'xdata') or channel_b.xdata is None):
+                return
+            
+            # Check if x-axis data lengths match
+            if len(channel_a.xdata) != len(channel_b.xdata):
+                return
+            
+            # Check if x-axis data values are identical
+            import numpy as np
+            if np.allclose(channel_a.xdata, channel_b.xdata, rtol=1e-10, atol=1e-10):
+                # X-axis data is identical - share it with the mixed channel
+                if new_channel.ydata is not None and len(new_channel.ydata) == len(channel_a.xdata):
+                    new_channel.xdata = channel_a.xdata.copy()
+        except Exception as e:
+            pass
 
     def _get_mixer_name_from_class(self, mixer_cls):
         """Get a friendly name from the mixer class."""

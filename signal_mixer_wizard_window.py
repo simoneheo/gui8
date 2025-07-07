@@ -18,13 +18,11 @@ from typing import Optional, Dict, List
 try:
     from mixer.mixer_registry import MixerRegistry, load_all_mixers
     MIXER_AVAILABLE = True
-    print("[SignalMixerWizard] Mixer registry imported successfully")
 except ImportError as e:
-    print(f"[SignalMixerWizard] Warning: Could not import mixer registry: {e}")
     MIXER_AVAILABLE = False
     
     def load_all_mixers(directory):
-        print(f"[SignalMixerWizard] Warning: Mixer module not available")
+        pass
     
     class MixerRegistry:
         @staticmethod
@@ -98,7 +96,6 @@ class SignalMixerWizardWindow(QMainWindow):
     def _validate_initialization(self) -> bool:
         """Validate that required managers are available"""
         if not self.file_manager or not self.channel_manager:
-            print("[SignalMixerWizard] ERROR: Required managers not available")
             return False
         return True
         
@@ -107,16 +104,12 @@ class SignalMixerWizardWindow(QMainWindow):
         try:
             if MIXER_AVAILABLE:
                 load_all_mixers("mixer")
-                self._log_state_change("Mixer plugins loaded successfully")
-            else:
-                self._log_state_change("Mixer plugins not available - using basic operations only")
         except Exception as e:
-            print(f"[SignalMixerWizard] Warning: Could not load mixer plugins: {e}")
+            pass
             
     def _log_state_change(self, message: str):
         """Log state changes for debugging and monitoring"""
         timestamp = time.strftime("%H:%M:%S")
-        print(f"[SignalMixerWizard {timestamp}] {message}")
         self.state_changed.emit(message)
 
     def _setup_manager_callbacks(self):
@@ -323,7 +316,7 @@ class SignalMixerWizardWindow(QMainWindow):
         # Time grid resolution
         self.round_to_spin = QDoubleSpinBox()
         self.round_to_spin.setRange(0.0001, 1.0)
-        self.round_to_spin.setValue(0.01)
+        self.round_to_spin.setValue(1.0000)
         self.round_to_spin.setDecimals(4)
         self.round_to_spin.setToolTip("Time grid resolution (smaller = more points)")
         time_layout.addRow("Grid Resolution:", self.round_to_spin)
@@ -401,9 +394,32 @@ class SignalMixerWizardWindow(QMainWindow):
         # Action buttons
         button_layout = QHBoxLayout()
         
-        self.create_btn = QPushButton("Create Mixed Channel")
+        self.create_btn = QPushButton("Apply Mixer")
         self.create_btn.setEnabled(False)
         self.create_btn.clicked.connect(self._on_create_mixed_channel)
+        self.create_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #228B22;
+                color: white;
+                border: 2px solid #1E7B1E;
+                border-radius: 6px;
+                padding: 8px 16px;
+                font-weight: bold;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: #32CD32;
+                border-color: #228B22;
+            }
+            QPushButton:pressed {
+                background-color: #1E7B1E;
+            }
+            QPushButton:disabled {
+                background-color: #9E9E9E;
+                color: #666666;
+                border-color: #CCCCCC;
+            }
+        """)
         button_layout.addWidget(self.create_btn)
         
         group_layout.addLayout(button_layout)
@@ -462,7 +478,6 @@ class SignalMixerWizardWindow(QMainWindow):
 
     def _initialize_ui(self):
         """Initialize UI with data from manager"""
-        print("[SignalMixerWizard] Initializing UI")
         
         # Populate channel dropdowns
         self._populate_channel_dropdowns()
@@ -470,13 +485,14 @@ class SignalMixerWizardWindow(QMainWindow):
         # Populate operations list
         self._populate_operations_list()
         
+        # Set default operation to "A + B" and default filter to "Arithmetic"
+        self._set_default_operation_selection()
+        
         # Auto-select best channel pair 
         self._autopopulate_best_channels()
         
         # Update compatibility
         self._update_compatibility()
-        
-        print("[SignalMixerWizard] UI initialization complete")
 
     def _populate_channel_dropdowns(self):
         """Populate file dropdowns with available files"""
@@ -497,8 +513,6 @@ class SignalMixerWizardWindow(QMainWindow):
         for file_info in files:
             self.channel_a_file_combo.addItem(file_info.filename, file_info)
             self.channel_b_file_combo.addItem(file_info.filename, file_info)
-        
-        print(f"[SignalMixerWizard] Loaded {len(files)} files for mixing")
 
     def _populate_operations_list(self):
         """Populate the operations list with available mixing operations from mixer folder"""
@@ -517,11 +531,11 @@ class SignalMixerWizardWindow(QMainWindow):
                     category_templates = MixerRegistry.get_templates_by_category(category)
                     self.all_operations[category] = category_templates
                 
-                print(f"[SignalMixerWizard] Loaded {len(all_templates)} templates from mixer folder")
+                pass
                 
             else:
                 # Fallback to basic templates if mixer folder not available
-                print("[SignalMixerWizard] Mixer folder not available, using fallback templates")
+                pass
                 self.all_operations = {
             "Arithmetic": [
                 ("A + B", "add"),
@@ -536,7 +550,6 @@ class SignalMixerWizardWindow(QMainWindow):
                 }
                 
         except Exception as e:
-            print(f"[SignalMixerWizard] Error loading templates from mixer folder: {e}")
             # Fallback to basic templates
             self.all_operations = {
                 "Arithmetic": [
@@ -565,10 +578,26 @@ class SignalMixerWizardWindow(QMainWindow):
                 operations = self.all_operations[category]
                 for op_display, op_code in operations:
                     item = self.operations_list.addItem(op_display)
+                    
+    def _set_default_operation_selection(self):
+        """Set default operation selection to 'A + B' and default filter to 'All'."""
+        # Set filter to "All" to show all available operations
+        all_index = self.operation_filter.findText("All")
+        if all_index >= 0:
+            self.operation_filter.setCurrentIndex(all_index)
+            self._filter_operations("All")  # Apply the filter
+        
+        # Find and select "A + B" in the operations list
+        for i in range(self.operations_list.count()):
+            item = self.operations_list.item(i)
+            if item and item.text() == "A + B":
+                self.operations_list.setCurrentRow(i)
+                # Trigger the operation selection to populate expression and channel name
+                self._on_operation_selected(item)
+                break
 
     def _autopopulate_best_channels(self):
         """Auto-populate the dropdowns with the best channel pair"""
-        print("[SignalMixerWizard] Starting autopopulation")
         
         channel_a, channel_b = self.manager.find_best_channel_pair()
         
@@ -585,7 +614,6 @@ class SignalMixerWizardWindow(QMainWindow):
                             self.channel_a_combo.setCurrentIndex(j)
                             break
                     break
-            print(f"[SignalMixerWizard] Populated channel A")
             
         if channel_b:
             # Find and select file for channel B
@@ -600,7 +628,6 @@ class SignalMixerWizardWindow(QMainWindow):
                             self.channel_b_combo.setCurrentIndex(j)
                             break
                     break
-            print(f"[SignalMixerWizard] Populated channel B")
 
     # Event Handlers
     def _on_channel_a_file_changed(self):
@@ -794,7 +821,7 @@ class SignalMixerWizardWindow(QMainWindow):
                         self._log_message(f"Tip: {guidance['tip']}")
                     return
         except Exception as e:
-            print(f"[SignalMixerWizard] Error getting template guidance: {e}")
+            pass
         
         # Fallback to pattern-based tips
         template_lower = template.lower()
@@ -1466,9 +1493,9 @@ class SignalMixerWizardWindow(QMainWindow):
 
         # Set up plot
         if plotted_any:
-            # Add top x-axis for index-based alignment mode (only if using x-axis data)
-            alignment_mode = self.alignment_mode_combo.currentText()
-            if alignment_mode == "Index-Based" and use_x_axis_data:
+            # Add top x-axis when using indices instead of inherited x-data
+            # This helps users understand that the x-axis represents sample indices
+            if not use_x_axis_data:
                 self._add_index_axis()
         
         # Remove all labels and title
@@ -1789,7 +1816,7 @@ class SignalMixerWizardWindow(QMainWindow):
         from metadata_wizard import MetadataWizard
         wizard = MetadataWizard(channel, self)
         wizard.exec()
-        self._log_message(f"Viewed metadata for: {channel.legend_label or channel.channel_id}")
+
 
     def _inspect_channel_data(self, channel):
         """Inspect channel data"""
@@ -1797,7 +1824,7 @@ class SignalMixerWizardWindow(QMainWindow):
         wizard = InspectionWizard(channel, self)
         wizard.data_updated.connect(self._handle_channel_data_updated)
         wizard.exec()
-        self._log_message(f"Inspected data: {channel.legend_label or channel.channel_id}")
+
 
     def _style_channel(self, channel):
         """Style channel"""
@@ -1805,7 +1832,7 @@ class SignalMixerWizardWindow(QMainWindow):
         wizard = LineWizard(channel, self)
         wizard.channel_updated.connect(self._handle_channel_updated)
         wizard.exec()
-        self._log_message(f"Styled channel: {channel.legend_label or channel.channel_id}")
+
 
     def _transform_channel_data(self, channel):
         """Transform channel data"""
@@ -1813,7 +1840,7 @@ class SignalMixerWizardWindow(QMainWindow):
         wizard = TransformWizard(channel, self)
         wizard.data_updated.connect(self._handle_channel_data_updated)
         wizard.exec()
-        self._log_message(f"Transformed channel: {channel.legend_label or channel.channel_id}")
+
 
     def _delete_mixed_channel(self, channel):
         """Delete a mixed channel"""
@@ -1843,17 +1870,17 @@ class SignalMixerWizardWindow(QMainWindow):
             
             # Update table and plot
             self._update_plot()
-            self._log_message(f"Deleted mixed channel: {label}")
+
 
     def _handle_channel_data_updated(self, channel_id):
         """Handle when channel data is updated"""
         self._update_plot()
-        self._log_message(f"Updated channel data: {channel_id}")
+
 
     def _handle_channel_updated(self, channel_id):
         """Handle when channel properties are updated"""
         self._update_plot()
-        self._log_message(f"Updated channel properties: {channel_id}")
+
 
     def _should_use_x_axis_for_index_mode(self, channel_a, channel_b):
         """
@@ -1874,19 +1901,14 @@ class SignalMixerWizardWindow(QMainWindow):
                     if len(channel_a.xdata) == len(channel_b.xdata):
                         # Check if x-data values are identical
                         if np.allclose(channel_a.xdata, channel_b.xdata, rtol=1e-10, atol=1e-10):
-                            print(f"[SignalMixerWizard] Channels A and B have identical x-axis data, using shared x-axis for mixed channel")
                             return True
                         else:
-                            print(f"[SignalMixerWizard] Channels A and B have different x-data values, using sample indices")
                             return False
                     else:
-                        print(f"[SignalMixerWizard] Channels A and B have different x-data lengths, using sample indices")
                         return False
                 except Exception as e:
-                    print(f"[SignalMixerWizard] Error comparing x-axis data between A and B: {e}, using sample indices")
                     return False
             else:
-                print(f"[SignalMixerWizard] One or both channels A/B missing x-data, using sample indices")
                 return False
         
         # If we don't have both channels A and B, fall back to checking all channels
@@ -1914,7 +1936,6 @@ class SignalMixerWizardWindow(QMainWindow):
         # Check if all channels have x-data
         for channel in channels_to_check:
             if channel.xdata is None:
-                print(f"[SignalMixerWizard] Channel {getattr(channel, 'legend_label', 'unknown')} has no x-data, using sample indices")
                 return False
         
         try:
@@ -1924,22 +1945,18 @@ class SignalMixerWizardWindow(QMainWindow):
             # Check if all other channels have identical x-data
             for i, channel in enumerate(channels_to_check[1:], 1):
                 if len(channel.xdata) != len(reference_xdata):
-                    print(f"[SignalMixerWizard] Channel {i+1} has different x-data length, using sample indices")
                     return False
                 
                 if not np.allclose(channel.xdata, reference_xdata, rtol=1e-10, atol=1e-10):
-                    print(f"[SignalMixerWizard] Channel {i+1} has different x-data values, using sample indices")
                     return False
             
-            print(f"[SignalMixerWizard] All {len(channels_to_check)} channels have identical x-axis data, using time values for plotting")
             return True
                 
         except Exception as e:
-            print(f"[SignalMixerWizard] Error comparing x-axis data: {e}, defaulting to indices")
             return False
     
     def _add_index_axis(self):
-        """Add a top x-axis showing sample indices when alignment mode is index-based"""
+        """Add a top x-axis showing sample indices"""
         try:
             # Create a secondary x-axis on top
             ax_top = self.ax.twiny()
@@ -1950,32 +1967,61 @@ class SignalMixerWizardWindow(QMainWindow):
             # Determine if we're dealing with time data or index data
             channel_a = self.channel_a_combo.currentData()
             channel_b = self.channel_b_combo.currentData()
+            use_x_axis_data = self._should_use_x_axis_for_index_mode(channel_a, channel_b)
             
-            # Use the first available channel to determine the relationship between time and indices
-            reference_channel = channel_a if channel_a and channel_a.ydata is not None else channel_b
-            
-            if reference_channel and reference_channel.xdata is not None:
-                # If we have time data, calculate corresponding indices
-                time_data = reference_channel.xdata
+            if use_x_axis_data:
+                # We have time data on the main axis, show corresponding indices on top
+                reference_channel = channel_a if channel_a and channel_a.ydata is not None else channel_b
                 
-                # Find the indices corresponding to the current x-axis limits
-                if len(time_data) > 1:
-                    # Calculate indices based on time values
-                    time_range = time_data[-1] - time_data[0]
-                    if time_range > 0:
-                        # Linear interpolation to find index positions
-                        index_min = int((x_min - time_data[0]) / time_range * (len(time_data) - 1))
-                        index_max = int((x_max - time_data[0]) / time_range * (len(time_data) - 1))
-                        
-                        # Ensure indices are within bounds
-                        index_min = max(0, min(index_min, len(time_data) - 1))
-                        index_max = max(0, min(index_max, len(time_data) - 1))
+                if reference_channel and reference_channel.xdata is not None:
+                    time_data = reference_channel.xdata
+                    
+                    # Find the indices corresponding to the current x-axis limits
+                    if len(time_data) > 1:
+                        # Calculate indices based on time values
+                        time_range = time_data[-1] - time_data[0]
+                        if time_range > 0:
+                            # Linear interpolation to find index positions
+                            index_min = int((x_min - time_data[0]) / time_range * (len(time_data) - 1))
+                            index_max = int((x_max - time_data[0]) / time_range * (len(time_data) - 1))
+                            
+                            # Ensure indices are within bounds
+                            index_min = max(0, min(index_min, len(time_data) - 1))
+                            index_max = max(0, min(index_max, len(time_data) - 1))
+                        else:
+                            index_min, index_max = 0, len(time_data) - 1
                     else:
-                        index_min, index_max = 0, len(time_data) - 1
+                        index_min, index_max = 0, 0
                 else:
-                    index_min, index_max = 0, 0
+                    # Fallback to using x-axis limits as indices
+                    index_min, index_max = int(x_min), int(x_max)
             else:
-                # If no time data, assume x-axis is already indices
+                # We're using indices on the main axis, show time values on top if available
+                reference_channel = channel_a if channel_a and channel_a.ydata is not None else channel_b
+                
+                if reference_channel and reference_channel.xdata is not None:
+                    # Main axis shows indices, top axis shows corresponding time values
+                    time_data = reference_channel.xdata
+                    
+                    # Ensure limits are within bounds
+                    index_min = max(0, int(x_min))
+                    index_max = min(len(time_data) - 1, int(x_max)) if len(time_data) > 0 else int(x_max)
+                    
+                    # Get corresponding time values
+                    if index_min < len(time_data) and index_max < len(time_data):
+                        time_min = float(time_data[index_min]) if index_min >= 0 else 0.0
+                        time_max = float(time_data[index_max]) if index_max >= 0 else 1.0
+                        
+                        # Set the top axis to show time values
+                        ax_top.set_xlim(time_min, time_max)
+                        ax_top.set_xlabel("Time", fontsize=10, color='gray')
+                        ax_top.tick_params(axis='x', labelsize=8, colors='gray')
+                        
+                        # Store reference to top axis for cleanup
+                        self.ax_top = ax_top
+                        return
+                
+                # Fallback: just show the same index values on top
                 index_min, index_max = int(x_min), int(x_max)
             
             # Set the top axis limits to match the index range
@@ -2017,8 +2063,8 @@ class SignalMixerWizardWindow(QMainWindow):
             self.ax_top = ax_top
             
         except Exception as e:
-            print(f"[SignalMixerWizard] Error adding index axis: {e}")
             # Don't let axis creation errors break the plot
+            pass
 
     def _get_mixed_channel_colors(self):
         """Get the list of colors used for mixed channels in plots"""
@@ -2082,8 +2128,6 @@ class SignalMixerWizardWindow(QMainWindow):
         
         # Store the visibility state
         self._channel_visibility_states[label] = is_checked
-        print(f"[SignalMixerWizard] Channel {label} visibility changed to: {is_checked}")
-        print(f"[SignalMixerWizard] Current visibility states: {self._channel_visibility_states}")
         
         # Handle input channels A and B
         if label == "A":

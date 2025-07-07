@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QSplitter, QTextEdit, QCheckBox, QFrame, QTabWidget, QRadioButton, QButtonGroup,
     QGroupBox, QSpinBox, QHeaderView
 )
-from PySide6.QtCore import Qt, QEvent
+from PySide6.QtCore import Qt, QEvent, Signal
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 import matplotlib.pyplot as plt
@@ -28,7 +28,9 @@ class ProcessWizardWindow(QMainWindow):
     Process Wizard window for applying signal processing steps to channels
     """
     
-    def __init__(self, file_manager=None, channel_manager=None, signal_bus=None, parent=None):
+    wizard_closed = Signal()
+    
+    def __init__(self, file_manager=None, channel_manager=None, signal_bus=None, parent=None, default_file_id=None):
         super().__init__(parent)
         
         # Store managers with consistent naming
@@ -36,6 +38,9 @@ class ProcessWizardWindow(QMainWindow):
         self.channel_manager = channel_manager
         self.signal_bus = signal_bus
         self.parent_window = parent
+        
+        # Store the default file ID to select when opening
+        self.default_file_id = default_file_id
         
         self.setWindowTitle("Process File")
         self.setMinimumSize(1200, 800)
@@ -79,7 +84,14 @@ class ProcessWizardWindow(QMainWindow):
         self._update_channel_selector()
         
         # Log initialization
-        self._log_state_change("Process wizard initialized successfully")
+        if self.default_file_id:
+            selected_file = self.file_manager.get_file(self.default_file_id) if self.file_manager else None
+            if selected_file:
+                self._log_state_change(f"Process wizard initialized with default file: {selected_file.filename}")
+            else:
+                self._log_state_change("Process wizard initialized with invalid default file ID")
+        else:
+            self._log_state_change("Process wizard initialized successfully")
 
     def _validate_initialization(self) -> bool:
         """Validate that required managers are available"""
@@ -95,7 +107,6 @@ class ProcessWizardWindow(QMainWindow):
         
     def _show_error(self, message: str):
         """Show error message to user"""
-        print(f"[ProcessWizard] ERROR: {message}")
         if hasattr(self, 'console_output'):
             self.console_output.append(f"ERROR: {message}")
             
@@ -118,13 +129,12 @@ class ProcessWizardWindow(QMainWindow):
             self._update_channel_selector()
             
         except Exception as e:
-            print(f"[ProcessWizard] ERROR: Failed to initialize manager: {e}")
             self._show_error(f"Failed to initialize processing manager: {e}")
             
     def _log_state_change(self, message: str):
         """Log state changes for debugging and monitoring"""
         timestamp = time.strftime("%H:%M:%S")
-        print(f"[ProcessWizard {timestamp}] {message}")
+        # Debug logging disabled
         
     def get_stats(self) -> Dict:
         """Get processing statistics"""
@@ -249,9 +259,32 @@ class ProcessWizardWindow(QMainWindow):
         
         console_layout.addLayout(channel_name_layout)
         
-        # Add Filter button
-        self.add_filter_btn = QPushButton("Add Filter")
+        # Apply Operation button
+        self.add_filter_btn = QPushButton("Apply Operation")
         self.add_filter_btn.clicked.connect(self._on_add_filter)
+        self.add_filter_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #228B22;
+                color: white;
+                border: 2px solid #1E7B1E;
+                border-radius: 6px;
+                padding: 8px 16px;
+                font-weight: bold;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: #32CD32;
+                border-color: #228B22;
+            }
+            QPushButton:pressed {
+                background-color: #1E7B1E;
+            }
+            QPushButton:disabled {
+                background-color: #9E9E9E;
+                color: #666666;
+                border-color: #CCCCCC;
+            }
+        """)
         
         # Add groups to right column
         right_column_layout.addWidget(file_channel_group)
@@ -394,6 +427,9 @@ class ProcessWizardWindow(QMainWindow):
             registry=self.process_registry,
             channel_lookup=self.get_active_channel_info
         )
+        
+        # Set default selection to "resample" filter (after manager is initialized)
+        self._set_default_filter_selection()
 
         # Connect filter list to manager logic
         self.filter_list.itemClicked.connect(self.wizard_manager._on_filter_selected)
@@ -441,8 +477,13 @@ class ProcessWizardWindow(QMainWindow):
             display_name = f"{file_info.filename} ({status_text})"
             self.file_selector.addItem(display_name, file_info.file_id)
 
-        # Restore selection if possible, otherwise select first file
+        # Priority order for file selection:
+        # 1. Previously selected file (if exists)
+        # 2. Default file from main window (if provided and valid)
+        # 3. First file in the list
         selection_restored = False
+        
+        # Try to restore previously selected file first
         if prev_file_id:
             for i in range(self.file_selector.count()):
                 if self.file_selector.itemData(i) == prev_file_id:
@@ -450,6 +491,16 @@ class ProcessWizardWindow(QMainWindow):
                     selection_restored = True
                     break
         
+        # If no previous selection and we have a default file ID, try to select it
+        if not selection_restored and self.default_file_id:
+            for i in range(self.file_selector.count()):
+                if self.file_selector.itemData(i) == self.default_file_id:
+                    self.file_selector.setCurrentIndex(i)
+                    selection_restored = True
+                    self._log_state_change(f"Selected default file from main window")
+                    break
+        
+        # Fall back to first file if nothing else worked
         if not selection_restored and self.file_selector.count() > 0:
             self.file_selector.setCurrentIndex(0)
 
@@ -467,20 +518,16 @@ class ProcessWizardWindow(QMainWindow):
         # Get selected file
         selected_file_id = self.file_selector.currentData()
         if not selected_file_id:
-            print("[ProcessWizard] No file selected in _update_channel_selector")
             return
 
         # Get channels for selected file
         file_channels = self.channel_manager.get_channels_by_file(selected_file_id)
-        print(f"[ProcessWizard] Found {len(file_channels)} total channels for file {selected_file_id}")
         
         # Filter for RAW channels only
         filtered_channels = [ch for ch in file_channels if ch.type == SourceType.RAW]
-        print(f"[ProcessWizard] Found {len(filtered_channels)} RAW channels")
 
         # Add channels to selector
         for ch in filtered_channels:
-            print(f"[ProcessWizard] Adding channel: {ch.legend_label} (ID: {ch.channel_id})")
             self.channel_selector.addItem(ch.legend_label, ch)
 
         # Restore selection if possible, otherwise select first channel
@@ -496,20 +543,16 @@ class ProcessWizardWindow(QMainWindow):
         if not selection_restored and self.channel_selector.count() > 0:
             self.channel_selector.setCurrentIndex(0)
             selected_channel = self.channel_selector.currentData()
-            if selected_channel:
-                print(f"[ProcessWizard] Auto-selected first channel: {selected_channel.legend_label} (ID: {selected_channel.channel_id})")
 
     def get_active_channel_info(self):
         """Get the currently selected channel info."""
         # During filter addition, preserve the explicitly set input_ch
         if (hasattr(self, '_adding_filter') and self._adding_filter and 
             hasattr(self, 'input_ch') and self.input_ch):
-            print(f"[ProcessWizard] get_active_channel_info: using input_ch during filter addition: {self.input_ch.channel_id}")
             return self.input_ch
         
         # Use the explicitly set input_ch if available
         if hasattr(self, 'input_ch') and self.input_ch:
-            print(f"[ProcessWizard] get_active_channel_info: using explicitly set input_ch: {self.input_ch.channel_id}")
             return self.input_ch
         
         # Use the input channel combobox selection if cached lineage is available
@@ -518,7 +561,6 @@ class ProcessWizardWindow(QMainWindow):
             self.input_channel_combobox.currentIndex() >= 0 and 
             self.input_channel_combobox.currentIndex() < len(self._cached_lineage)):
             channel = self._cached_lineage[self.input_channel_combobox.currentIndex()]
-            print(f"[ProcessWizard] get_active_channel_info: using cached lineage channel: {channel.channel_id}")
             return channel
         
         # Fallback to main channel selector
@@ -526,10 +568,8 @@ class ProcessWizardWindow(QMainWindow):
             self.channel_selector.currentIndex() >= 0):
             channel = self.channel_selector.currentData()
             if channel is not None:
-                print(f"[ProcessWizard] get_active_channel_info: using channel selector: {channel.channel_id}")
                 return channel
         
-        print("[ProcessWizard] get_active_channel_info: no active channel found")
         return None
 
     def _build_lineage_for_channel(self, channel):
@@ -537,8 +577,6 @@ class ProcessWizardWindow(QMainWindow):
         if not channel:
             self._cached_lineage = []
             return
-            
-        print(f"[ProcessWizard] Building lineage for channel: {channel.channel_id} (step {channel.step}, file {channel.file_id})")
         
         # Get all channels in the lineage
         lineage_dict = self.channel_manager.get_channels_by_lineage(channel.lineage_id)
@@ -573,10 +611,6 @@ class ProcessWizardWindow(QMainWindow):
         
         # Cache lineage
         self._cached_lineage = filtered_lineage
-        
-        print(f"[ProcessWizard] Built lineage with {len(filtered_lineage)} channels")
-        for ch in filtered_lineage:
-            print(f"[ProcessWizard]   - {ch.channel_id} (step {ch.step})")
 
     def _update_step_table(self):
         """Update the unified step table with the current channel lineage."""
@@ -584,12 +618,10 @@ class ProcessWizardWindow(QMainWindow):
         if not hasattr(self, '_cached_lineage') or not self._cached_lineage:
             active_channel = self.get_active_channel_info()
             if not active_channel:
-                print("[ProcessWizard] No active channel found for step table update")
                 return
             self._build_lineage_for_channel(active_channel)
         
         filtered_lineage = self._cached_lineage
-        print(f"[ProcessWizard] Updating step table with {len(filtered_lineage)} channels")
         
         self.step_table.setRowCount(len(filtered_lineage))
 
@@ -694,18 +726,43 @@ class ProcessWizardWindow(QMainWindow):
             
             self.step_table.setCellWidget(i, 5, actions_widget)
 
-            # Enhanced tooltip with parameters and parent step information
+            # Enhanced tooltip with filename, parameters and parent step information
             tooltip_parts = []
+            
+            # Add filename information
+            if hasattr(channel, "file_id") and channel.file_id and self.file_manager:
+                file_obj = self.file_manager.get_file(channel.file_id)
+                if file_obj:
+                    tooltip_parts.append(f"📁 File: {file_obj.filename}")
+                else:
+                    tooltip_parts.append(f"📁 File: Unknown (ID: {channel.file_id})")
+            else:
+                tooltip_parts.append("📁 File: Unknown")
+            
+            # Add channel details
+            tooltip_parts.append(f"🏷️ Channel: {channel.legend_label or channel.ylabel or channel.channel_id}")
+            tooltip_parts.append(f"📊 Step: {channel.step}")
+            
+            # Add data shape information
+            if hasattr(channel, 'ydata') and channel.ydata is not None:
+                tooltip_parts.append(f"📈 Data points: {len(channel.ydata):,}")
+            
+            # Add sampling frequency if available
+            if hasattr(channel, 'fs_median') and channel.fs_median:
+                if hasattr(channel, 'fs_std') and channel.fs_std:
+                    tooltip_parts.append(f"⏱️ Sampling rate: {channel.fs_median:.1f}±{channel.fs_std:.1f} Hz")
+                else:
+                    tooltip_parts.append(f"⏱️ Sampling rate: {channel.fs_median:.1f} Hz")
             
             # Add parameters information
             if hasattr(channel, "params") and channel.params:
                 param_str = ", ".join(f"{k}={v}" for k, v in channel.params.items() if k != "fs")
                 if param_str:
-                    tooltip_parts.append(f"Params: {param_str}")
+                    tooltip_parts.append(f"⚙️ Params: {param_str}")
                 else:
-                    tooltip_parts.append("No parameters")
+                    tooltip_parts.append("⚙️ Params: None")
             else:
-                tooltip_parts.append("No parameters")
+                tooltip_parts.append("⚙️ Params: None")
             
             # Add parent step information
             if hasattr(channel, "parent_ids") and channel.parent_ids:
@@ -715,14 +772,18 @@ class ProcessWizardWindow(QMainWindow):
                     if parent_channel:
                         parent_steps.append(str(parent_channel.step))
                 if parent_steps:
-                    tooltip_parts.append(f"Parent step(s): {', '.join(parent_steps)}")
+                    tooltip_parts.append(f"⬆️ Parent step(s): {', '.join(parent_steps)}")
                 else:
-                    tooltip_parts.append("Parent step: unknown")
+                    tooltip_parts.append("⬆️ Parent step: unknown")
             else:
                 if channel.step == 0:
-                    tooltip_parts.append("Parent step: none (RAW)")
+                    tooltip_parts.append("⬆️ Parent step: none (RAW)")
                 else:
-                    tooltip_parts.append("Parent step: unknown")
+                    tooltip_parts.append("⬆️ Parent step: unknown")
+            
+            # Add processing description if available
+            if hasattr(channel, 'description') and channel.description:
+                tooltip_parts.append(f"📝 Description: {channel.description}")
             
             tooltip = "\n".join(tooltip_parts)
             
@@ -999,10 +1060,9 @@ class ProcessWizardWindow(QMainWindow):
         if self._adding_filter:
             return
             
-        # Get selected file info for debugging
+        # Get selected file info
         selected_file_id = self.file_selector.currentData()
         selected_file_name = self.file_selector.currentText()
-        print(f"[ProcessWizard] File selection changed to: {selected_file_name} (ID: {selected_file_id})")
         
         # Clear input_ch so we auto-select the most recent channel in the new file
         self.input_ch = None
@@ -1018,7 +1078,6 @@ class ProcessWizardWindow(QMainWindow):
         if self.channel_selector.count() > 0:
             selected_channel = self.channel_selector.currentData()
             if selected_channel:
-                print(f"[ProcessWizard] Building lineage for newly selected channel: {selected_channel.channel_id}")
                 # Build lineage for the new channel
                 self._build_lineage_for_channel(selected_channel)
                 # Update Input Channel dropdown with the new lineage
@@ -1031,20 +1090,16 @@ class ProcessWizardWindow(QMainWindow):
     def _on_channel_selected(self, index):
         """Handle channel selection change."""
         if index < 0:
-            print("[ProcessWizard] Channel selection: invalid index")
             return
             
         # Get the selected channel
         selected_channel = self.channel_selector.currentData()
         if not selected_channel:
-            print("[ProcessWizard] Channel selection: no channel data")
             return
         
         # Don't override input_ch if we're in the middle of adding a filter
         if self._adding_filter:
             return
-        
-        print(f"[ProcessWizard] Channel selection changed to: {selected_channel.legend_label} (ID: {selected_channel.channel_id})")
         
         # Clear input_ch so we auto-select the most recent channel in the new lineage
         # This ensures we show the most recent channel in the selected lineage
@@ -1090,15 +1145,6 @@ class ProcessWizardWindow(QMainWindow):
 
         # CRITICAL: Set the new channel as the input for next step BEFORE any UI updates
         self.input_ch = new_channel
-        print(f"[ProcessWizard] New channel created: {new_channel.channel_id} - {new_channel.legend_label or new_channel.ylabel} (step {new_channel.step})")
-        print(f"[ProcessWizard] Set input_ch to: {new_channel.channel_id}")
-        print(f"[ProcessWizard] _adding_filter flag is: {self._adding_filter}")
-        
-        # Verify the new channel is in the channel manager
-        if self.channel_manager.has_channel(new_channel.channel_id):
-            print(f"[ProcessWizard] Confirmed: New channel {new_channel.channel_id} is in channel manager")
-        else:
-            print(f"[ProcessWizard] WARNING: New channel {new_channel.channel_id} not found in channel manager!")
 
         # Update selectors to include new channels (but dropdown won't override input_ch due to flag)
         self._update_file_selector()
@@ -1106,7 +1152,6 @@ class ProcessWizardWindow(QMainWindow):
 
         # CRITICAL: Rebuild the lineage to include the new channel
         # Build lineage for the new channel to include it in the cached lineage
-        print(f"[ProcessWizard] Rebuilding lineage to include new channel")
         self._build_lineage_for_channel(new_channel)
         
         # Update Input Channel dropdown with the new lineage
@@ -1123,28 +1168,8 @@ class ProcessWizardWindow(QMainWindow):
             if self.wizard_manager.pending_step.name == "stft_filter":
                 self.tab_widget.setCurrentIndex(1)  # Switch to spectrogram tab
 
-        # Debug: Check input_ch before updating UI
-        if hasattr(self, 'input_ch') and self.input_ch:
-            print(f"[ProcessWizard] input_ch before UI update: {self.input_ch.channel_id} - {self.input_ch.legend_label or self.input_ch.ylabel}")
-        else:
-            print(f"[ProcessWizard] input_ch not set before UI update")
-        
         # Update step table and plot with the new channel properly selected
         self._update_step_table()  # This should now show the new channel in the updated lineage
-        
-        # Verify the combobox was updated correctly
-        current_index = self.input_channel_combobox.currentIndex()
-        if current_index >= 0 and hasattr(self, '_cached_lineage') and self._cached_lineage:
-            if current_index < len(self._cached_lineage):
-                selected_channel = self._cached_lineage[current_index]
-                if selected_channel.channel_id == new_channel.channel_id:
-                    print(f"[ProcessWizard] SUCCESS: Combobox correctly shows new channel: {selected_channel.legend_label or selected_channel.ylabel}")
-                else:
-                    print(f"[ProcessWizard] WARNING: Combobox shows different channel: {selected_channel.channel_id} instead of {new_channel.channel_id}")
-            else:
-                print(f"[ProcessWizard] WARNING: Combobox index {current_index} is out of range for lineage size {len(self._cached_lineage)}")
-        else:
-            print(f"[ProcessWizard] WARNING: Combobox not properly updated after new channel creation")
         
         # Clear the flag after all updates are complete
         self._adding_filter = False
@@ -1279,7 +1304,7 @@ class ProcessWizardWindow(QMainWindow):
             # Toggle visibility
             new_state = not channel.show
             self.channel_manager.set_channel_visibility(channel_id, new_state)
-            self.console_output.append(f"📊 {'Showing' if new_state else 'Hiding'}: {channel.ylabel}")
+
             
             # Refresh the step table to update button appearance
             self._update_step_table()
@@ -1293,7 +1318,7 @@ class ProcessWizardWindow(QMainWindow):
             from line_wizard import LineWizard
             wizard = LineWizard(channel, self)
             wizard.exec()
-            self.console_output.append(f"⚙️ Updated styling for: {channel.ylabel}")
+
             self._update_step_table()
             self._update_plot()
 
@@ -1305,7 +1330,7 @@ class ProcessWizardWindow(QMainWindow):
             from metadata_wizard import MetadataWizard
             wizard = MetadataWizard(channel, self)
             wizard.exec()
-            self.console_output.append(f"ℹ️ Viewed metadata for: {channel.ylabel}")
+
 
     def _inspect_channel_data(self, channel_id: str):
         """Open the data inspection wizard for this channel"""
@@ -1316,7 +1341,7 @@ class ProcessWizardWindow(QMainWindow):
             wizard = InspectionWizard(channel, self)
             wizard.data_updated.connect(self._handle_channel_data_updated)
             wizard.exec()
-            self.console_output.append(f"🔍 Inspected data: {channel.ylabel}")
+
 
     def _transform_channel_data(self, channel_id: str):
         """Open the data transformation wizard for this channel"""
@@ -1327,7 +1352,7 @@ class ProcessWizardWindow(QMainWindow):
             wizard = TransformWizard(channel, self)
             wizard.data_updated.connect(self._handle_channel_data_updated)
             wizard.exec()
-            self.console_output.append(f"🔨 Transformed data: {channel.ylabel}")
+
 
     def _delete_channel(self, channel_id: str):
         """Delete a channel with confirmation"""
@@ -1344,7 +1369,7 @@ class ProcessWizardWindow(QMainWindow):
                 self.channel_manager.remove_channel(channel_id)
                 self._update_step_table()
                 self._update_plot()
-                self.console_output.append(f"🗑️ Deleted channel: {channel.ylabel}")
+
 
     def _handle_channel_data_updated(self, channel_id: str):
         """Handle when channel data is updated via inspection/transform wizards"""
@@ -1359,40 +1384,26 @@ class ProcessWizardWindow(QMainWindow):
             self.spectrogram_canvas.draw()
             self.bar_chart_canvas.draw()
             
-            self.console_output.append(f"📊 Updated channel data: {channel.ylabel}")
+
 
 
 
     def _update_input_channel_combobox(self):
         """Update the input channel combobox with all channels in the steps table."""
-        print(f"[ProcessWizard] Updating input channel combobox...")
-        
-        # Debug: Check what input_ch is currently set to
-        if hasattr(self, 'input_ch') and self.input_ch:
-            print(f"[ProcessWizard] input_ch is currently: {self.input_ch.channel_id} - {self.input_ch.legend_label or self.input_ch.ylabel}")
-        else:
-            print(f"[ProcessWizard] input_ch is not set")
         
         if not hasattr(self, '_cached_lineage') or not self._cached_lineage:
-            print(f"[ProcessWizard] No cached lineage available")
             self.input_channel_combobox.clear()
             self.input_channel_combobox.addItem("No channels available")
             return
-            
-        print(f"[ProcessWizard] Cached lineage has {len(self._cached_lineage)} channels")
-        for i, ch in enumerate(self._cached_lineage):
-            print(f"[ProcessWizard]   {i}: {ch.channel_id} - {ch.legend_label or ch.ylabel} (step {ch.step})")
             
         # Priority 1: Use the explicitly set input_ch (most recently created/selected channel)
         target_channel_id = None
         if hasattr(self, 'input_ch') and self.input_ch:
             target_channel_id = self.input_ch.channel_id
-            print(f"[ProcessWizard] Using input_ch: {target_channel_id}")
         
         # Priority 2: Use current combobox selection if input_ch is not set
         if not target_channel_id and self.input_channel_combobox.currentIndex() >= 0 and self.input_channel_combobox.currentIndex() < len(self._cached_lineage):
             target_channel_id = self._cached_lineage[self.input_channel_combobox.currentIndex()].channel_id
-            print(f"[ProcessWizard] Using current combobox selection: {target_channel_id}")
         
         # Clear and populate combobox with channel names
         self.input_channel_combobox.clear()
@@ -1408,11 +1419,7 @@ class ProcessWizardWindow(QMainWindow):
                     self.input_channel_combobox.setCurrentIndex(i)
                     self.input_ch = channel
                     selection_made = True
-                    print(f"[ProcessWizard] Successfully selected channel {i}: {channel.legend_label or channel.ylabel}")
                     break
-            
-            if not selection_made:
-                print(f"[ProcessWizard] WARNING: Target channel {target_channel_id} not found in cached lineage!")
         
         # Fallback: Select the most recent channel (highest step number)
         if not selection_made and len(self._cached_lineage) > 0:
@@ -1422,7 +1429,6 @@ class ProcessWizardWindow(QMainWindow):
                 if channel.channel_id == most_recent_channel.channel_id:
                     self.input_channel_combobox.setCurrentIndex(i)
                     self.input_ch = channel
-                    print(f"[ProcessWizard] Auto-selected most recent channel {i}: {channel.legend_label or channel.ylabel} (step {channel.step})")
                     break
 
     def _on_input_channel_changed(self, index):
@@ -1440,8 +1446,23 @@ class ProcessWizardWindow(QMainWindow):
         """Handle when the wizard window is shown."""
         super().showEvent(event)
 
+    def _set_default_filter_selection(self):
+        """Set default selection to "resample" filter."""
+        # Find "resample" in the filter list
+        for i in range(self.filter_list.count()):
+            if self.filter_list.item(i).text() == "resample":
+                self.filter_list.setCurrentRow(i)
+                # Trigger the filter selection to populate parameters
+                self.wizard_manager._on_filter_selected(self.filter_list.item(i))
+                break
+    
+    def closeEvent(self, event):
+        """Handle window close event"""
+        self.wizard_closed.emit()
+        event.accept()
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    window = ProcessWizardWindow(FileManager(), ChannelManager())
+    window = ProcessWizardWindow(FileManager(), ChannelManager(), default_file_id=None)
     window.show()
     sys.exit(app.exec())

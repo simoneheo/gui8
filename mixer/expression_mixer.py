@@ -15,7 +15,7 @@ class ExpressionMixer(BaseMixer):
     name = "expression"
     category = "advanced"
     description = "Evaluates complex mathematical expressions with multiple channels and constants."
-    tags = ["composed", "expression", "advanced"]
+    tags = ["mixed", "expression", "advanced"]
     params = [
         {"name": "expression", "type": "str", "default": "A + B", "help": "Mathematical expression (e.g., A+B-3*D/5)"},
         {"name": "label", "type": "str", "default": "C", "help": "Output channel label"}

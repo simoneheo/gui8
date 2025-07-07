@@ -14,7 +14,7 @@ from functools import cached_property, lru_cache
 class SourceType(Enum):
     RAW = "raw"
     PROCESSED = "processed"
-    COMPOSED = "composed"
+    MIXED = "mixed"
     SPECTROGRAM = "spectrogram"
     STATISTICAL = "statistical"
 

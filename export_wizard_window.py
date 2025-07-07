@@ -137,24 +137,7 @@ class ExportWizardWindow(QMainWindow):
         self.channel_info_label.setStyleSheet("color: #666; font-style: italic;")
         layout.addWidget(self.channel_info_label)
         
-        # Export format info
-        info_text = QLabel(
-            "• Regular channels: Export X and Y data columns\n"
-            "• Spectrogram channels: Export Time, Frequency, and Power columns\n"
-            "  (Each row represents one time-frequency point)"
-        )
-        info_text.setStyleSheet("""
-            QLabel {
-                background-color: #f0f8ff;
-                border: 1px solid #cce7ff;
-                border-radius: 5px;
-                padding: 8px;
-                font-size: 10px;
-                color: #0066cc;
-            }
-        """)
-        info_text.setWordWrap(True)
-        layout.addWidget(info_text)
+
         
         # Scroll area for channel checkboxes
         scroll_area = QScrollArea()

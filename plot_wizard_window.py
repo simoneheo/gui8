@@ -36,6 +36,29 @@ class PlotWizardWindow(QMainWindow):
         self.file_dropdown = QComboBox()
         self.channel_dropdown = QComboBox()
         self.add_btn = QPushButton("Add to Plot")
+        self.add_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #228B22;
+                color: white;
+                border: 2px solid #1E7B1E;
+                border-radius: 6px;
+                padding: 8px 16px;
+                font-weight: bold;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: #32CD32;
+                border-color: #228B22;
+            }
+            QPushButton:pressed {
+                background-color: #1E7B1E;
+            }
+            QPushButton:disabled {
+                background-color: #9E9E9E;
+                color: #666666;
+                border-color: #CCCCCC;
+            }
+        """)
 
         selector_layout.addWidget(QLabel("File:"))
         selector_layout.addWidget(self.file_dropdown)
