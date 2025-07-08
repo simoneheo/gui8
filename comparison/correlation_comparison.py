@@ -42,25 +42,11 @@ class CorrelationComparison(BaseComparison):
             'description': 'Correlation Type',
             'tooltip': 'Pearson: Linear relationships\nSpearman: Monotonic relationships\nAll: Compute both types'
         },
-        'confidence_level': {
-            'type': float,
-            'default': 0.95,
-            'min': 0.8,
-            'max': 0.999,
-            'description': 'Confidence Level',
-            'tooltip': 'Confidence level for statistical tests and confidence intervals'
-        },
         'include_rmse': {
             'type': bool,
             'default': True,
             'description': 'Include RMSE',
             'tooltip': 'Calculate Root Mean Square Error along with correlation'
-        },
-        'remove_outliers': {
-            'type': bool,
-            'default': False,
-            'description': 'Remove Outliers',
-            'tooltip': 'Automatically detect and remove outliers before analysis'
         },
         'outlier_method': {
             'type': str,
@@ -83,6 +69,10 @@ class CorrelationComparison(BaseComparison):
             'tooltip': 'None: No detrending\nLinear: Remove linear trends\nPolynomial: Remove polynomial trends (degree 2)'
         }
     }
+    
+    # Display-related options are now handled in overlay section:
+    # - confidence_level: Always computed at 0.95, display controlled by overlay
+    # - remove_outliers: Outliers always computed, display controlled by overlay
     
     output_types = ["correlation_statistics", "rmse_metrics", "plot_data"]
     plot_type = "pearson"

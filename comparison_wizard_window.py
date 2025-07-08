@@ -438,118 +438,113 @@ class ComparisonWizardWindow(QMainWindow):
         return control
         
     def _create_correlation_controls(self):
-        """Create controls for correlation analysis"""
+        """Create controls for correlation analysis - computational parameters only"""
         widget = QWidget()
         layout = QFormLayout(widget)
         
-        # Correlation type
+        # Correlation type (computational parameter)
         self.corr_type_combo = QComboBox()
         self.corr_type_combo.addItems(["pearson", "spearman", "kendall", "all"])
         layout.addRow("Correlation Type:", self.corr_type_combo)
         
-        # Bootstrap samples (method-specific)
+        # Bootstrap samples (computational parameter)
         self.bootstrap_spin = QSpinBox()
         self.bootstrap_spin.setRange(100, 10000)
         self.bootstrap_spin.setValue(1000)
         layout.addRow("Bootstrap Samples:", self.bootstrap_spin)
         
-        # Remove outliers option
-        self.remove_outliers_checkbox = QCheckBox()
-        self.remove_outliers_checkbox.setChecked(False)
-        layout.addRow("Remove Outliers:", self.remove_outliers_checkbox)
-        
-        # Detrend method
+        # Detrend method (computational parameter)
         self.detrend_combo = QComboBox()
         self.detrend_combo.addItems(["none", "linear", "polynomial"])
         layout.addRow("Detrend Method:", self.detrend_combo)
         
-        # Note: confidence_level and compute_confidence_intervals moved to overlay section
+        # Note: removed remove_outliers_checkbox - outlier detection is now display-only in overlay section
         
         self.method_controls_stack.addWidget(widget)
         
     def _create_bland_altman_controls(self):
-        """Create controls for Bland-Altman analysis"""
+        """Create controls for Bland-Altman analysis - computational parameters only"""
         widget = QWidget()
         layout = QFormLayout(widget)
         
-        # Agreement limits (keep this as it's method-specific, not overlay)
+        # Agreement limits (computational parameter for calculating limits)
         self.agreement_spin = QDoubleSpinBox()
         self.agreement_spin.setRange(1.0, 3.0)
         self.agreement_spin.setValue(1.96)
         self.agreement_spin.setDecimals(2)
         layout.addRow("Agreement Multiplier:", self.agreement_spin)
         
-        # Percentage difference option
+        # Percentage difference option (computational parameter)
         self.percentage_diff_checkbox = QCheckBox()
         self.percentage_diff_checkbox.setChecked(False)
         layout.addRow("Percentage Differences:", self.percentage_diff_checkbox)
         
-        # Log transform option
+        # Log transform option (computational parameter)
         self.log_transform_checkbox = QCheckBox()
         self.log_transform_checkbox.setChecked(False)
         layout.addRow("Log Transform:", self.log_transform_checkbox)
         
-        # Proportional bias test
+        # Proportional bias test (computational parameter)
         self.prop_bias_checkbox = QCheckBox()
         self.prop_bias_checkbox.setChecked(True)
         layout.addRow("Test Proportional Bias:", self.prop_bias_checkbox)
         
-        # Note: show_ci moved to overlay section
+        # Note: All display options (bias line, limits of agreement, etc.) moved to overlay section
         
         self.method_controls_stack.addWidget(widget)
         
     def _create_residual_controls(self):
-        """Create controls for residual analysis"""
+        """Create controls for residual analysis - computational parameters only"""
         widget = QWidget()
         layout = QFormLayout(widget)
         
-        # Residual type
+        # Residual type (computational parameter)
         self.residual_type_combo = QComboBox()
         self.residual_type_combo.addItems(["absolute", "relative", "standardized", "studentized"])
         layout.addRow("Residual Type:", self.residual_type_combo)
         
-        # Normality test
+        # Normality test (computational parameter)
         self.normality_combo = QComboBox()
         self.normality_combo.addItems(["shapiro", "kstest", "jarque_bera", "anderson", "all"])
         layout.addRow("Normality Test:", self.normality_combo)
         
-        # Trend analysis
+        # Trend analysis (computational parameter)
         self.trend_analysis_checkbox = QCheckBox()
         self.trend_analysis_checkbox.setChecked(True)
         layout.addRow("Trend Analysis:", self.trend_analysis_checkbox)
         
-        # Autocorrelation test
+        # Autocorrelation test (computational parameter)
         self.autocorr_checkbox = QCheckBox()
         self.autocorr_checkbox.setChecked(True)
         layout.addRow("Autocorrelation Test:", self.autocorr_checkbox)
         
-        # Note: outlier_detection moved to overlay section
+        # Note: All display options (outliers, trend lines, statistics) moved to overlay section
         
         self.method_controls_stack.addWidget(widget)
         
     def _create_statistical_controls(self):
-        """Create controls for statistical tests"""
+        """Create controls for statistical tests - computational parameters only"""
         widget = QWidget()
         layout = QFormLayout(widget)
         
-        # Alpha level (significance level)
+        # Alpha level (significance level) - computational parameter
         self.alpha_spin = QDoubleSpinBox()
         self.alpha_spin.setRange(0.001, 0.1)
         self.alpha_spin.setValue(0.05)
         self.alpha_spin.setDecimals(3)
         layout.addRow("Significance Level (α):", self.alpha_spin)
         
-        # Test suite
+        # Test suite (computational parameter)
         self.test_suite_combo = QComboBox()
         self.test_suite_combo.addItems(["basic", "comprehensive", "nonparametric", "robust"])
         layout.addRow("Test Suite:", self.test_suite_combo)
         
-        # Equal variance assumption
+        # Equal variance assumption (computational parameter)
         self.equal_var_combo = QComboBox()
         self.equal_var_combo.addItems(["assume_equal", "assume_unequal", "test"])
         layout.addRow("Equal Variance:", self.equal_var_combo)
         
-        # Normality assumption
+        # Normality assumption (computational parameter)
         self.normality_assume_combo = QComboBox()
         self.normality_assume_combo.addItems(["assume_normal", "assume_nonnormal", "test"])
         layout.addRow("Normality:", self.normality_assume_combo)
@@ -1250,9 +1245,10 @@ class ComparisonWizardWindow(QMainWindow):
     def _connect_overlay_signals(self):
         """Connect overlay option signals to plot update"""
         overlay_widgets = [
-            'y_equals_x_checkbox', 'ci_checkbox', 'outlier_checkbox',
-            'bias_line_checkbox', 'loa_checkbox', 'regression_line_checkbox',
-            'error_bands_checkbox', 'confidence_bands_checkbox', 'custom_line_checkbox'
+            'y_equals_x_checkbox', 'ci_checkbox', 'confidence_bands_checkbox', 'outlier_checkbox',
+            'bias_line_checkbox', 'loa_checkbox', 'regression_line_checkbox', 'trend_line_checkbox',
+            'error_bands_checkbox', 'residual_stats_checkbox', 'density_overlay_checkbox',
+            'histogram_overlay_checkbox', 'stats_results_checkbox', 'custom_line_checkbox'
         ]
         
         for widget_name in overlay_widgets:
@@ -1437,9 +1433,10 @@ class ComparisonWizardWindow(QMainWindow):
             
             # Reset all to unchecked first
             overlay_checkboxes = [
-                'y_equals_x_checkbox', 'ci_checkbox', 'outlier_checkbox',
-                'bias_line_checkbox', 'loa_checkbox', 'regression_line_checkbox',
-                'error_bands_checkbox', 'confidence_bands_checkbox', 'custom_line_checkbox'
+                'y_equals_x_checkbox', 'ci_checkbox', 'confidence_bands_checkbox', 'outlier_checkbox',
+                'bias_line_checkbox', 'loa_checkbox', 'regression_line_checkbox', 'trend_line_checkbox',
+                'error_bands_checkbox', 'residual_stats_checkbox', 'density_overlay_checkbox',
+                'histogram_overlay_checkbox', 'stats_results_checkbox', 'custom_line_checkbox'
             ]
             
             for checkbox_name in overlay_checkboxes:
@@ -1488,6 +1485,7 @@ class ComparisonWizardWindow(QMainWindow):
             self.overlay_widgets['bias_line'].show()
             self.overlay_widgets['loa'].show()
             self.overlay_widgets['outlier'].show()
+            self.overlay_widgets['stats_results'].show()
             self.overlay_widgets['custom_line'].show()
             
         elif method_name == "Correlation Analysis":
@@ -1495,74 +1493,105 @@ class ComparisonWizardWindow(QMainWindow):
             self.overlay_widgets['ci'].show()
             self.overlay_widgets['regression_line'].show()
             self.overlay_widgets['outlier'].show()
+            self.overlay_widgets['density_overlay'].show()
+            self.overlay_widgets['stats_results'].show()
             self.overlay_widgets['custom_line'].show()
             
         elif method_name == "Residual Analysis":
             self.overlay_widgets['outlier'].show()
             self.overlay_widgets['ci'].show()
+            self.overlay_widgets['trend_line'].show()
+            self.overlay_widgets['residual_stats'].show()
+            self.overlay_widgets['histogram_overlay'].show()
+            self.overlay_widgets['stats_results'].show()
             self.overlay_widgets['custom_line'].show()
             
         elif method_name == "Statistical Tests":
             self.overlay_widgets['ci'].show()
             self.overlay_widgets['outlier'].show()
             self.overlay_widgets['y_equals_x'].show()
+            self.overlay_widgets['stats_results'].show()
             self.overlay_widgets['custom_line'].show()
             
         elif method_name == "Cross-Correlation":
             self.overlay_widgets['confidence_bands'].show()
+            self.overlay_widgets['trend_line'].show()
+            self.overlay_widgets['stats_results'].show()
             self.overlay_widgets['custom_line'].show()
             
         # Default case - show basic overlays
         else:
             self.overlay_widgets['y_equals_x'].show()
             self.overlay_widgets['ci'].show()
+            self.overlay_widgets['outlier'].show()
+            self.overlay_widgets['stats_results'].show()
             self.overlay_widgets['custom_line'].show()
 
     def _create_overlay_options(self, layout):
-        """Create overlay options group"""
+        """Create comprehensive overlay options group - only display-related toggles"""
         self.overlay_group = QGroupBox("Overlay Options")
         self.overlay_group.setStyleSheet("QGroupBox { font-weight: bold; }")
         self.overlay_layout = QVBoxLayout(self.overlay_group)
 
-        # y = x line toggle (for scatter-type plots)
+        # Identity/reference lines
         self.y_equals_x_checkbox = QCheckBox("Show y = x Line")
-        self.y_equals_x_checkbox.setToolTip("Toggle y = x line overlay for perfect agreement reference")
+        self.y_equals_x_checkbox.setToolTip("Show identity line for perfect agreement reference")
         self.overlay_layout.addWidget(self.y_equals_x_checkbox)
 
-        # Confidence interval (for multiple methods)
-        self.ci_checkbox = QCheckBox("Confidence Interval (95%)")
-        self.ci_checkbox.setToolTip("Show 95% confidence interval")
+        # Confidence intervals and bands
+        self.ci_checkbox = QCheckBox("Show Confidence Intervals")
+        self.ci_checkbox.setToolTip("Show confidence intervals around statistics")
         self.overlay_layout.addWidget(self.ci_checkbox)
 
-        # Outlier highlight (for residual and statistical methods)
+        self.confidence_bands_checkbox = QCheckBox("Show Confidence Bands")
+        self.confidence_bands_checkbox.setToolTip("Show confidence bands (for cross-correlation and time series)")
+        self.overlay_layout.addWidget(self.confidence_bands_checkbox)
+
+        # Outlier detection and highlighting
         self.outlier_checkbox = QCheckBox("Highlight Outliers")
-        self.outlier_checkbox.setToolTip("Identify and highlight statistical outliers")
+        self.outlier_checkbox.setToolTip("Identify and highlight statistical outliers on the plot")
         self.overlay_layout.addWidget(self.outlier_checkbox)
 
-        # Bias line (for Bland-Altman)
+        # Bland-Altman specific overlays
         self.bias_line_checkbox = QCheckBox("Show Bias Line")
-        self.bias_line_checkbox.setToolTip("Show mean bias line (Bland-Altman)")
+        self.bias_line_checkbox.setToolTip("Show mean bias line (horizontal line at mean difference)")
         self.overlay_layout.addWidget(self.bias_line_checkbox)
 
-        # Limits of Agreement (for Bland-Altman)
         self.loa_checkbox = QCheckBox("Show Limits of Agreement")
-        self.loa_checkbox.setToolTip("Show upper and lower limits of agreement (±1.96×SD)")
+        self.loa_checkbox.setToolTip("Show limits of agreement (±1.96×SD of differences)")
         self.overlay_layout.addWidget(self.loa_checkbox)
 
-        # Regression line (for correlation/scatter plots)
+        # Regression and trend lines
         self.regression_line_checkbox = QCheckBox("Show Regression Line")
-        self.regression_line_checkbox.setToolTip("Show linear regression line")
+        self.regression_line_checkbox.setToolTip("Show linear regression line (best fit)")
         self.overlay_layout.addWidget(self.regression_line_checkbox)
 
-        # Error bands (for RMSE and error analysis)
+        self.trend_line_checkbox = QCheckBox("Show Trend Line")
+        self.trend_line_checkbox.setToolTip("Show trend line for time series or residual patterns")
+        self.overlay_layout.addWidget(self.trend_line_checkbox)
+
+        # Error analysis overlays
         self.error_bands_checkbox = QCheckBox("Show Error Bands")
         self.error_bands_checkbox.setToolTip("Show ±RMSE error bands around identity line")
         self.overlay_layout.addWidget(self.error_bands_checkbox)
 
-        # Confidence bands (for cross-correlation)
-        self.confidence_bands_checkbox = QCheckBox("Show Confidence Bands")
-        self.confidence_bands_checkbox.setToolTip("Show confidence bands for cross-correlation")
-        self.overlay_layout.addWidget(self.confidence_bands_checkbox)
+        self.residual_stats_checkbox = QCheckBox("Show Residual Statistics")
+        self.residual_stats_checkbox.setToolTip("Display residual statistics on the plot")
+        self.overlay_layout.addWidget(self.residual_stats_checkbox)
+
+        # Distribution overlays
+        self.density_overlay_checkbox = QCheckBox("Show Density Overlay")
+        self.density_overlay_checkbox.setToolTip("Show kernel density estimation overlay")
+        self.overlay_layout.addWidget(self.density_overlay_checkbox)
+
+        self.histogram_overlay_checkbox = QCheckBox("Show Histogram Overlay")
+        self.histogram_overlay_checkbox.setToolTip("Show histogram overlay for distributions")
+        self.overlay_layout.addWidget(self.histogram_overlay_checkbox)
+
+        # Statistical test results
+        self.stats_results_checkbox = QCheckBox("Show Statistical Results")
+        self.stats_results_checkbox.setToolTip("Display statistical test results on the plot")
+        self.overlay_layout.addWidget(self.stats_results_checkbox)
 
         # Custom line option (general purpose)
         self.custom_line_widget = QWidget()
@@ -1582,12 +1611,17 @@ class ComparisonWizardWindow(QMainWindow):
         self.overlay_widgets = {
             'y_equals_x': self.y_equals_x_checkbox,
             'ci': self.ci_checkbox,
+            'confidence_bands': self.confidence_bands_checkbox,
             'outlier': self.outlier_checkbox,
             'bias_line': self.bias_line_checkbox,
             'loa': self.loa_checkbox,
             'regression_line': self.regression_line_checkbox,
+            'trend_line': self.trend_line_checkbox,
             'error_bands': self.error_bands_checkbox,
-            'confidence_bands': self.confidence_bands_checkbox,
+            'residual_stats': self.residual_stats_checkbox,
+            'density_overlay': self.density_overlay_checkbox,
+            'histogram_overlay': self.histogram_overlay_checkbox,
+            'stats_results': self.stats_results_checkbox,
             'custom_line': self.custom_line_widget
         }
 
@@ -2301,6 +2335,9 @@ class ComparisonWizardWindow(QMainWindow):
                 overlay_params['confidence_interval'] = self.ci_checkbox.isChecked()  # Match expected name
                 overlay_params['confidence_level'] = 0.95  # Default confidence level
                 
+            if hasattr(self, 'confidence_bands_checkbox') and self.confidence_bands_checkbox.isVisible():
+                overlay_params['show_confidence_bands'] = self.confidence_bands_checkbox.isChecked()
+                
             if hasattr(self, 'outlier_checkbox') and self.outlier_checkbox.isVisible():
                 overlay_params['highlight_outliers'] = self.outlier_checkbox.isChecked()
                 
@@ -2313,11 +2350,23 @@ class ComparisonWizardWindow(QMainWindow):
             if hasattr(self, 'regression_line_checkbox') and self.regression_line_checkbox.isVisible():
                 overlay_params['show_regression_line'] = self.regression_line_checkbox.isChecked()
                 
+            if hasattr(self, 'trend_line_checkbox') and self.trend_line_checkbox.isVisible():
+                overlay_params['show_trend_line'] = self.trend_line_checkbox.isChecked()
+                
             if hasattr(self, 'error_bands_checkbox') and self.error_bands_checkbox.isVisible():
                 overlay_params['show_error_bands'] = self.error_bands_checkbox.isChecked()
                 
-            if hasattr(self, 'confidence_bands_checkbox') and self.confidence_bands_checkbox.isVisible():
-                overlay_params['show_confidence_bands'] = self.confidence_bands_checkbox.isChecked()
+            if hasattr(self, 'residual_stats_checkbox') and self.residual_stats_checkbox.isVisible():
+                overlay_params['show_residual_statistics'] = self.residual_stats_checkbox.isChecked()
+                
+            if hasattr(self, 'density_overlay_checkbox') and self.density_overlay_checkbox.isVisible():
+                overlay_params['show_density_overlay'] = self.density_overlay_checkbox.isChecked()
+                
+            if hasattr(self, 'histogram_overlay_checkbox') and self.histogram_overlay_checkbox.isVisible():
+                overlay_params['show_histogram_overlay'] = self.histogram_overlay_checkbox.isChecked()
+                
+            if hasattr(self, 'stats_results_checkbox') and self.stats_results_checkbox.isVisible():
+                overlay_params['show_statistical_results'] = self.stats_results_checkbox.isChecked()
                 
             if hasattr(self, 'custom_line_checkbox') and self.custom_line_checkbox.isVisible() and self.custom_line_checkbox.isChecked():
                 try:

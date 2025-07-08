@@ -11,8 +11,8 @@ class welch_spectrogram(BaseStep):
     category = "Spectrogram"
     description = """Computes a sliding Welch Power Spectral Density (PSD) over time windows.
 Returns:
-1. A 2D spectrogram channel (tag='spectrogram') showing frequency content evolution over time.
-2. A 1D time-series channel (tag='time-series') based on reduction method."""
+1. A 2D spectrogram channel showing frequency content evolution over time.
+2. A 1D time-series channel based on reduction method."""
     tags = ["spectrogram"]
     params = [
         {"name": "window_duration", "type": "float", "default": "2.0", "help": "Duration of each Welch window in seconds"},

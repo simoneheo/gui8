@@ -12,8 +12,8 @@ class stft_spectrogram(BaseStep):
     name = "stft_spectrogram"
     category = "Spectrogram"
     description = """Computes a spectrogram using Short-Time Fourier Transform (STFT) and outputs both:
-1. A 2D spectrogram channel (tag='spectrogram') for visualizing frequency over time.
-2. A 1D time-series channel (tag='time-series') summarizing the spectrogram using a reduction method.
+1. A 2D spectrogram channel for visualizing frequency over time.
+2. A 1D time-series channel summarizing the spectrogram using a reduction method.
 
 Reduction methods:
 - max_intensity: Maximum power in each time slice.

@@ -132,14 +132,20 @@ class ComparisonWizardManager(QObject):
         """Initialize comparison methods from the comparison folder"""
         try:
             if COMPARISON_AVAILABLE:
-                # Initialize the comparison registry
-                ComparisonRegistry.initialize()
+                # Set the comparison registry reference without reinitializing
                 self.comparison_registry = ComparisonRegistry
+                
+                # Check if already initialized (from import)
+                if self.comparison_registry._initialized:
+                    print("[ComparisonWizardManager] Comparison registry already initialized")
+                else:
+                    # Initialize the comparison registry if not already done
+                    ComparisonRegistry.initialize()
                 
                 # Log loaded methods
                 methods = self.comparison_registry.get_all_methods()
                 categories = self.comparison_registry.get_all_categories()
-                print(f"[ComparisonWizardManager] Loaded {len(methods)} comparison methods in {len(categories)} categories")
+                print(f"[ComparisonWizardManager] Using {len(methods)} comparison methods in {len(categories)} categories")
                 for category in categories:
                     category_methods = self.comparison_registry.get_methods_by_category(category)
                     print(f"  {category}: {', '.join(category_methods)}")
@@ -149,6 +155,8 @@ class ComparisonWizardManager(QObject):
                 self._log_state_change("Comparison methods not available - using basic calculations only")
         except Exception as e:
             print(f"[ComparisonWizardManager] Warning: Could not load comparison methods: {e}")
+            import traceback
+            traceback.print_exc()
             self._log_state_change("Failed to load comparison methods - using fallback")
     
     def get_available_comparison_methods(self):
@@ -1045,81 +1053,139 @@ class ComparisonWizardManager(QObject):
             ax.plot([min_val, max_val], [min_val, max_val], 'k--', alpha=0.8, 
                    linewidth=2, label='1:1 line')
         
+        # Add regression line if requested
+        show_regression_line = plot_config.get('show_regression_line', False)
+        if show_regression_line:
+            try:
+                slope, intercept, r_value, p_value, std_err = scipy_stats.linregress(all_ref_data, all_test_data)
+                if not np.isnan(slope) and not np.isnan(intercept):
+                    x_line = np.array([np.min(all_ref_data), np.max(all_ref_data)])
+                    y_line = slope * x_line + intercept
+                    ax.plot(x_line, y_line, 'r-', linewidth=2, alpha=0.8,
+                           label=f'Regression: y = {slope:.3f}x + {intercept:.3f}')
+            except Exception as reg_error:
+                print(f"[ComparisonWizard] Error calculating regression line: {reg_error}")
+        
+        # Add confidence bands if requested
+        show_confidence_bands = plot_config.get('show_confidence_bands', False)
+        if show_confidence_bands:
+            try:
+                # Calculate confidence intervals for the regression line
+                slope, intercept, r_value, p_value, std_err = scipy_stats.linregress(all_ref_data, all_test_data)
+                if not np.isnan(slope) and not np.isnan(intercept):
+                    n = len(all_ref_data)
+                    confidence_level = plot_config.get('confidence_level', 0.95)
+                    alpha = 1 - confidence_level
+                    t_critical = scipy_stats.t.ppf(1 - alpha/2, n-2)
+                    
+                    # Calculate residuals and standard error
+                    y_pred = slope * all_ref_data + intercept
+                    residuals = all_test_data - y_pred
+                    mse = np.sum(residuals**2) / (n - 2)
+                    
+                    # Create confidence bands
+                    x_line = np.linspace(np.min(all_ref_data), np.max(all_ref_data), 100)
+                    y_line = slope * x_line + intercept
+                    
+                    # Standard error of prediction
+                    x_mean = np.mean(all_ref_data)
+                    sxx = np.sum((all_ref_data - x_mean)**2)
+                    se_pred = np.sqrt(mse * (1/n + (x_line - x_mean)**2 / sxx))
+                    
+                    # Confidence bands
+                    y_upper = y_line + t_critical * se_pred
+                    y_lower = y_line - t_critical * se_pred
+                    
+                    ax.fill_between(x_line, y_lower, y_upper, alpha=0.2, color='gray',
+                                   label=f'{confidence_level*100:.0f}% Confidence')
+            except Exception as conf_error:
+                print(f"[ComparisonWizard] Error calculating confidence bands: {conf_error}")
+        
+        # Highlight outliers if requested
+        highlight_outliers = plot_config.get('highlight_outliers', False)
+        if highlight_outliers:
+            try:
+                # Use residuals from regression line for outlier detection
+                slope, intercept, r_value, p_value, std_err = scipy_stats.linregress(all_ref_data, all_test_data)
+                if not np.isnan(slope) and not np.isnan(intercept):
+                    y_pred = slope * all_ref_data + intercept
+                    residuals = all_test_data - y_pred
+                    
+                    # Use z-score method for outlier detection
+                    z_scores = np.abs((residuals - np.mean(residuals)) / np.std(residuals))
+                    outlier_mask = z_scores > 3
+                    
+                    if np.any(outlier_mask):
+                        ax.scatter(all_ref_data[outlier_mask], all_test_data[outlier_mask], 
+                                 color='red', s=60, alpha=0.8, marker='x', linewidth=2,
+                                 label=f'Outliers ({np.sum(outlier_mask)})')
+            except Exception as outlier_error:
+                print(f"[ComparisonWizard] Error highlighting outliers: {outlier_error}")
+        
         # Calculate correlation statistics based on selected type
         correlation_type = plot_config.get('correlation_type', 'pearson')
         confidence_level = plot_config.get('confidence_level', 0.95)
         
-        try:
-            if correlation_type == 'pearson' or correlation_type == 'all':
-                r_value, p_value = scipy_stats.pearsonr(all_ref_data, all_test_data)
-                r2_value = r_value ** 2
-                
-                # Add correlation text box
-                stats_text = f'Pearson r = {r_value:.4f}\nR² = {r2_value:.4f}\np = {p_value:.2e}' if not np.isnan(p_value) else f'Pearson r = {r_value:.4f}\nR² = {r2_value:.4f}'
-                
-                # Add confidence interval if available
-                if not np.isnan(p_value) and len(all_ref_data) > 3:
-                    n = len(all_ref_data)
-                    # Fisher z-transformation for confidence interval
-                    z_r = 0.5 * np.log((1 + r_value) / (1 - r_value))
-                    se_z = 1 / np.sqrt(n - 3)
-                    alpha = 1 - confidence_level
-                    z_critical = scipy_stats.norm.ppf(1 - alpha/2)
+        # Show statistical results only if requested
+        show_stats_results = plot_config.get('show_statistical_results', True)  # Default True for backward compatibility
+        if show_stats_results:
+            try:
+                if correlation_type == 'pearson' or correlation_type == 'all':
+                    r_value, p_value = scipy_stats.pearsonr(all_ref_data, all_test_data)
+                    r2_value = r_value ** 2
                     
-                    z_lower = z_r - z_critical * se_z
-                    z_upper = z_r + z_critical * se_z
+                    # Add correlation text box
+                    stats_text = f'Pearson r = {r_value:.4f}\nR² = {r2_value:.4f}\np = {p_value:.2e}' if not np.isnan(p_value) else f'Pearson r = {r_value:.4f}\nR² = {r2_value:.4f}'
                     
-                    # Transform back to correlation scale
-                    r_lower = (np.exp(2 * z_lower) - 1) / (np.exp(2 * z_lower) + 1)
-                    r_upper = (np.exp(2 * z_upper) - 1) / (np.exp(2 * z_upper) + 1)
+                    # Add confidence interval if available
+                    if not np.isnan(p_value) and len(all_ref_data) > 3:
+                        n = len(all_ref_data)
+                        # Fisher z-transformation for confidence interval
+                        z_r = 0.5 * np.log((1 + r_value) / (1 - r_value))
+                        se_z = 1 / np.sqrt(n - 3)
+                        alpha = 1 - confidence_level
+                        z_critical = scipy_stats.norm.ppf(1 - alpha/2)
+                        
+                        z_lower = z_r - z_critical * se_z
+                        z_upper = z_r + z_critical * se_z
+                        
+                        # Transform back to correlation scale
+                        r_lower = (np.exp(2 * z_lower) - 1) / (np.exp(2 * z_lower) + 1)
+                        r_upper = (np.exp(2 * z_upper) - 1) / (np.exp(2 * z_upper) + 1)
+                        
+                        stats_text += f'\n{confidence_level*100:.0f}% CI: [{r_lower:.3f}, {r_upper:.3f}]'
                     
-                    stats_text += f'\n{confidence_level*100:.0f}% CI: [{r_lower:.3f}, {r_upper:.3f}]'
+                    # Add additional correlation types if requested
+                    if correlation_type == 'all':
+                        try:
+                            spearman_r, spearman_p = scipy_stats.spearmanr(all_ref_data, all_test_data)
+                            kendall_tau, kendall_p = scipy_stats.kendalltau(all_ref_data, all_test_data)
+                            stats_text += f'\nSpearman ρ = {spearman_r:.4f}\nKendall τ = {kendall_tau:.4f}'
+                        except:
+                            pass
+                    
+                elif correlation_type == 'spearman':
+                    r_value, p_value = scipy_stats.spearmanr(all_ref_data, all_test_data)
+                    stats_text = f'Spearman ρ = {r_value:.4f}\np = {p_value:.2e}' if not np.isnan(p_value) else f'Spearman ρ = {r_value:.4f}'
+                    
+                elif correlation_type == 'kendall':
+                    r_value, p_value = scipy_stats.kendalltau(all_ref_data, all_test_data)
+                    stats_text = f'Kendall τ = {r_value:.4f}\np = {p_value:.2e}' if not np.isnan(p_value) else f'Kendall τ = {r_value:.4f}'
                 
-                # Add additional correlation types if requested
-                if correlation_type == 'all':
-                    try:
-                        spearman_r, spearman_p = scipy_stats.spearmanr(all_ref_data, all_test_data)
-                        kendall_tau, kendall_p = scipy_stats.kendalltau(all_ref_data, all_test_data)
-                        stats_text += f'\nSpearman ρ = {spearman_r:.4f}\nKendall τ = {kendall_tau:.4f}'
-                    except:
-                        pass
-                
-            elif correlation_type == 'spearman':
-                r_value, p_value = scipy_stats.spearmanr(all_ref_data, all_test_data)
-                stats_text = f'Spearman ρ = {r_value:.4f}\np = {p_value:.2e}' if not np.isnan(p_value) else f'Spearman ρ = {r_value:.4f}'
-                
-            elif correlation_type == 'kendall':
-                r_value, p_value = scipy_stats.kendalltau(all_ref_data, all_test_data)
-                stats_text = f'Kendall τ = {r_value:.4f}\np = {p_value:.2e}' if not np.isnan(p_value) else f'Kendall τ = {r_value:.4f}'
-            
-            # Position text box in upper left or wherever there's space
-            ax.text(0.05, 0.95, stats_text, transform=ax.transAxes, 
-                   bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
-                   verticalalignment='top', fontsize=10)
-                   
-        except Exception as e:
-            print(f"[ComparisonWizard] Error calculating correlation: {e}")
-            ax.text(0.05, 0.95, 'Correlation: N/A', transform=ax.transAxes,
-                   bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
-                   verticalalignment='top')
-        
-        # Add best fit line for correlation analysis
-        try:
-            slope, intercept, r_val, p_val, std_err = scipy_stats.linregress(all_ref_data, all_test_data)
-            if not np.isnan(slope):
-                x_line = np.array([min_val, max_val])
-                y_line = slope * x_line + intercept
-                ax.plot(x_line, y_line, 'r-', linewidth=2, alpha=0.7,
-                       label=f'Best fit: y = {slope:.3f}x + {intercept:.3f}')
-        except Exception as e:
-            print(f"[ComparisonWizard] Error calculating best fit line: {e}")
+                # Position text box in upper left or wherever there's space
+                ax.text(0.05, 0.95, stats_text, transform=ax.transAxes, 
+                       bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
+                       verticalalignment='top', fontsize=10)
+            except Exception as stats_error:
+                print(f"[ComparisonWizard] Error calculating correlation statistics: {stats_error}")
         
         # Add custom line if specified
-        if plot_config.get('custom_line'):
+        custom_line_value = plot_config.get('custom_line')
+        if custom_line_value is not None:
             try:
-                custom_val = float(plot_config['custom_line'])
+                custom_val = float(custom_line_value)
                 ax.axhline(custom_val, color='green', linestyle=':', linewidth=2,
-                          label=f'y = {custom_val}')
+                          label=f'Custom: {custom_val}')
             except (ValueError, TypeError):
                 pass
         
@@ -1219,6 +1285,75 @@ class ComparisonWizardManager(QObject):
             ax.plot([min_val, max_val], [min_val, max_val], 'k--', alpha=0.8, 
                    linewidth=2, label='1:1 line')
         
+        # Add regression line if requested
+        show_regression_line = plot_config.get('show_regression_line', False)
+        if show_regression_line:
+            try:
+                slope, intercept, r_value, p_value, std_err = scipy_stats.linregress(all_ref_data, all_test_data)
+                if not np.isnan(slope) and not np.isnan(intercept):
+                    x_line = np.array([np.min(all_ref_data), np.max(all_ref_data)])
+                    y_line = slope * x_line + intercept
+                    ax.plot(x_line, y_line, 'r-', linewidth=2, alpha=0.8,
+                           label=f'Regression: y = {slope:.3f}x + {intercept:.3f}')
+            except Exception as reg_error:
+                print(f"[ComparisonWizard] Error calculating regression line: {reg_error}")
+        
+        # Add confidence bands if requested
+        show_confidence_bands = plot_config.get('show_confidence_bands', False)
+        if show_confidence_bands:
+            try:
+                # Calculate confidence intervals for the regression line
+                slope, intercept, r_value, p_value, std_err = scipy_stats.linregress(all_ref_data, all_test_data)
+                if not np.isnan(slope) and not np.isnan(intercept):
+                    n = len(all_ref_data)
+                    confidence_level = plot_config.get('confidence_level', 0.95)
+                    alpha = 1 - confidence_level
+                    t_critical = scipy_stats.t.ppf(1 - alpha/2, n-2)
+                    
+                    # Calculate residuals and standard error
+                    y_pred = slope * all_ref_data + intercept
+                    residuals = all_test_data - y_pred
+                    mse = np.sum(residuals**2) / (n - 2)
+                    
+                    # Create confidence bands
+                    x_line = np.linspace(np.min(all_ref_data), np.max(all_ref_data), 100)
+                    y_line = slope * x_line + intercept
+                    
+                    # Standard error of prediction
+                    x_mean = np.mean(all_ref_data)
+                    sxx = np.sum((all_ref_data - x_mean)**2)
+                    se_pred = np.sqrt(mse * (1/n + (x_line - x_mean)**2 / sxx))
+                    
+                    # Confidence bands
+                    y_upper = y_line + t_critical * se_pred
+                    y_lower = y_line - t_critical * se_pred
+                    
+                    ax.fill_between(x_line, y_lower, y_upper, alpha=0.2, color='gray',
+                                   label=f'{confidence_level*100:.0f}% Confidence')
+            except Exception as conf_error:
+                print(f"[ComparisonWizard] Error calculating confidence bands: {conf_error}")
+        
+        # Highlight outliers if requested
+        highlight_outliers = plot_config.get('highlight_outliers', False)
+        if highlight_outliers:
+            try:
+                # Use residuals from regression line for outlier detection
+                slope, intercept, r_value, p_value, std_err = scipy_stats.linregress(all_ref_data, all_test_data)
+                if not np.isnan(slope) and not np.isnan(intercept):
+                    y_pred = slope * all_ref_data + intercept
+                    residuals = all_test_data - y_pred
+                    
+                    # Use z-score method for outlier detection
+                    z_scores = np.abs((residuals - np.mean(residuals)) / np.std(residuals))
+                    outlier_mask = z_scores > 3
+                    
+                    if np.any(outlier_mask):
+                        ax.scatter(all_ref_data[outlier_mask], all_test_data[outlier_mask], 
+                                 color='red', s=60, alpha=0.8, marker='x', linewidth=2,
+                                 label=f'Outliers ({np.sum(outlier_mask)})')
+            except Exception as outlier_error:
+                print(f"[ComparisonWizard] Error highlighting outliers: {outlier_error}")
+        
         # Add custom line if specified
         custom_line_value = plot_config.get('custom_line')
         if custom_line_value is not None:
@@ -1249,92 +1384,129 @@ class ComparisonWizardManager(QObject):
         ax.axhline(0, color='red', linestyle='-', alpha=0.8, linewidth=2, 
                   label='Zero residual')
         
-        # Add residual statistics
+        # Add residual statistics only if requested
+        show_residual_stats = plot_config.get('show_residual_statistics', True)  # Default True for backward compatibility
+        
         try:
             mean_residual = np.mean(residuals)
             std_residual = np.std(residuals)
             rmse = np.sqrt(np.mean(residuals**2))
             
-            # Add mean residual line
+            # Add mean residual line only if requested
             if abs(mean_residual) > 0.001:  # Only show if significant
                 ax.axhline(mean_residual, color='blue', linestyle='--', alpha=0.7,
                           label=f'Mean residual: {mean_residual:.3f}')
             
-            # Add ±1 and ±2 standard deviation lines
-            ax.axhline(mean_residual + std_residual, color='orange', linestyle=':', alpha=0.6,
-                      label=f'±1 SD: {std_residual:.3f}')
-            ax.axhline(mean_residual - std_residual, color='orange', linestyle=':', alpha=0.6)
-            ax.axhline(mean_residual + 2*std_residual, color='red', linestyle=':', alpha=0.5,
-                      label=f'±2 SD: {2*std_residual:.3f}')
-            ax.axhline(mean_residual - 2*std_residual, color='red', linestyle=':', alpha=0.5)
+            # Add error bands (±1 and ±2 standard deviation lines) only if requested
+            show_error_bands = plot_config.get('show_error_bands', True)  # Default True for backward compatibility
+            if show_error_bands:
+                ax.axhline(mean_residual + std_residual, color='orange', linestyle=':', alpha=0.6,
+                          label=f'±1 SD: {std_residual:.3f}')
+                ax.axhline(mean_residual - std_residual, color='orange', linestyle=':', alpha=0.6)
+                ax.axhline(mean_residual + 2*std_residual, color='red', linestyle=':', alpha=0.5,
+                          label=f'±2 SD: {2*std_residual:.3f}')
+                ax.axhline(mean_residual - 2*std_residual, color='red', linestyle=':', alpha=0.5)
             
-            # Add statistics text box
-            stats_text = f'RMSE = {rmse:.4f}\nMean = {mean_residual:.4f}\nStd = {std_residual:.4f}'
-            
-            # Perform normality test if requested
-            normality_test = plot_config.get('normality_test', 'shapiro')
-            if normality_test and len(residuals) > 3:
-                try:
-                    if normality_test == 'shapiro' and len(residuals) <= 5000:
-                        stat, p_val = scipy_stats.shapiro(residuals)
-                        stats_text += f'\nShapiro p = {p_val:.3f}'
-                        if p_val > 0.05:
-                            stats_text += ' (Normal)'
-                        else:
-                            stats_text += ' (Non-normal)'
-                    elif normality_test == 'kstest':
-                        stat, p_val = scipy_stats.kstest(residuals, 'norm')
-                        stats_text += f'\nKS test p = {p_val:.3f}'
-                    elif normality_test == 'jarque_bera':
-                        stat, p_val = scipy_stats.jarque_bera(residuals)
-                        stats_text += f'\nJB test p = {p_val:.3f}'
-                except Exception as test_error:
-                    print(f"[ComparisonWizard] Error in normality test: {test_error}")
-            
-            # Detect outliers if requested
-            outlier_method = plot_config.get('outlier_detection', 'iqr')
-            if outlier_method:
-                try:
-                    n_outliers = 0
-                    if outlier_method == 'iqr':
-                        q1, q3 = np.percentile(residuals, [25, 75])
-                        iqr = q3 - q1
-                        lower_bound = q1 - 1.5 * iqr
-                        upper_bound = q3 + 1.5 * iqr
-                        n_outliers = np.sum((residuals < lower_bound) | (residuals > upper_bound))
-                    elif outlier_method == 'zscore':
-                        z_scores = np.abs((residuals - mean_residual) / std_residual)
-                        n_outliers = np.sum(z_scores > 3)
-                    elif outlier_method == 'modified_zscore':
-                        median_residual = np.median(residuals)
-                        mad = np.median(np.abs(residuals - median_residual))
-                        modified_z_scores = 0.6745 * (residuals - median_residual) / mad
-                        n_outliers = np.sum(np.abs(modified_z_scores) > 3.5)
+            # Add statistics text box only if requested
+            if show_residual_stats:
+                stats_text = f'RMSE = {rmse:.4f}\nMean = {mean_residual:.4f}\nStd = {std_residual:.4f}'
+                
+                # Perform normality test if requested
+                normality_test = plot_config.get('normality_test', 'shapiro')
+                if normality_test and len(residuals) > 3:
+                    try:
+                        if normality_test == 'shapiro' and len(residuals) <= 5000:
+                            stat, p_val = scipy_stats.shapiro(residuals)
+                            stats_text += f'\nShapiro p = {p_val:.3f}'
+                            if p_val > 0.05:
+                                stats_text += ' (Normal)'
+                            else:
+                                stats_text += ' (Non-normal)'
+                        elif normality_test == 'kstest':
+                            stat, p_val = scipy_stats.kstest(residuals, 'norm')
+                            stats_text += f'\nKS test p = {p_val:.3f}'
+                        elif normality_test == 'jarque_bera':
+                            stat, p_val = scipy_stats.jarque_bera(residuals)
+                            stats_text += f'\nJB test p = {p_val:.3f}'
+                    except Exception as test_error:
+                        print(f"[ComparisonWizard] Error in normality test: {test_error}")
                     
-                    stats_text += f'\nOutliers: {n_outliers} ({n_outliers/len(residuals)*100:.1f}%)'
-                except Exception as outlier_error:
-                    print(f"[ComparisonWizard] Error in outlier detection: {outlier_error}")
-            
-            # Position text box
-            ax.text(0.05, 0.95, stats_text, transform=ax.transAxes, 
-                   bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
-                   verticalalignment='top', fontsize=10)
-                   
+                    # Detect outliers if requested
+                    highlight_outliers = plot_config.get('highlight_outliers', False)
+                    outlier_method = plot_config.get('outlier_detection', 'iqr')
+                    if highlight_outliers and outlier_method:
+                        try:
+                            n_outliers = 0
+                            outlier_indices = []
+                            
+                            if outlier_method == 'iqr':
+                                q1, q3 = np.percentile(residuals, [25, 75])
+                                iqr = q3 - q1
+                                lower_bound = q1 - 1.5 * iqr
+                                upper_bound = q3 + 1.5 * iqr
+                                outlier_mask = (residuals < lower_bound) | (residuals > upper_bound)
+                                n_outliers = np.sum(outlier_mask)
+                                outlier_indices = np.where(outlier_mask)[0]
+                            elif outlier_method == 'zscore':
+                                z_scores = np.abs((residuals - mean_residual) / std_residual)
+                                outlier_mask = z_scores > 3
+                                n_outliers = np.sum(outlier_mask)
+                                outlier_indices = np.where(outlier_mask)[0]
+                            elif outlier_method == 'modified_zscore':
+                                median_residual = np.median(residuals)
+                                mad = np.median(np.abs(residuals - median_residual))
+                                modified_z_scores = 0.6745 * (residuals - median_residual) / mad
+                                outlier_mask = np.abs(modified_z_scores) > 3.5
+                                n_outliers = np.sum(outlier_mask)
+                                outlier_indices = np.where(outlier_mask)[0]
+                            
+                            stats_text += f'\nOutliers: {n_outliers} ({n_outliers/len(residuals)*100:.1f}%)'
+                            
+                            # Actually highlight the outliers on the plot
+                            if len(outlier_indices) > 0:
+                                ax.scatter(all_ref_data[outlier_indices], residuals[outlier_indices], 
+                                         color='red', s=60, alpha=0.8, marker='x', linewidth=2,
+                                         label=f'Outliers ({n_outliers})')
+                            
+                        except Exception as outlier_error:
+                            print(f"[ComparisonWizard] Error in outlier detection: {outlier_error}")
+                        
+                        # Position text box
+                        ax.text(0.05, 0.95, stats_text, transform=ax.transAxes, 
+                               bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
+                               verticalalignment='top', fontsize=10)
+                
+                # Add trend line if requested
+                show_trend_line = plot_config.get('show_trend_line', False)
+                if show_trend_line:
+                    try:
+                        # Fit linear regression to residuals vs reference values
+                        slope, intercept, r_value, p_value, std_err = scipy_stats.linregress(all_ref_data, residuals)
+                        
+                        if not np.isnan(slope) and not np.isnan(intercept):
+                            x_line = np.array([np.min(all_ref_data), np.max(all_ref_data)])
+                            y_line = slope * x_line + intercept
+                            ax.plot(x_line, y_line, 'g-', linewidth=2, alpha=0.7,
+                                   label=f'Trend: slope={slope:.4f}, p={p_value:.3f}')
+                    except Exception as trend_error:
+                        print(f"[ComparisonWizard] Error calculating trend line: {trend_error}")
+                       
         except Exception as e:
             print(f"[ComparisonWizard] Error calculating residual statistics: {e}")
         
         # Add custom line if specified
-        if plot_config.get('custom_line'):
+        custom_line_value = plot_config.get('custom_line')
+        if custom_line_value is not None:
             try:
-                custom_val = float(plot_config['custom_line'])
+                custom_val = float(custom_line_value)
                 ax.axhline(custom_val, color='green', linestyle=':', linewidth=2,
-                          label=f'y = {custom_val}')
+                          label=f'Custom: {custom_val}')
             except (ValueError, TypeError):
                 pass
         
         ax.set_xlabel(plot_config.get('xlabel', 'Reference'))
         ax.set_ylabel(plot_config.get('ylabel', 'Residuals (Test - Reference)'))
-        ax.set_title('Residual Analysis Plot')
+        ax.set_title('Residual Analysis')
         
     def _apply_common_plot_config(self, ax, fig, plot_config, checked_pairs):
         """Apply common plot configuration options"""

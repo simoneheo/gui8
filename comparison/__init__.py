@@ -23,6 +23,14 @@ from .residual_comparison import ResidualComparison
 from .statistical_comparison import StatisticalComparison
 from .cross_correlation_comparison import CrossCorrelationComparison
 
+# Initialize the registry on import to avoid double loading
+try:
+    if not ComparisonRegistry._initialized:
+        ComparisonRegistry.initialize()
+        print("[Comparison] Successfully initialized comparison registry on import")
+except Exception as e:
+    print(f"[Comparison] Error initializing comparison registry: {e}")
+
 def load_all_comparisons(directory=None):
     """
     Load all comparison methods from the comparison directory.
@@ -34,9 +42,10 @@ def load_all_comparisons(directory=None):
         bool: True if successful, False otherwise
     """
     try:
-        # Initialize the comparison registry
-        ComparisonRegistry.initialize()
-        print("[Comparison] Successfully loaded streamlined comparison methods")
+        # Registry should already be initialized from import
+        if not ComparisonRegistry._initialized:
+            ComparisonRegistry.initialize()
+        print("[Comparison] Comparison methods are ready")
         return True
     except Exception as e:
         print(f"[Comparison] Error loading comparison methods: {e}")

@@ -14,66 +14,66 @@ def minmax_normalize(y, range_min=0.0, range_max=1.0):
 class minmax_normalize_step(BaseStep):
     name = "minmax_normalize"
     category = "General"
-    description = "Normalize signal to a specific range."
+    description = "Normalize signal to a specific range using overlapping windows."
     tags = ["time-series"]
     params = [
-        {
-            'name': 'range_min', 
-            'type': 'float', 
-            'default': '0.0', 
-            'help': 'Target minimum value of normalized signal',
-   
-        }, 
-        {
-            'name': 'range_max', 
-            'type': 'float', 
-            'default': '1.0', 
-            'help': 'Target maximum value of normalized signal',
-            
-        }
+        {"name": "range_min", "type": "float", "default": "0.0", "help": "Target minimum value of normalized signal"},
+        {"name": "range_max", "type": "float", "default": "1.0", "help": "Target maximum value of normalized signal"},
+        {"name": "window", "type": "int", "default": "100", "help": "Window size in samples"},
+        {"name": "overlap", "type": "int", "default": "50", "help": "Overlap in samples (must be < window)"}
     ]
 
     @classmethod
     def get_info(cls): return f"{cls.name} — {cls.description} (Category: {cls.category})"
+    
     @classmethod
     def get_prompt(cls): return {"info": cls.description, "params": cls.params}
+    
     @classmethod
     def parse_input(cls, user_input: dict) -> dict:
         parsed = {}
-        
-        try:
-            range_min = float(user_input.get("range_min", "0.0"))
-            range_max = float(user_input.get("range_max", "1.0"))
-            
-            if range_min >= range_max:
-                raise ValueError("range_max must be greater than range_min")
-            
-            parsed["range_min"] = range_min
-            parsed["range_max"] = range_max
-            
-        except ValueError as e:
-            if "could not convert" in str(e):
-                raise ValueError("Range values must be valid numbers")
-            raise e
-            
+        range_min = float(user_input.get("range_min", 0.0))
+        range_max = float(user_input.get("range_max", 1.0))
+        if range_min >= range_max:
+            raise ValueError("range_max must be greater than range_min")
+
+        window = int(user_input.get("window", 100))
+        overlap = int(user_input.get("overlap", 50))
+        if window <= 0:
+            raise ValueError("Window size must be positive")
+        if overlap < 0 or overlap >= window:
+            raise ValueError("Overlap must be non-negative and less than window size")
+
+        parsed["range_min"] = range_min
+        parsed["range_max"] = range_max
+        parsed["window"] = window
+        parsed["overlap"] = overlap
         return parsed
 
     @classmethod
     def apply(cls, channel: Channel, params: dict) -> Channel:
-        # Validate input data
-        if len(channel.ydata) == 0:
-            raise ValueError("Input signal is empty")
-        if np.all(np.isnan(channel.ydata)):
-            raise ValueError("Signal contains only NaN values")
-        if np.all(np.isinf(channel.ydata)):
-            raise ValueError("Signal contains only infinite values")
-            
-        try:
-            y_new = minmax_normalize(channel.ydata, **params)
-            x_new = np.linspace(channel.xdata[0], channel.xdata[-1], len(y_new))
-            return cls.create_new_channel(parent=channel, xdata=x_new, ydata=y_new, params=params)
-        except Exception as e:
-            if isinstance(e, ValueError):
-                raise e
-            else:
-                raise ValueError(f"Normalization failed: {str(e)}")
+        y = channel.ydata
+        x = channel.xdata
+        range_min = params["range_min"]
+        range_max = params["range_max"]
+        window = params["window"]
+        overlap = params["overlap"]
+        step = window - overlap
+
+        if len(y) < window:
+            raise ValueError("Signal is shorter than window size")
+
+        y_out = np.zeros_like(y, dtype=float)
+        count = np.zeros_like(y, dtype=int)
+
+        for start in range(0, len(y) - window + 1, step):
+            end = start + window
+            segment = y[start:end]
+            try:
+                norm_segment = minmax_normalize(segment, range_min, range_max)
+            except ValueError:
+                norm_segment = np.zeros_like(segment)
+            y_out[start:end] += norm_segment
+            count[start:end] += 1
+
+        count[count == 0] = 1  # Prevent divide by zero

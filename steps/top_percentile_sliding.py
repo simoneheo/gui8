@@ -4,10 +4,10 @@ from steps.base_step import BaseStep
 from channel import Channel
 
 @register_step
-class top_percentile_env_step(BaseStep):
-    name = "top_percentile_env"
+class top_percentile_sliding_step(BaseStep):
+    name = "top_percentile_sliding"
     category = "Envelope"
-    description = "Top percentile in sliding window"
+    description = "Top percentile in overlapping sliding windows"
     tags = ["time-series"]
     params = [
         {"name": "window", "type": "int", "default": "25", "help": "Sliding window size (samples)"},

@@ -11,8 +11,8 @@ class cwt_spectrogram(BaseStep):
     name = "cwt_spectrogram"
     category = "Spectrogram"
     description = """Computes a spectrogram using Continuous Wavelet Transform (CWT) and outputs both:
-1. A 2D spectrogram channel (tag='spectrogram') for visualizing frequency evolution using wavelets.
-2. A 1D time-series channel (tag='time-series') summarizing the spectrogram with a reduction method.
+1. A 2D spectrogram channel for visualizing frequency evolution using wavelets.
+2. A 1D time-series channel summarizing the spectrogram with a reduction method.
 
 Reduction methods:
 - max_intensity: Maximum amplitude in each time slice.

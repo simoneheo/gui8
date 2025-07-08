@@ -4,8 +4,8 @@ from steps.base_step import BaseStep
 from channel import Channel
 
 @register_step
-class standardize_custom_step(BaseStep):
-    name = "standardize_custom"
+class standardize_step(BaseStep):
+    name = "standardize"
     category = "Transform"
     description = "Scale to custom mean and std"
     tags = ["time-series"]

@@ -7,10 +7,14 @@ from channel import Channel
 class area_envelope_step(BaseStep):
     name = "area_envelope"
     category = "Envelope"
-    description = "Area under curve in window"
+    description = (
+        "Compute sliding window area (sum of absolute values) with optional overlap. "
+        "Used for envelope tracking or energy estimation."
+    )
     tags = ["time-series"]
     params = [
-        {"name": "window", "type": "int", "default": "25", "help": "Sliding window size (samples)"},
+        {"name": "window", "type": "int", "default": "25", "help": "Window size in samples"},
+        {"name": "overlap", "type": "int", "default": "0", "help": "Overlap between windows in samples"},
     ]
 
     @classmethod
@@ -29,8 +33,22 @@ class area_envelope_step(BaseStep):
 
     @classmethod
     def apply(cls, channel: Channel, params: dict) -> Channel:
-        y = channel.ydata
+        y = np.abs(channel.ydata)
         x = channel.xdata
-        window = int(params['window'])
-        y_new = np.convolve(np.abs(y), np.ones(window), mode='same')
+        window = params['window']
+        overlap = params['overlap']
+        step = max(1, window - overlap)
+
+        envelope = np.zeros_like(y)
+        counts = np.zeros_like(y)
+
+        for start in range(0, len(y) - window + 1, step):
+            end = start + window
+            envelope[start:end] += np.sum(y[start:end])
+            counts[start:end] += 1
+
+        # Avoid division by zero
+        counts[counts == 0] = 1
+        y_new = envelope / counts
+
         return cls.create_new_channel(parent=channel, xdata=x, ydata=y_new, params=params)

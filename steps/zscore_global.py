@@ -3,7 +3,7 @@ from steps.process_registry import register_step
 from steps.base_step import BaseStep
 from channel import Channel
 
-def zscore_normalize(y):
+def zscore_global(y):
     # Input validation
     if len(y) == 0:
         raise ValueError("Input signal is empty")
@@ -35,7 +35,7 @@ def zscore_normalize(y):
 
 @register_step
 class zscore_normalize_step(BaseStep):
-    name = "zscore_normalize"
+    name = "zscore_global"
     category = "General"
     description = "Standardize signal to mean 0 and std 1."
     tags = ["time-series"]

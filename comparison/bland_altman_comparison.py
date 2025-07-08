@@ -52,8 +52,20 @@ class BlandAltmanComparison(BaseComparison):
             'default': True,
             'description': 'Test Proportional Bias',
             'tooltip': 'Test whether bias changes with measurement magnitude'
+        },
+        'log_transform': {
+            'type': bool,
+            'default': False,
+            'description': 'Log Transform Data',
+            'tooltip': 'Apply logarithmic transformation before analysis'
         }
     }
+    
+    # Display-related options are now handled in overlay section:
+    # - show_bias_line: Display computed bias line
+    # - show_limits_of_agreement: Display computed LoA lines  
+    # - confidence_level: Always computed, display controlled by overlay
+    # - outlier_detection: Outliers always computed, display controlled by overlay
     
     output_types = ["agreement_statistics", "limits_of_agreement", "bias_analysis", "plot_data"]
     plot_type = "bland_altman"

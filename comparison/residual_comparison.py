@@ -48,19 +48,26 @@ class ResidualComparison(BaseComparison):
             'description': 'Polynomial Degree',
             'tooltip': 'Degree of polynomial fit (only used when fit_method is polynomial)'
         },
-        'show_residual_stats': {
-            'type': bool,
-            'default': True,
-            'description': 'Show Residual Statistics',
-            'tooltip': 'Display statistics about the residuals'
+        'normality_test': {
+            'type': str,
+            'default': 'shapiro',
+            'choices': ['shapiro', 'kstest', 'jarque_bera', 'anderson', 'all'],
+            'description': 'Normality Test',
+            'tooltip': 'Statistical test for normality of residuals'
         },
-        'detect_outliers': {
+        'trend_analysis': {
             'type': bool,
             'default': True,
-            'description': 'Detect Outliers',
-            'tooltip': 'Identify outliers in the residuals'
+            'description': 'Perform Trend Analysis',
+            'tooltip': 'Analyze trends and patterns in residuals'
         }
     }
+    
+    # Display-related options are now handled in overlay section:
+    # - show_residual_stats: Display computed residual statistics
+    # - detect_outliers: Outliers always computed, display controlled by overlay
+    # - show_trend_line: Display computed trend lines
+    # - show_histogram_overlay: Display residual distribution
     
     output_types = ["residual_statistics", "trend_analysis", "normality_tests", "outlier_analysis", "plot_data"]
     plot_type = "residual"

@@ -43,7 +43,26 @@ class BaseStep(ABC):
                 # Skip parsing fs - it will be injected from parent channel
                 continue
             value = user_input.get(name, param.get("default"))
-            parsed[name] = float(value) if param["type"] == "float" else value
+            
+            # Handle type conversion based on parameter type
+            param_type = param.get("type", "str")
+            try:
+                if param_type == "float":
+                    parsed[name] = float(value)
+                elif param_type == "int":
+                    parsed[name] = int(value)
+                elif param_type in ["bool", "boolean"]:
+                    if isinstance(value, bool):
+                        parsed[name] = value
+                    elif isinstance(value, str):
+                        parsed[name] = value.lower() in ['true', '1', 'yes', 'on']
+                    else:
+                        parsed[name] = bool(value)
+                else:
+                    parsed[name] = value
+            except (ValueError, TypeError):
+                # If conversion fails, use default or keep as string
+                parsed[name] = param.get("default", value)
         return parsed
 
     @classmethod
@@ -70,3 +89,284 @@ class BaseStep(ABC):
             tags=cls.tags,
             params=params  # Pass the parameters to the new channel
         )
+
+    # ============================================================================
+    # VALIDATION HELPER METHODS
+    # ============================================================================
+
+    @classmethod
+    def validate_channel_input(cls, channel) -> None:
+        """
+        Validate that the input channel is valid for processing.
+        
+        Args:
+            channel: Input channel object to validate
+            
+        Raises:
+            ValueError: If channel is invalid
+        """
+        if channel is None:
+            raise ValueError("Input channel cannot be None")
+        
+        if not hasattr(channel, 'ydata') or channel.ydata is None:
+            raise ValueError("Channel must have valid signal data (ydata)")
+        
+        if not hasattr(channel, 'xdata') or channel.xdata is None:
+            raise ValueError("Channel must have valid time data (xdata)")
+
+    @classmethod
+    def validate_signal_data(cls, xdata, ydata) -> None:
+        """
+        Validate signal data arrays.
+        
+        Args:
+            xdata: Time/index array
+            ydata: Signal values array
+            
+        Raises:
+            ValueError: If data is invalid
+        """
+        # Check for empty data
+        if len(ydata) == 0:
+            raise ValueError("Signal data cannot be empty")
+        
+        if len(xdata) == 0:
+            raise ValueError("Time data cannot be empty")
+        
+        # Check length mismatch
+        if len(xdata) != len(ydata):
+            raise ValueError(f"Time and signal data length mismatch: {len(xdata)} vs {len(ydata)}")
+        
+        # Check for all NaN values
+        if np.all(np.isnan(ydata)):
+            raise ValueError("Signal contains only NaN values")
+        
+        # Check for all infinite values
+        if np.all(np.isinf(ydata)):
+            raise ValueError("Signal contains only infinite values")
+        
+        # Check time data validity
+        if np.any(np.isnan(xdata)):
+            raise ValueError("Time data contains NaN values")
+        
+        if np.any(np.isinf(xdata)):
+            raise ValueError("Time data contains infinite values")
+
+    @classmethod
+    def validate_numeric_parameter(cls, param_name: str, value: Any, 
+                                 min_val: Optional[float] = None,
+                                 max_val: Optional[float] = None,
+                                 allow_nan: bool = False,
+                                 allow_inf: bool = False) -> float:
+        """
+        Validate and convert a numeric parameter.
+        
+        Args:
+            param_name: Name of the parameter for error messages
+            value: Input value to validate
+            min_val: Minimum allowed value (inclusive)
+            max_val: Maximum allowed value (inclusive)
+            allow_nan: Whether to allow NaN values
+            allow_inf: Whether to allow infinite values
+            
+        Returns:
+            float: Validated numeric value
+            
+        Raises:
+            ValueError: If parameter is invalid
+        """
+        # Handle string input
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                raise ValueError(f"{param_name} parameter cannot be empty")
+            try:
+                value = float(value)
+            except ValueError:
+                raise ValueError(f"{param_name} must be a valid number, got '{value}'")
+        elif isinstance(value, (int, float)):
+            value = float(value)
+        else:
+            raise ValueError(f"{param_name} must be a number, got {type(value).__name__}: {value}")
+        
+        # Check for NaN
+        if np.isnan(value) and not allow_nan:
+            raise ValueError(f"{param_name} cannot be NaN")
+        
+        # Check for infinity
+        if np.isinf(value) and not allow_inf:
+            raise ValueError(f"{param_name} cannot be infinite")
+        
+        # Check range
+        if min_val is not None and value < min_val:
+            raise ValueError(f"{param_name} must be >= {min_val}, got {value}")
+        
+        if max_val is not None and value > max_val:
+            raise ValueError(f"{param_name} must be <= {max_val}, got {value}")
+        
+        return value
+
+    @classmethod
+    def validate_integer_parameter(cls, param_name: str, value: Any,
+                                 min_val: Optional[int] = None,
+                                 max_val: Optional[int] = None) -> int:
+        """
+        Validate and convert an integer parameter.
+        
+        Args:
+            param_name: Name of the parameter for error messages
+            value: Input value to validate
+            min_val: Minimum allowed value (inclusive)
+            max_val: Maximum allowed value (inclusive)
+            
+        Returns:
+            int: Validated integer value
+            
+        Raises:
+            ValueError: If parameter is invalid
+        """
+        # Handle string input
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                raise ValueError(f"{param_name} parameter cannot be empty")
+            try:
+                value = int(value)
+            except ValueError:
+                raise ValueError(f"{param_name} must be a valid integer, got '{value}'")
+        elif isinstance(value, (int, float)):
+            if isinstance(value, float) and not value.is_integer():
+                raise ValueError(f"{param_name} must be an integer, got {value}")
+            value = int(value)
+        else:
+            raise ValueError(f"{param_name} must be an integer, got {type(value).__name__}: {value}")
+        
+        # Check range
+        if min_val is not None and value < min_val:
+            raise ValueError(f"{param_name} must be >= {min_val}, got {value}")
+        
+        if max_val is not None and value > max_val:
+            raise ValueError(f"{param_name} must be <= {max_val}, got {value}")
+        
+        return value
+
+    @classmethod
+    def validate_string_parameter(cls, param_name: str, value: Any,
+                                valid_options: Optional[List[str]] = None,
+                                allow_empty: bool = False) -> str:
+        """
+        Validate a string parameter.
+        
+        Args:
+            param_name: Name of the parameter for error messages
+            value: Input value to validate
+            valid_options: List of valid string options
+            allow_empty: Whether to allow empty strings
+            
+        Returns:
+            str: Validated string value
+            
+        Raises:
+            ValueError: If parameter is invalid
+        """
+        if not isinstance(value, str):
+            raise ValueError(f"{param_name} must be a string, got {type(value).__name__}: {value}")
+        
+        value = value.strip()
+        
+        if not value and not allow_empty:
+            raise ValueError(f"{param_name} parameter cannot be empty")
+        
+        if valid_options is not None and value not in valid_options:
+            raise ValueError(f"{param_name} must be one of {valid_options}, got '{value}'")
+        
+        return value
+
+    @classmethod
+    def validate_output_data(cls, y_input: np.ndarray, y_output: np.ndarray,
+                           allow_length_change: bool = False) -> None:
+        """
+        Validate output data from processing.
+        
+        Args:
+            y_input: Original input signal
+            y_output: Processed output signal
+            allow_length_change: Whether to allow output length to differ from input
+            
+        Raises:
+            ValueError: If output data is invalid
+        """
+        if y_output is None:
+            raise ValueError("Processing produced no output")
+        
+        y_output = np.asarray(y_output)
+        
+        if len(y_output) == 0:
+            raise ValueError("Processing produced empty output")
+        
+        if not allow_length_change and len(y_output) != len(y_input):
+            raise ValueError(f"Processing changed signal length: {len(y_input)} -> {len(y_output)}")
+        
+        # Check for unexpected NaN values
+        if np.any(np.isnan(y_output)) and not np.any(np.isnan(y_input)):
+            raise ValueError("Processing produced unexpected NaN values")
+        
+        # Check for unexpected infinite values
+        if np.any(np.isinf(y_output)) and not np.any(np.isinf(y_input)):
+            raise ValueError("Processing produced unexpected infinite values")
+
+    @classmethod
+    def validate_window_parameter(cls, window: int, signal_length: int,
+                                min_window: int = 3) -> int:
+        """
+        Validate a window size parameter.
+        
+        Args:
+            window: Window size to validate
+            signal_length: Length of the signal being processed
+            min_window: Minimum allowed window size
+            
+        Returns:
+            int: Validated window size
+            
+        Raises:
+            ValueError: If window size is invalid
+        """
+        if window < min_window:
+            raise ValueError(f"Window size must be >= {min_window}, got {window}")
+        
+        if window > signal_length:
+            raise ValueError(f"Window size ({window}) cannot be larger than signal length ({signal_length})")
+        
+        # Warn if window is very large relative to signal
+        if window > signal_length * 0.5:
+            import warnings
+            warnings.warn(f"Window size ({window}) is more than 50% of signal length ({signal_length})")
+        
+        return window
+
+    @classmethod
+    def validate_frequency_parameter(cls, frequency: float, sampling_rate: float,
+                                  param_name: str = "frequency") -> float:
+        """
+        Validate a frequency parameter against sampling rate.
+        
+        Args:
+            frequency: Frequency value to validate
+            sampling_rate: Sampling rate of the signal
+            param_name: Name of the parameter for error messages
+            
+        Returns:
+            float: Validated frequency value
+            
+        Raises:
+            ValueError: If frequency is invalid
+        """
+        if frequency <= 0:
+            raise ValueError(f"{param_name} must be positive, got {frequency}")
+        
+        nyquist = sampling_rate / 2
+        if frequency >= nyquist:
+            raise ValueError(f"{param_name} ({frequency} Hz) must be less than Nyquist frequency ({nyquist:.1f} Hz)")
+        
+        return frequency

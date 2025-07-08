@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QTableWidgetItem, QComboBox, QTextEdit
+from PySide6.QtWidgets import QTableWidgetItem, QComboBox, QTextEdit, QCheckBox, QSpinBox, QDoubleSpinBox, QWidget, QHBoxLayout
 from PySide6.QtCore import Qt
 import time
 import itertools
@@ -132,115 +132,442 @@ class ProcessWizardManager:
 
     def _on_filter_selected(self, item=None):
         """Handle filter selection from the list or programmatically."""
-        # Allow calling manually with no item (get from UI)
-        if item is None:
-            item = self.ui.filter_list.currentItem()
-            if not item:
+        print(f"[ProcessWizardManager] === FILTER SELECTION STARTED ===")
+        
+        # Removed stack trace for cleaner output after debugging
+        
+        # Check if UI is still initializing
+        if hasattr(self.ui, '_initializing') and self.ui._initializing:
+            print(f"[ProcessWizardManager] UI still initializing, skipping filter selection")
+            return
+        
+        # Basic try-catch around the entire method
+        try:
+            # Step 1: Basic item validation
+            if item is None:
+                item = self.ui.filter_list.currentItem()
+                if not item:
+                    print(f"[ProcessWizardManager] No item selected")
+                    return
+
+            step_name = item.text()
+            print(f"[ProcessWizardManager] Selected step: {step_name}")
+            
+            # Step 2: Set basic console output 
+            try:
+                print(f"[ProcessWizardManager] Setting console output...")
+                self.ui.console_output.setPlainText(f"Loading step: {step_name}...")
+                print(f"[ProcessWizardManager] Console output set successfully")
+            except Exception as console_e:
+                print(f"[ProcessWizardManager] ERROR setting console output: {console_e}")
+                return
+            
+            # Step 3: Clear parameter table
+            try:
+                print(f"[ProcessWizardManager] Clearing parameter table...")
+                self.ui.param_table.setRowCount(0)
+                print(f"[ProcessWizardManager] Parameter table cleared successfully")
+            except Exception as table_e:
+                print(f"[ProcessWizardManager] ERROR clearing parameter table: {table_e}")
+                return
+                
+            # Step 4: If we get here, try minimal registry access
+            if not self.registry:
+                print(f"[ProcessWizardManager] Registry is None!")
+                self.ui.console_output.setPlainText(f"Error: Registry not available")
+                return
+                
+            print(f"[ProcessWizardManager] Registry exists, type: {type(self.registry)}")
+            
+            # Step 5: Try very basic registry access
+            try:
+                # Just check if the registry has the method, don't call it yet
+                has_get = hasattr(self.registry, 'get')
+                print(f"[ProcessWizardManager] Registry has get method: {has_get}")
+                
+                if not has_get:
+                    self.ui.console_output.setPlainText(f"Error: Registry missing 'get' method")
+                    return
+                    
+                # Now try to actually call the method
+                print(f"[ProcessWizardManager] About to call registry.get('{step_name}')...")
+                step_cls = self.registry.get(step_name)
+                print(f"[ProcessWizardManager] SUCCESS: Registry.get() returned: {step_cls}")
+                
+            except Exception as reg_e:
+                print(f"[ProcessWizardManager] ERROR in registry access: {reg_e}")
+                import traceback
+                traceback.print_exc()
+                self.ui.console_output.setPlainText(f"Error accessing step '{step_name}': {reg_e}")
+                return
+            
+            # Step 6: Basic validation of step class
+            if not step_cls:
+                print(f"[ProcessWizardManager] Step class is None for {step_name}")
+                self.ui.console_output.setPlainText(f"Error: Step '{step_name}' not found.")
                 return
 
-        step_name = item.text()
-        step_cls = self.registry.get(step_name)
-        if not step_cls:
-            self.ui.console_output.setPlainText(f"Error: Step '{step_name}' not found.")
+            print(f"[ProcessWizardManager] Step class loaded successfully: {step_cls}")
+            self.pending_step = step_cls
+            
+            # Step 7: Get step prompt and info
+            try:
+                prompt = step_cls.get_prompt()
+                info = prompt.get("info", "")
+                params = prompt.get("params", [])
+                print(f"[ProcessWizardManager] Step prompt loaded, {len(params)} parameters")
+            except Exception as prompt_e:
+                print(f"[ProcessWizardManager] Error getting step prompt: {prompt_e}")
+                self.ui.console_output.setPlainText(f"Error getting step information: {prompt_e}")
+                return
+
+            # Step 8: Get current channel for intelligent defaults
+            current_channel = None
+            try:
+                current_channel = self.channel_lookup()
+                print(f"[ProcessWizardManager] Current channel: {current_channel}")
+            except Exception as channel_e:
+                print(f"[ProcessWizardManager] Error getting current channel: {channel_e}")
+            
+            # Step 9: Try to get intelligent defaults with robust error handling
+            intelligent_defaults = None
+            try:
+                print(f"[ProcessWizardManager] Attempting to get intelligent defaults...")
+                from steps.default_config import get_intelligent_defaults, format_intelligent_default_info
+                
+                # Only try intelligent defaults if we have a valid channel
+                if current_channel:
+                    intelligent_defaults = get_intelligent_defaults(step_name, current_channel)
+                    if intelligent_defaults:
+                        print(f"[ProcessWizardManager] Using intelligent defaults for {step_name}: {intelligent_defaults}")
+                        # Add intelligent defaults info to the console output
+                        try:
+                            intelligent_info = format_intelligent_default_info(step_name, current_channel, intelligent_defaults)
+                            if intelligent_info:
+                                info = f"{info}\n\n{intelligent_info}"
+                        except Exception as format_e:
+                            print(f"[ProcessWizardManager] Error formatting intelligent defaults info: {format_e}")
+                    else:
+                        print(f"[ProcessWizardManager] No intelligent defaults available for {step_name}")
+                else:
+                    print(f"[ProcessWizardManager] No current channel, skipping intelligent defaults")
+            except ImportError as import_e:
+                print(f"[ProcessWizardManager] Could not import intelligent defaults: {import_e}")
+            except Exception as e:
+                print(f"[ProcessWizardManager] Error with intelligent defaults: {e}")
+                import traceback
+                traceback.print_exc()
+
+            # Step 10: Display step description and intelligent defaults info
+            print(f"[ProcessWizardManager] Setting console output...")
+            self.ui.console_output.setPlainText(info)
+            
+            # Step 11: Update channel name entry with default name
+            print(f"[ProcessWizardManager] Updating channel name entry...")
+            try:
+                self._update_channel_name_entry(step_name)
+            except Exception as name_e:
+                print(f"[ProcessWizardManager] Error updating channel name: {name_e}")
+
+            # Step 12: Populate parameter table
+            print(f"[ProcessWizardManager] Populating parameter table with {len(params)} parameters...")
+            try:
+                for i, p in enumerate(params):
+                    try:
+                        print(f"[ProcessWizardManager] Processing parameter {i}: {p}")
+                        param_name = p["name"]
+                        default_value = p.get("default", "")
+                        
+                        # Use intelligent default if available, otherwise use legacy dynamic logic or hard-coded default
+                        if intelligent_defaults and param_name in intelligent_defaults:
+                            param_value = intelligent_defaults[param_name]
+                            print(f"[ProcessWizardManager] Using intelligent default for {param_name}: {param_value}")
+                        elif param_name == "fs" and current_channel and hasattr(current_channel, 'fs_median') and current_channel.fs_median:
+                            # Legacy dynamic prefilling for sampling frequency
+                            try:
+                                rounded_fs = round(current_channel.fs_median, 3)
+                                param_value = str(rounded_fs)
+                                print(f"[ProcessWizardManager] Using channel fs for {param_name}: {param_value}")
+                            except Exception as fs_e:
+                                print(f"[ProcessWizardManager] Error calculating fs: {fs_e}")
+                                param_value = str(default_value)
+                        elif param_name == "target_fs" and current_channel and hasattr(current_channel, 'fs_median') and current_channel.fs_median:
+                            # Legacy smart default for target sampling frequency
+                            try:
+                                smart_target_fs = self._calculate_smart_target_fs(current_channel.fs_median)
+                                param_value = str(smart_target_fs)
+                                print(f"[ProcessWizardManager] Using smart target_fs for {param_name}: {param_value}")
+                            except Exception as target_fs_e:
+                                print(f"[ProcessWizardManager] Error calculating target_fs: {target_fs_e}")
+                                param_value = str(default_value)
+                        else:
+                            # Use static default value as fallback
+                            param_value = str(default_value)
+                            print(f"[ProcessWizardManager] Using default value for {param_name}: {param_value}")
+                        
+                        # Add row to table
+                        print(f"[ProcessWizardManager] Adding row {i} to parameter table")
+                        self.ui.param_table.insertRow(i)
+                        
+                        # Create parameter name item with tooltip (uneditable)
+                        param_name_item = QTableWidgetItem(param_name)
+                        param_name_item.setFlags(param_name_item.flags() & ~Qt.ItemIsEditable)  # Make uneditable
+                        help_text = p.get("help", "")
+                        if help_text:
+                            tooltip = f"{param_name}: {help_text}"
+                        else:
+                            tooltip = f"Parameter: {param_name}"
+                        param_name_item.setToolTip(tooltip)
+                        self.ui.param_table.setItem(i, 0, param_name_item)
+                        
+                        # Check parameter type and create appropriate control
+                        param_type = p.get("type", "string")
+                        print(f"[ProcessWizardManager] Creating control for {param_name}, type: {param_type}")
+                        
+                        if "options" in p and p["options"]:
+                            # Create dropdown combo box for parameters with predefined options
+                            try:
+                                print(f"[ProcessWizardManager] Creating combo box for {param_name}")
+                                combo = QComboBox()
+                                combo.addItems([str(option) for option in p["options"]])
+                                
+                                # Set default selection
+                                if param_value in p["options"]:
+                                    combo.setCurrentText(str(param_value))
+                                elif str(param_value) in [str(option) for option in p["options"]]:
+                                    combo.setCurrentText(str(param_value))
+                                
+                                combo.setToolTip(tooltip)
+                                self.ui.param_table.setCellWidget(i, 1, combo)
+                                print(f"[ProcessWizardManager] Combo box created successfully for {param_name}")
+                            except Exception as e:
+                                print(f"[ProcessWizardManager] Error creating combo box for {param_name}: {e}")
+                                # Fallback to regular text item
+                                param_value_item = QTableWidgetItem(str(param_value))
+                                param_value_item.setToolTip(tooltip)
+                                self.ui.param_table.setItem(i, 1, param_value_item)
+                                
+                        elif param_type == "bool" or param_type == "boolean":
+                            # Create checkbox for boolean parameters
+                            try:
+                                print(f"[ProcessWizardManager] Creating checkbox for {param_name}")
+                                from PySide6.QtWidgets import QCheckBox, QWidget, QHBoxLayout
+                                
+                                # Convert param_value to boolean
+                                bool_value = False
+                                if isinstance(param_value, bool):
+                                    bool_value = param_value
+                                elif isinstance(param_value, str):
+                                    bool_value = param_value.lower() in ['true', '1', 'yes', 'on']
+                                else:
+                                    bool_value = bool(param_value)
+                                
+                                checkbox = QCheckBox()
+                                checkbox.setChecked(bool_value)
+                                checkbox.setToolTip(tooltip)
+                                
+                                # Center the checkbox in the cell
+                                checkbox_widget = QWidget()
+                                checkbox_layout = QHBoxLayout(checkbox_widget)
+                                checkbox_layout.addWidget(checkbox)
+                                checkbox_layout.setAlignment(Qt.AlignCenter)
+                                checkbox_layout.setContentsMargins(0, 0, 0, 0)
+                                
+                                self.ui.param_table.setCellWidget(i, 1, checkbox_widget)
+                                print(f"[ProcessWizardManager] Checkbox created successfully for {param_name}")
+                            except Exception as e:
+                                print(f"[ProcessWizardManager] Error creating checkbox for {param_name}: {e}")
+                                # Fallback to regular text item
+                                param_value_item = QTableWidgetItem(str(param_value))
+                                param_value_item.setToolTip(tooltip)
+                                self.ui.param_table.setItem(i, 1, param_value_item)
+                            
+                        elif param_type == "multiline":
+                            # Create multiline text editor for code/long text
+                            try:
+                                print(f"[ProcessWizardManager] Creating text edit for {param_name}")
+                                text_edit = QTextEdit()
+                                text_edit.setPlainText(str(param_value))
+                                text_edit.setToolTip(tooltip)
+                                text_edit.setMaximumHeight(150)  # Limit height to fit in table
+                                text_edit.setMinimumHeight(80)   # Ensure readable height
+                                
+                                # Set font for better code readability
+                                from PySide6.QtGui import QFont
+                                font = QFont("Consolas", 9)
+                                if not font.exactMatch():
+                                    font = QFont("Courier New", 9)
+                                text_edit.setFont(font)
+                                
+                                self.ui.param_table.setCellWidget(i, 1, text_edit)
+                                
+                                # Increase row height for multiline parameters
+                                self.ui.param_table.setRowHeight(i, 100)
+                                print(f"[ProcessWizardManager] Text edit created successfully for {param_name}")
+                            except Exception as e:
+                                print(f"[ProcessWizardManager] Error creating text edit for {param_name}: {e}")
+                                # Fallback to regular text item
+                                param_value_item = QTableWidgetItem(str(param_value))
+                                param_value_item.setToolTip(tooltip)
+                                self.ui.param_table.setItem(i, 1, param_value_item)
+                                
+                        elif param_type == "int":
+                            # Create spinbox for integer parameters
+                            try:
+                                print(f"[ProcessWizardManager] Creating spinbox for {param_name}")
+                                from PySide6.QtWidgets import QSpinBox
+                                
+                                spinbox = QSpinBox()
+                                spinbox.setRange(p.get("min", -999999), p.get("max", 999999))
+                                spinbox.setValue(int(param_value) if param_value else 0)
+                                spinbox.setToolTip(tooltip)
+                                
+                                self.ui.param_table.setCellWidget(i, 1, spinbox)
+                                print(f"[ProcessWizardManager] Spinbox created successfully for {param_name}")
+                            except Exception as e:
+                                print(f"[ProcessWizardManager] Error creating spinbox for {param_name}: {e}")
+                                # Fallback to regular text item
+                                param_value_item = QTableWidgetItem(str(param_value))
+                                param_value_item.setToolTip(tooltip)
+                                self.ui.param_table.setItem(i, 1, param_value_item)
+                                
+                        elif param_type == "float":
+                            # Create double spinbox for float parameters
+                            try:
+                                print(f"[ProcessWizardManager] Creating double spinbox for {param_name}")
+                                from PySide6.QtWidgets import QDoubleSpinBox
+                                
+                                spinbox = QDoubleSpinBox()
+                                spinbox.setRange(p.get("min", -999999.0), p.get("max", 999999.0))
+                                spinbox.setDecimals(4)
+                                spinbox.setValue(float(param_value) if param_value else 0.0)
+                                spinbox.setToolTip(tooltip)
+                                
+                                self.ui.param_table.setCellWidget(i, 1, spinbox)
+                                print(f"[ProcessWizardManager] Double spinbox created successfully for {param_name}")
+                            except Exception as e:
+                                print(f"[ProcessWizardManager] Error creating double spinbox for {param_name}: {e}")
+                                # Fallback to regular text item
+                                param_value_item = QTableWidgetItem(str(param_value))
+                                param_value_item.setToolTip(tooltip)
+                                self.ui.param_table.setItem(i, 1, param_value_item)
+                            
+                        else:
+                            # Create regular text item for string and other parameters
+                            try:
+                                print(f"[ProcessWizardManager] Creating text item for {param_name}")
+                                param_value_item = QTableWidgetItem(str(param_value))
+                                param_value_item.setToolTip(tooltip)
+                                self.ui.param_table.setItem(i, 1, param_value_item)
+                                print(f"[ProcessWizardManager] Text item created successfully for {param_name}")
+                            except Exception as e:
+                                print(f"[ProcessWizardManager] Error creating text item for {param_name}: {e}")
+                                # Create basic fallback item
+                                try:
+                                    fallback_item = QTableWidgetItem(str(default_value))
+                                    self.ui.param_table.setItem(i, 1, fallback_item)
+                                except:
+                                    pass
+                        
+                    except Exception as param_e:
+                        print(f"[ProcessWizardManager] ERROR processing parameter {i}: {param_e}")
+                        import traceback
+                        traceback.print_exc()
+                        continue
+            except Exception as table_e:
+                print(f"[ProcessWizardManager] ERROR populating parameter table: {table_e}")
+                import traceback
+                traceback.print_exc()
+
+            print(f"[ProcessWizardManager] === FILTER SELECTION COMPLETED SUCCESSFULLY ===")
             return
 
-        self.pending_step = step_cls
-        prompt = step_cls.get_prompt()
-        print(f"[ProcessWizardManager] Prompt: {prompt}")
-        info = prompt.get("info", "")
-        params = prompt.get("params", [])
+            # Update script tab if it exists and if not on the script tab currently
+            try:
+                print(f"[ProcessWizardManager] Checking for script sync capability...")
+                if (hasattr(self.ui, '_sync_script_from_params') and 
+                    hasattr(self.ui, 'param_tab_widget') and 
+                    self.ui.param_tab_widget.currentIndex() == 1):  # Script tab is active
+                    print(f"[ProcessWizardManager] Script tab is active, syncing script...")
+                    self.ui._sync_script_from_params()
+                    print(f"[ProcessWizardManager] Script sync completed")
+                else:
+                    print(f"[ProcessWizardManager] Script sync not needed (not on script tab)")
+            except Exception as sync_e:
+                print(f"[ProcessWizardManager] Error with script sync: {sync_e}")
+                
+        except Exception as e:
+            print(f"[ProcessWizardManager] CRITICAL ERROR in _on_filter_selected: {e}")
+            import traceback
+            traceback.print_exc()
+            # Try to set an error message in the console
+            try:
+                self.ui.console_output.setPlainText(f"Error loading filter: {e}")
+            except:
+                pass
 
-        # Display only the step description (parameters are shown in the table)
-        self.ui.console_output.setPlainText(info)
+    def _validate_parameters(self, user_input_dict: dict) -> list:
+        """Validate parameters before processing. Returns list of error messages."""
+        errors = []
         
-
-        # Update channel name entry with default name
-        self._update_channel_name_entry(step_name)
-
-        # Populate parameter table with dynamic values for special parameters
-        current_channel = self.channel_lookup()
+        if not self.pending_step:
+            return ["No step selected"]
         
-        # Clear existing table
-        self.ui.param_table.setRowCount(0)
+        try:
+            # Get step parameter definitions
+            step_params = getattr(self.pending_step, 'params', [])
+            
+            for param in step_params:
+                param_name = param.get('name', '')
+                param_type = param.get('type', 'str')
+                param_value = user_input_dict.get(param_name)
+                
+                # Skip fs parameter as it's injected automatically
+                if param_name == 'fs':
+                    continue
+                
+                # Check for required parameters that are missing or empty
+                if param_value is None or (isinstance(param_value, str) and not param_value.strip()):
+                    if param.get('required', False):
+                        errors.append(f"Required parameter '{param_name}' is missing")
+                    continue
+                
+                # Type-specific validation
+                try:
+                    if param_type == 'float':
+                        val = float(param_value)
+                        if not np.isfinite(val):
+                            errors.append(f"Parameter '{param_name}' must be a finite number")
+                        # Check min/max bounds if specified
+                        if 'min' in param and val < param['min']:
+                            errors.append(f"Parameter '{param_name}' must be >= {param['min']}")
+                        if 'max' in param and val > param['max']:
+                            errors.append(f"Parameter '{param_name}' must be <= {param['max']}")
+                    
+                    elif param_type == 'int':
+                        val = int(param_value)
+                        # Check min/max bounds if specified
+                        if 'min' in param and val < param['min']:
+                            errors.append(f"Parameter '{param_name}' must be >= {param['min']}")
+                        if 'max' in param and val > param['max']:
+                            errors.append(f"Parameter '{param_name}' must be <= {param['max']}")
+                    
+                    elif param_type in ['bool', 'boolean']:
+                        # Boolean validation is lenient
+                        pass
+                    
+                    elif 'options' in param:
+                        # Validate that value is in allowed options
+                        if str(param_value) not in [str(opt) for opt in param['options']]:
+                            errors.append(f"Parameter '{param_name}' must be one of: {param['options']}")
+                
+                except (ValueError, TypeError) as e:
+                    errors.append(f"Parameter '{param_name}' has invalid value '{param_value}' for type {param_type}")
         
-        for i, p in enumerate(params):
-            param_name = p["name"]
-            default_value = p.get("default", "")
-            
-            # Dynamic prefilling for special parameters
-            if param_name == "fs" and current_channel and hasattr(current_channel, 'fs_median') and current_channel.fs_median:
-                # Use the actual sampling frequency from the selected channel, rounded to 3 decimal places
-                rounded_fs = round(current_channel.fs_median, 3)
-                param_value = str(rounded_fs)
-            elif param_name == "target_fs" and current_channel and hasattr(current_channel, 'fs_median') and current_channel.fs_median:
-                # Smart default for target sampling frequency based on original fs
-                smart_target_fs = self._calculate_smart_target_fs(current_channel.fs_median)
-                param_value = str(smart_target_fs)
-            else:
-                # Use static default value
-                param_value = str(default_value)
-            
-            # Add row to table
-            self.ui.param_table.insertRow(i)
-            
-            # Create parameter name item with tooltip (uneditable)
-            param_name_item = QTableWidgetItem(param_name)
-            param_name_item.setFlags(param_name_item.flags() & ~Qt.ItemIsEditable)  # Make uneditable
-            help_text = p.get("help", "")
-            if help_text:
-                tooltip = f"{param_name}: {help_text}"
-            else:
-                tooltip = f"Parameter: {param_name}"
-            param_name_item.setToolTip(tooltip)
-            self.ui.param_table.setItem(i, 0, param_name_item)
-            
-            # Check parameter type and create appropriate control
-            param_type = p.get("type", "string")
-            
-            if "options" in p and p["options"]:
-                # Create dropdown combo box for parameters with predefined options
-                combo = QComboBox()
-                combo.addItems([str(option) for option in p["options"]])
-                
-                # Set default selection
-                if param_value in p["options"]:
-                    combo.setCurrentText(str(param_value))
-                elif str(param_value) in [str(option) for option in p["options"]]:
-                    combo.setCurrentText(str(param_value))
-                
-                combo.setToolTip(tooltip)
-                self.ui.param_table.setCellWidget(i, 1, combo)
-                
-            elif param_type == "multiline":
-                # Create multiline text editor for code/long text
-                text_edit = QTextEdit()
-                text_edit.setPlainText(param_value)
-                text_edit.setToolTip(tooltip)
-                text_edit.setMaximumHeight(150)  # Limit height to fit in table
-                text_edit.setMinimumHeight(80)   # Ensure readable height
-                
-                # Set font for better code readability
-                from PySide6.QtGui import QFont
-                font = QFont("Consolas", 9)
-                if not font.exactMatch():
-                    font = QFont("Courier New", 9)
-                text_edit.setFont(font)
-                
-                self.ui.param_table.setCellWidget(i, 1, text_edit)
-                
-                # Increase row height for multiline parameters
-                self.ui.param_table.setRowHeight(i, 100)
-                
-            else:
-                # Create regular text item for single-line parameters
-                param_value_item = QTableWidgetItem(param_value)
-                param_value_item.setToolTip(tooltip)
-                self.ui.param_table.setItem(i, 1, param_value_item)
+        except Exception as e:
+            errors.append(f"Parameter validation failed: {e}")
         
-        # Update script tab if it exists
-        if hasattr(self.ui, '_sync_script_from_params'):
-            self.ui._sync_script_from_params()
-
+        return errors
     
     def _update_channel_name_entry(self, step_name: str):
         """Update the channel name entry with a default name based on current channel and step."""
@@ -274,6 +601,13 @@ class ProcessWizardManager:
             return self._execute_from_script(user_input_dict)
 
         try:
+            # Basic parameter validation before parsing
+            validation_errors = self._validate_parameters(user_input_dict)
+            if validation_errors:
+                error_msg = "Parameter validation errors:\n" + "\n".join([f"• {err}" for err in validation_errors])
+                self.ui.console_output.setPlainText(error_msg)
+                return
+                
             params = self.pending_step.parse_input(user_input_dict)
         except Exception as e:
             self.ui.console_output.setPlainText(f"Parameter parsing error: {e}")
@@ -456,7 +790,7 @@ class ProcessWizardManager:
             if key_item:
                 key = key_item.text().strip()
                 if key:
-                    # Check if the value cell contains a widget (dropdown, text editor) or text item
+                    # Check if the value cell contains a widget or text item
                     widget = self.ui.param_table.cellWidget(row, 1)
                     if widget:
                         # Handle different widget types
@@ -464,6 +798,18 @@ class ProcessWizardManager:
                             val = widget.currentText().strip()
                         elif isinstance(widget, QTextEdit):
                             val = widget.toPlainText().strip()
+                        elif hasattr(widget, 'findChild'):
+                            # This is a container widget (like for checkboxes)
+                            from PySide6.QtWidgets import QCheckBox, QSpinBox, QDoubleSpinBox
+                            checkbox = widget.findChild(QCheckBox)
+                            if checkbox:
+                                val = checkbox.isChecked()
+                            else:
+                                val = ""
+                        elif isinstance(widget, QSpinBox):
+                            val = widget.value()
+                        elif isinstance(widget, QDoubleSpinBox):
+                            val = widget.value()
                         else:
                             val = ""
                     else:
@@ -471,15 +817,22 @@ class ProcessWizardManager:
                         val_item = self.ui.param_table.item(row, 1)
                         val = val_item.text().strip() if val_item else ""
                     
-                    if val:
-                        # Try to convert to appropriate type
+                    # Store the value with appropriate type conversion
+                    if isinstance(val, bool):
+                        user_input_dict[key] = val
+                    elif isinstance(val, (int, float)):
+                        user_input_dict[key] = val
+                    elif val:
+                        # Try to convert string values to appropriate types
                         try:
-                            if '.' in val:
+                            if '.' in str(val) and str(val).replace('.', '').replace('-', '').isdigit():
                                 user_input_dict[key] = float(val)
-                            else:
+                            elif str(val).replace('-', '').isdigit():
                                 user_input_dict[key] = int(val)
+                            else:
+                                user_input_dict[key] = str(val)  # Keep as string
                         except ValueError:
-                            user_input_dict[key] = val  # Keep as string if conversion fails
+                            user_input_dict[key] = str(val)  # Keep as string if conversion fails
         
         try:
             params = self.pending_step.parse_input(user_input_dict)

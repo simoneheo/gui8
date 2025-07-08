@@ -7,37 +7,29 @@ from channel import Channel
 class CountSamplesStep(BaseStep):
     name = "count_samples"
     category = "Features"
-    description = """Counts the number of samples within sliding time windows and reports the count in various units.
-    
-This step is particularly useful for:
-- Analyzing data density variations over time
-- Detecting sampling rate changes or gaps in data
-- Quality control of data acquisition
-- Preprocessing for rate-based analysis
-
-The step uses overlapping sliding windows to compute sample counts continuously over time.
-Window centers are used as time stamps for the output time series.
+    description = """Counts the number of samples within sliding sample windows and reports the count in various units.
+Window centers are used as time stamps for the output x.
 
 Output units:
 - count/window: Raw number of samples per window
-- count/min: Samples per minute (extrapolated from window rate)
-- count/s: Samples per second (extrapolated from window rate)
+- count/min: Samples per minute (extrapolated from window rate and sampling frequency)
+- count/s: Samples per second (extrapolated from window rate and sampling frequency)
 
-Note: For units other than 'count/window', the count is extrapolated based on the window duration.
-For example, if a 2-second window contains 1000 samples, count/s would be 500."""
+Note: For units other than 'count/window', the count is extrapolated based on the window duration and sampling frequency.
+For example, if a 1000-sample window contains 500 samples at 1000Hz, count/s would be 500."""
     tags = ["time-series", "feature"]
     params = [
         {
             "name": "window", 
-            "type": "float", 
-            "default": "1.0", 
-            "help": "Window duration in seconds. Must be positive and smaller than total signal duration."
+            "type": "int", 
+            "default": "1000", 
+            "help": "Window size in number of samples. Must be positive and smaller than total signal length."
         },
         {
             "name": "overlap", 
-            "type": "float", 
-            "default": "50.0", 
-            "help": "Window overlap as percentage (0-90). Higher overlap gives smoother results but more computation."
+            "type": "int", 
+            "default": "500", 
+            "help": "Window overlap in number of samples. Must be less than window size. Higher overlap gives smoother results but more computation."
         },
         {
             "name": "unit", 
@@ -63,7 +55,7 @@ For example, if a 2-second window contains 1000 samples, count/s would be 500.""
             parsed = {}
             
             # Parse window parameter
-            window_val = user_input.get("window", 1.0)
+            window_val = user_input.get("window", 1000)
             
             # Handle both string and numeric inputs
             if isinstance(window_val, str):
@@ -71,23 +63,23 @@ For example, if a 2-second window contains 1000 samples, count/s would be 500.""
                 if not window_val:
                     raise ValueError("Window parameter cannot be empty")
                 try:
-                    window = float(window_val)
+                    window = int(window_val)
                 except ValueError:
-                    raise ValueError(f"Window must be a valid number, got '{window_val}'")
+                    raise ValueError(f"Window must be a valid integer, got '{window_val}'")
             elif isinstance(window_val, (int, float)):
-                window = float(window_val)
+                window = int(window_val)
             else:
                 raise ValueError(f"Window must be a number, got {type(window_val).__name__}: {window_val}")
             
             if window <= 0:
-                raise ValueError(f"Window duration must be positive, got {window}")
-            if window > 3600:  # Sanity check: no more than 1 hour
-                raise ValueError(f"Window duration seems too large ({window}s). Maximum allowed is 3600s")
+                raise ValueError(f"Window size must be positive, got {window}")
+            if window > 1000000:  # Sanity check: no more than 1 million samples
+                raise ValueError(f"Window size seems too large ({window} samples). Maximum allowed is 1,000,000 samples")
             
             parsed["window"] = window
             
             # Parse overlap parameter
-            overlap_val = user_input.get("overlap", 50.0)
+            overlap_val = user_input.get("overlap", 500)
             
             # Handle both string and numeric inputs
             if isinstance(overlap_val, str):
@@ -95,18 +87,20 @@ For example, if a 2-second window contains 1000 samples, count/s would be 500.""
                 if not overlap_val:
                     raise ValueError("Overlap parameter cannot be empty")
                 try:
-                    overlap = float(overlap_val)
+                    overlap = int(overlap_val)
                 except ValueError:
-                    raise ValueError(f"Overlap must be a valid number, got '{overlap_val}'")
+                    raise ValueError(f"Overlap must be a valid integer, got '{overlap_val}'")
             elif isinstance(overlap_val, (int, float)):
-                overlap = float(overlap_val)
+                overlap = int(overlap_val)
             else:
                 raise ValueError(f"Overlap must be a number, got {type(overlap_val).__name__}: {overlap_val}")
             
-            if not (0.0 <= overlap < 90.0):
-                raise ValueError(f"Overlap must be between 0.0 and 90.0 percent, got {overlap}")
+            if overlap < 0:
+                raise ValueError(f"Overlap must be non-negative, got {overlap}")
+            if overlap >= window:
+                raise ValueError(f"Overlap ({overlap}) must be less than window size ({window})")
             
-            parsed["overlap"] = overlap / 100.0  # Convert percentage to fraction
+            parsed["overlap"] = overlap
             
             # Parse unit parameter
             unit = user_input.get("unit", "count/window")
@@ -164,32 +158,32 @@ For example, if a 2-second window contains 1000 samples, count/s would be 500.""
             raise ValueError(f"Input validation failed: {str(e)}")
         
         # Extract parameters
-        window_duration = params["window"]
-        overlap = params["overlap"]
+        window_samples = params["window"]
+        overlap_samples = params["overlap"]
         unit = params["unit"]
         
         x, y = channel.xdata, channel.ydata
+        total_samples = len(x)
         
         # Signal validation
         try:
-            total_duration = x[-1] - x[0]
-            if total_duration <= 0:
-                raise ValueError("Signal has zero or negative duration")
-            
-            if window_duration > total_duration:
+            if window_samples > total_samples:
                 raise ValueError(
-                    f"Window duration ({window_duration:.3f}s) is larger than signal duration ({total_duration:.3f}s). "
+                    f"Window size ({window_samples} samples) is larger than signal length ({total_samples} samples). "
                     f"Try a smaller window or use a longer signal."
                 )
             
             # Check if we'll have enough windows
-            step_duration = window_duration * (1 - overlap)
-            estimated_windows = int((total_duration - window_duration) / step_duration) + 1
+            step_samples = window_samples - overlap_samples
+            if step_samples <= 0:
+                raise ValueError(f"Step size must be positive (window_samples - overlap_samples = {step_samples})")
+            
+            estimated_windows = int((total_samples - window_samples) / step_samples) + 1
             
             if estimated_windows < 1:
                 raise ValueError(
                     f"Configuration would produce no valid windows. "
-                    f"Window: {window_duration}s, Overlap: {overlap*100}%, Signal: {total_duration:.3f}s"
+                    f"Window: {window_samples} samples, Overlap: {overlap_samples} samples, Signal: {total_samples} samples"
                 )
             
             if estimated_windows > 100000:  # Sanity check
@@ -206,37 +200,55 @@ For example, if a 2-second window contains 1000 samples, count/s would be 500.""
         
         # Generate sliding windows
         try:
-            step_duration = window_duration * (1 - overlap)
+            step_samples = window_samples - overlap_samples
             
             window_starts = []
-            current_time = x[0]
+            current_idx = 0
             
-            while current_time + window_duration <= x[-1]:
-                window_starts.append(current_time)
-                current_time += step_duration
+            while current_idx + window_samples <= total_samples:
+                window_starts.append(current_idx)
+                current_idx += step_samples
             
             if len(window_starts) == 0:
                 raise ValueError("No valid windows could be generated")
             
-            print(f"[{cls.name}] Processing {len(window_starts)} windows with {overlap*100:.1f}% overlap")
+            print(f"[{cls.name}] Processing {len(window_starts)} windows with {overlap_samples} sample overlap")
             
         except Exception as e:
             raise ValueError(f"Window generation failed: {str(e)}")
+        
+        # Estimate sampling frequency for rate calculations
+        try:
+            # Calculate median sampling frequency
+            time_diffs = np.diff(x)
+            median_dt = np.median(time_diffs)
+            sampling_freq = 1.0 / median_dt if median_dt > 0 else 1.0
+            
+            # Calculate window duration in seconds
+            window_duration = window_samples / sampling_freq
+            
+        except Exception as e:
+            print(f"[{cls.name}] Warning: Could not estimate sampling frequency, using 1 Hz: {str(e)}")
+            sampling_freq = 1.0
+            window_duration = window_samples
         
         # Count samples in each window
         try:
             x_output = []
             y_output = []
             
-            for i, start_time in enumerate(window_starts):
-                end_time = start_time + window_duration
+            for i, start_idx in enumerate(window_starts):
+                end_idx = start_idx + window_samples
                 
-                # Find samples within this time window
-                mask = (x >= start_time) & (x <= end_time)
-                sample_count = np.sum(mask)
+                # Extract window data
+                window_x = x[start_idx:end_idx]
+                window_y = y[start_idx:end_idx]
+                
+                # Count actual samples in window (should be window_samples, but check for safety)
+                sample_count = len(window_y)
                 
                 # Calculate center time for this window
-                center_time = start_time + window_duration / 2
+                center_time = window_x[len(window_x) // 2] if len(window_x) > 0 else x[start_idx]
                 
                 # Convert count based on selected unit
                 if unit == "count/window":
@@ -273,6 +285,7 @@ For example, if a 2-second window contains 1000 samples, count/s would be 500.""
             print(f"  - Count range: {np.min(y_output):.1f} - {np.max(y_output):.1f}")
             print(f"  - Mean count: {np.mean(y_output):.1f}")
             print(f"  - Unit: {unit}")
+            print(f"  - Estimated sampling frequency: {sampling_freq:.2f} Hz")
             
         except Exception as e:
             if isinstance(e, ValueError):
@@ -306,12 +319,13 @@ For example, if a 2-second window contains 1000 samples, count/s would be 500.""
             # Add metadata for debugging/analysis
             new_channel.metadata = {
                 'original_samples': len(channel.xdata),
-                'window_duration': window_duration,
-                'overlap_fraction': overlap,
+                'window_samples': window_samples,
+                'overlap_samples': overlap_samples,
                 'num_windows': len(x_output),
                 'unit': unit,
                 'mean_count': float(np.mean(y_output)),
-                'std_count': float(np.std(y_output))
+                'std_count': float(np.std(y_output)),
+                'estimated_sampling_freq': sampling_freq
             }
             
             return new_channel

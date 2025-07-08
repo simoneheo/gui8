@@ -7,14 +7,14 @@ from steps.process_registry import register_step
 from channel import Channel
 
 @register_step
-class MovingMeanStep(BaseStep):
-    name = "moving_mean"
-    category = "Features"
+class MovingMeanWindowedStep(BaseStep):
+    name = "moving_mean_windowed"
+    category = "Smoother"
     description = "Computes moving mean over sliding windows."
-    tags = ["time-series", "feature"]
+    tags = ["time-series"]
     params = [
         {"name": "window", "type": "int", "default": "100", "help": "Window size in samples"},
-        {"name": "overlap", "type": "float", "default": "0.5", "help": "Overlap fraction [0.0 - 0.9]"}
+        {"name": "overlap", "type": "floats", "default": "0.5", "help": "Overlap fraction [0.0 - 0.9]"}
     ]
 
     @classmethod

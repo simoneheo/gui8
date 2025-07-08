@@ -59,6 +59,7 @@ class ProcessWizardWindow(QMainWindow):
         self.input_ch = None  # Track which channel is selected as input for next step
         self._adding_filter = False  # Flag to prevent dropdown interference during filter operations
         self.radio_button_group = None  # Button group for step table radio buttons
+        self._initializing = True  # Flag to prevent filter selection during initialization
         
         # Validate initialization
         if not self._validate_initialization():
@@ -114,20 +115,8 @@ class ProcessWizardWindow(QMainWindow):
     def _initialize_manager(self):
         """Initialize the process manager with error handling"""
         try:
-            # Load processing steps
-            load_all_steps("steps")
-            registry = ProcessRegistry
-            
-            # Create manager
-            self.wizard_manager = ProcessWizardManager(
-                ui=self,
-                registry=registry,
-                channel_lookup=self.get_active_channel_info
-            )
-            
-            # Update UI state
-            self._update_file_selector()
-            self._update_channel_selector()
+            # UI initialization moved to _build_left_panel where UI elements exist
+            pass
             
         except Exception as e:
             self._show_error(f"Failed to initialize processing manager: {e}")
@@ -461,20 +450,37 @@ class ProcessWizardWindow(QMainWindow):
         self.all_filters = self.process_registry.all_steps()  # Store original list for searching
         self.filter_list.addItems(self.all_filters)
         
+        # Clear any default selection that might have been set
+        self.filter_list.setCurrentRow(-1)  # Clear selection
+        
         # Populate category dropdown with unique categories
         self._populate_category_filter()
         # Create wizard manager
-        self.wizard_manager = ProcessWizardManager(
-            ui=self,
-            registry=self.process_registry,
-            channel_lookup=self.get_active_channel_info
-        )
+        try:
+            print(f"[ProcessWizard] Creating wizard manager...")
+            self.wizard_manager = ProcessWizardManager(
+                ui=self,
+                registry=self.process_registry,
+                channel_lookup=self.get_active_channel_info
+            )
+            print(f"[ProcessWizard] Wizard manager created successfully")
+        except Exception as e:
+            print(f"[ProcessWizard] Error creating wizard manager: {e}")
+            import traceback
+            traceback.print_exc()
+            # Create a dummy manager to prevent attribute errors
+            self.wizard_manager = None
         
         # Set default selection to "resample" filter (after manager is initialized)
+        # Do this BEFORE connecting the signal to avoid triggering filter selection
         self._set_default_filter_selection()
 
-        # Connect filter list to manager logic
-        self.filter_list.itemClicked.connect(self.wizard_manager._on_filter_selected)
+        # Connect filter list to manager logic AFTER setting default selection
+        if self.wizard_manager:
+            self.filter_list.itemClicked.connect(self.wizard_manager._on_filter_selected)
+            print(f"[ProcessWizard] Filter list connected to wizard manager")
+        else:
+            print(f"[ProcessWizard] WARNING: Wizard manager is None, filter list not connected")
 
         # Update selectors in order: file -> channel -> plots
         self._update_file_selector()
@@ -485,6 +491,10 @@ class ProcessWizardWindow(QMainWindow):
         # Initial update of tables and plots
         self._update_step_table()
         self._update_plot()
+        
+        # Mark initialization as complete
+        self._initializing = False
+        print(f"[ProcessWizard] Initialization completed, filter selection now enabled")
         
     def _update_file_selector(self):
         """Update the file selector with all successfully parsed files."""
@@ -1245,12 +1255,26 @@ class ProcessWizardWindow(QMainWindow):
             if key_item:
                 key = key_item.text().strip()
                 if key:
-                    # Check if the value cell contains a widget (dropdown) or text item
+                    # Check if the value cell contains a widget or text item
                     widget = self.param_table.cellWidget(row, 1)
                     if widget:
-                        # It's a QComboBox dropdown
+                        # Handle different widget types
                         if isinstance(widget, QComboBox):
                             val = widget.currentText().strip()
+                        elif isinstance(widget, QTextEdit):
+                            val = widget.toPlainText().strip()
+                        elif hasattr(widget, 'findChild'):
+                            # This is a container widget (like for checkboxes)
+                            from PySide6.QtWidgets import QCheckBox, QSpinBox, QDoubleSpinBox
+                            checkbox = widget.findChild(QCheckBox)
+                            if checkbox:
+                                val = checkbox.isChecked()
+                            else:
+                                val = ""
+                        elif isinstance(widget, QSpinBox):
+                            val = widget.value()
+                        elif isinstance(widget, QDoubleSpinBox):
+                            val = widget.value()
                         else:
                             val = ""
                     else:
@@ -1258,15 +1282,22 @@ class ProcessWizardWindow(QMainWindow):
                         val_item = self.param_table.item(row, 1)
                         val = val_item.text().strip() if val_item else ""
                     
-                    if val:
-                        # Try to convert to appropriate type
+                    # Store the value with appropriate type conversion
+                    if isinstance(val, bool):
+                        params[key] = val
+                    elif isinstance(val, (int, float)):
+                        params[key] = val
+                    elif val:
+                        # Try to convert string values to appropriate types
                         try:
-                            if '.' in val:
+                            if '.' in str(val) and str(val).replace('.', '').replace('-', '').isdigit():
                                 params[key] = float(val)
-                            else:
+                            elif str(val).replace('-', '').isdigit():
                                 params[key] = int(val)
+                            else:
+                                params[key] = str(val)  # Keep as string
                         except ValueError:
-                            params[key] = val  # Keep as string if conversion fails
+                            params[key] = str(val)  # Keep as string if conversion fails
         
         self.wizard_manager.on_input_submitted(params)
         self._update_step_table()
@@ -1499,13 +1530,30 @@ class ProcessWizardWindow(QMainWindow):
 
     def _set_default_filter_selection(self):
         """Set default selection to "resample" filter."""
-        # Find "resample" in the filter list
-        for i in range(self.filter_list.count()):
-            if self.filter_list.item(i).text() == "resample":
-                self.filter_list.setCurrentRow(i)
-                # Trigger the filter selection to populate parameters
-                self.wizard_manager._on_filter_selected(self.filter_list.item(i))
-                break
+        try:
+            print(f"[ProcessWizard] Setting default filter selection...")
+            
+            # Block signals during default selection to prevent crashes
+            self.filter_list.blockSignals(True)
+            
+            # Find "resample" in the filter list
+            for i in range(self.filter_list.count()):
+                if self.filter_list.item(i).text() == "resample":
+                    self.filter_list.setCurrentRow(i)
+                    print(f"[ProcessWizard] Default filter 'resample' selected at index {i}")
+                    break
+                    
+            # Re-enable signals
+            self.filter_list.blockSignals(False)
+            print(f"[ProcessWizard] Default filter selection completed")
+            
+        except Exception as e:
+            print(f"[ProcessWizard] Error setting default filter selection: {e}")
+            # Make sure to re-enable signals even if there's an error
+            try:
+                self.filter_list.blockSignals(False)
+            except:
+                pass
     
     def closeEvent(self, event):
         """Handle window close event"""
@@ -1514,8 +1562,22 @@ class ProcessWizardWindow(QMainWindow):
     
     def _on_param_tab_changed(self, index):
         """Handle parameter tab change to update script when switching to script tab"""
-        if index == 1:  # Script tab selected
-            self._sync_script_from_params()
+        try:
+            print(f"[ProcessWizard] Parameter tab changed to index: {index}")
+            if index == 1:  # Script tab selected
+                print(f"[ProcessWizard] Script tab selected, syncing script...")
+                self._sync_script_from_params()
+                print(f"[ProcessWizard] Script sync completed")
+        except Exception as e:
+            print(f"[ProcessWizard] Error in _on_param_tab_changed: {e}")
+            import traceback
+            traceback.print_exc()
+            # Try to set an error message in the script editor
+            try:
+                if hasattr(self, 'script_editor'):
+                    self.script_editor.setPlainText(f"# Error updating script: {e}\n# Please try selecting the filter again")
+            except:
+                pass
     
     def _on_script_readonly_changed(self, state):
         """Handle script read-only checkbox change"""
@@ -1524,19 +1586,56 @@ class ProcessWizardWindow(QMainWindow):
     
     def _sync_script_from_params(self):
         """Generate script from current parameters"""
-        if not hasattr(self.wizard_manager, 'pending_step') or not self.wizard_manager.pending_step:
-            self.script_editor.setPlainText("# No filter selected\n# Select a filter from the list to generate script")
-            return
-        
-        step_cls = self.wizard_manager.pending_step
-        step_name = step_cls.name
-        
-        # Get current parameters from table
-        params = self._get_params_from_table()
-        
-        # Generate script
-        script = self._generate_script(step_cls, params)
-        self.script_editor.setPlainText(script)
+        try:
+            print(f"[ProcessWizard] _sync_script_from_params() called")
+            
+            if not hasattr(self.wizard_manager, 'pending_step') or not self.wizard_manager.pending_step:
+                self.script_editor.setPlainText("# No filter selected\n# Select a filter from the list to generate script")
+                return
+            
+            step_cls = self.wizard_manager.pending_step
+            step_name = step_cls.name
+            print(f"[ProcessWizard] Generating script for step: {step_name}")
+            
+            # Get current parameters from table safely
+            try:
+                params = self._get_params_from_table()
+                print(f"[ProcessWizard] Parameters extracted: {params}")
+            except Exception as param_e:
+                print(f"[ProcessWizard] Error getting parameters: {param_e}")
+                self.script_editor.setPlainText(f"# Error getting parameters: {param_e}\n# Please check the parameter table")
+                return
+            
+            # Generate script safely
+            try:
+                script = self._generate_script(step_cls, params)
+                print(f"[ProcessWizard] Script generated successfully")
+            except Exception as gen_e:
+                print(f"[ProcessWizard] Error generating script: {gen_e}")
+                self.script_editor.setPlainText(f"# Error generating script: {gen_e}\n# Using basic template instead")
+                script = self._generate_basic_script(step_name, params)
+            
+            # Set script text safely
+            try:
+                self.script_editor.setPlainText(script)
+                print(f"[ProcessWizard] Script set in editor successfully")
+            except Exception as set_e:
+                print(f"[ProcessWizard] Error setting script text: {set_e}")
+                # Try with basic text
+                try:
+                    self.script_editor.setPlainText(f"# Script generation failed\n# Step: {step_name}\n# Parameters: {params}")
+                except:
+                    pass
+                    
+        except Exception as e:
+            print(f"[ProcessWizard] CRITICAL ERROR in _sync_script_from_params: {e}")
+            import traceback
+            traceback.print_exc()
+            # Try to set a basic error message
+            try:
+                self.script_editor.setPlainText(f"# Script generation failed: {e}")
+            except:
+                pass
     
     def _sync_script_to_params(self):
         """Parse script and update parameter table (basic implementation)"""
@@ -1557,14 +1656,26 @@ class ProcessWizardWindow(QMainWindow):
             if key_item:
                 key = key_item.text().strip()
                 if key:
-                    # Check if the value cell contains a widget (dropdown) or text item
+                    # Check if the value cell contains a widget or text item
                     widget = self.param_table.cellWidget(row, 1)
                     if widget:
-                        # It's a QComboBox dropdown or QTextEdit
+                        # Handle different widget types
                         if hasattr(widget, 'currentText'):  # QComboBox
                             val = widget.currentText().strip()
                         elif hasattr(widget, 'toPlainText'):  # QTextEdit
                             val = widget.toPlainText().strip()
+                        elif hasattr(widget, 'findChild'):
+                            # This is a container widget (like for checkboxes)
+                            from PySide6.QtWidgets import QCheckBox, QSpinBox, QDoubleSpinBox
+                            checkbox = widget.findChild(QCheckBox)
+                            if checkbox:
+                                val = checkbox.isChecked()
+                            else:
+                                val = ""
+                        elif isinstance(widget, QSpinBox):
+                            val = widget.value()
+                        elif isinstance(widget, QDoubleSpinBox):
+                            val = widget.value()
                         else:
                             val = ""
                     else:
@@ -1572,87 +1683,136 @@ class ProcessWizardWindow(QMainWindow):
                         val_item = self.param_table.item(row, 1)
                         val = val_item.text().strip() if val_item else ""
                     
-                    if val:
-                        # Try to convert to appropriate type
+                    # Store the value with appropriate type conversion
+                    if isinstance(val, bool):
+                        params[key] = val
+                    elif isinstance(val, (int, float)):
+                        params[key] = val
+                    elif val:
+                        # Try to convert string values to appropriate types
                         try:
-                            if '.' in val and val.replace('.', '').replace('-', '').isdigit():
+                            if '.' in str(val) and str(val).replace('.', '').replace('-', '').isdigit():
                                 params[key] = float(val)
-                            elif val.replace('-', '').isdigit():
+                            elif str(val).replace('-', '').isdigit():
                                 params[key] = int(val)
                             else:
-                                params[key] = val  # Keep as string
+                                params[key] = str(val)  # Keep as string
                         except ValueError:
-                            params[key] = val  # Keep as string if conversion fails
+                            params[key] = str(val)  # Keep as string if conversion fails
         return params
     
     def _generate_script(self, step_cls, params):
         """Generate Python script for the processing step"""
-        step_name = step_cls.name
-        
-        # Get current channel info
-        current_channel = self.get_active_channel_info()
-        channel_name = "input_channel"
-        if current_channel:
-            channel_name = f"'{current_channel.channel_id}'"
-        
-        # Format parameters for script
-        param_lines = []
-        for key, value in params.items():
-            if isinstance(value, str):
-                param_lines.append(f"    '{key}': '{value}'")
-            else:
-                param_lines.append(f"    '{key}': {value}")
-        
-        params_str = "{\n" + ",\n".join(param_lines) + "\n}" if param_lines else "{}"
-        
-        # Generate the script
-        script = f"""# Generated script for {step_name} processing step
-# Edit this script to customize the processing behavior
-# The script will be executed when you click 'Apply Operation'
+        try:
+            step_name = step_cls.name
+            
+            # Get current channel info safely
+            current_channel = None
+            try:
+                current_channel = self.get_active_channel_info()
+            except:
+                pass
+            
+            channel_name = "input_channel"
+            if current_channel:
+                try:
+                    channel_name = f"'{current_channel.channel_id}'"
+                except:
+                    pass
+            
+            # Format parameters for script safely
+            param_lines = []
+            try:
+                for key, value in params.items():
+                    if isinstance(value, str):
+                        # Escape quotes in string values
+                        escaped_value = value.replace("'", "\\'")
+                        param_lines.append(f"    '{key}': '{escaped_value}'")
+                    else:
+                        param_lines.append(f"    '{key}': {value}")
+            except Exception as param_e:
+                print(f"[ProcessWizard] Error formatting parameters: {param_e}")
+                param_lines = [f"    # Error formatting parameters: {param_e}"]
+            
+            params_str = "{\n" + ",\n".join(param_lines) + "\n}" if param_lines else "{}"
+            
+            # Generate the script without dangerous f-string nesting
+            script_parts = [
+                f"# Generated script for {step_name} processing step",
+                "# Edit this script to customize the processing behavior",
+                "# The script will be executed when you click 'Apply Operation'",
+                "",
+                "import numpy as np",
+                "import scipy.signal",
+                "import copy",
+                "",
+                "# Input channel is available as 'parent_channel'",
+                "# Parameters:",
+                f"params = {params_str}",
+                "",
+                f"# Method 1: Use the built-in processing step",
+                f"step_instance = registry.get_step('{step_name}')",
+                "if step_instance:",
+                "    # Parse parameters using the step's parameter parser",
+                "    parsed_params = step_instance.parse_input(params)",
+                "    # Apply the step to get the result",
+                "    result = step_instance.apply(parent_channel, parsed_params)",
+                "    ",
+                "    # Handle single channel or multiple channels",
+                "    if isinstance(result, list):",
+                "        result_channels = result",
+                "    else:",
+                "        result_channel = result",
+                "else:",
+                "    # Method 2: Custom processing (edit this section)",
+                "    # Access input data",
+                "    input_data = parent_channel.ydata",
+                "    input_time = parent_channel.xdata",
+                "    ",
+                "    # Example: Apply your custom processing here",
+                "    processed_data = input_data.copy()",
+                "    # processed_data = your_custom_function(input_data, **params)",
+                "    ",
+                "    # Create result channel",
+                "    result_channel = copy.deepcopy(parent_channel)",
+                "    result_channel.ydata = processed_data",
+                "    result_channel.xdata = input_time  # or modify if needed",
+                f"    result_channel.description = parent_channel.description + ' -> {step_name}'",
+                "",
+                "# IMPORTANT: The script must define 'result_channel' or 'result_channels'",
+                "# result_channel = your_single_processed_channel",
+                "# result_channels = [channel1, channel2, ...]  # for multiple outputs"
+            ]
+            
+            script = "\n".join(script_parts)
+            return script
+            
+        except Exception as e:
+            print(f"[ProcessWizard] Error in _generate_script: {e}")
+            return self._generate_basic_script(step_cls.name if step_cls else "unknown", params)
+    
+    def _generate_basic_script(self, step_name, params):
+        """Generate a basic fallback script when main generation fails"""
+        try:
+            script = f"""# Basic script template for {step_name}
+# Script generation encountered an error, using simplified template
 
 import numpy as np
-import scipy.signal
 import copy
 
 # Input channel is available as 'parent_channel'
-# Parameters:
-params = {params_str}
+# Process the channel data here
 
-# Method 1: Use the built-in processing step
-step_instance = registry.get_step('{step_name}')
-if step_instance:
-    # Parse parameters using the step's parameter parser
-    parsed_params = step_instance.parse_input(params)
-    # Apply the step to get the result
-    result = step_instance.apply(parent_channel, parsed_params)
-    
-    # Handle single channel or multiple channels
-    if isinstance(result, list):
-        result_channels = result
-    else:
-        result_channel = result
-else:
-    # Method 2: Custom processing (edit this section)
-    # Access input data
-    input_data = parent_channel.ydata
-    input_time = parent_channel.xdata
-    
-    # Example: Apply your custom processing here
-    processed_data = input_data.copy()
-    # processed_data = your_custom_function(input_data, **params)
-    
-    # Create result channel
-    result_channel = copy.deepcopy(parent_channel)
-    result_channel.ydata = processed_data
-    result_channel.xdata = input_time  # or modify if needed
-    result_channel.description = f'{{parent_channel.description}} -> {step_name}'
+# Example: Copy input to output (no processing)
+result_channel = copy.deepcopy(parent_channel)
+result_channel.description = parent_channel.description + ' -> {step_name}'
 
-# IMPORTANT: The script must define 'result_channel' or 'result_channels'
-# result_channel = your_single_processed_channel
-# result_channels = [channel1, channel2, ...]  # for multiple outputs
+# Parameters that were extracted:
+# {params}
 """
-        
-        return script
+            return script
+        except:
+            return "# Basic script generation failed\n# Please select a filter again"
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
