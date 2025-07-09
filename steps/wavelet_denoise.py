@@ -4,19 +4,28 @@ from steps.base_step import BaseStep
 from channel import Channel
 
 import pywt
-from scipy.signal import resample
-
-def wavelet_denoise(y, wavelet='db4', level=None, threshold=0.2, mode='soft'):
-    coeffs = pywt.wavedec(y, wavelet, mode='periodization', level=level)
-    thresholded = [pywt.threshold(c, threshold, mode=mode) if i > 0 else c for i, c in enumerate(coeffs)]
-    return pywt.waverec(thresholded, wavelet, mode='periodization')[:len(y)]
 
 @register_step
 class wavelet_denoise_step(BaseStep):
     name = "wavelet_denoise"
-    category = "Wavelet"
-    description = "Denoises a signal using wavelet thresholding."
-    tags = ["time-series"]
+    category = "pywt"
+    description = """Denoise signal using wavelet thresholding to remove noise while preserving important features.
+    
+This step applies wavelet decomposition, thresholds the coefficients to remove noise,
+and reconstructs the signal. The process preserves important signal features while
+reducing random noise and artifacts.
+
+• **Wavelet type**: Type of wavelet for decomposition (e.g., db4, sym4)
+• **Decomposition level**: Number of decomposition levels (auto if not specified)
+• **Threshold**: Threshold value for coefficient shrinkage (0-1 range typical)
+• **Thresholding mode**: Soft (gradual) or hard (abrupt) thresholding
+
+Useful for:
+• **Noise reduction**: Remove random noise from signals
+• **Signal enhancement**: Improve signal quality for analysis
+• **Feature preservation**: Maintain important peaks and patterns
+• **Preprocessing**: Prepare signals for further analysis"""
+    tags = ["time-series", "wavelet", "denoising", "noise-reduction", "pywt", "thresholding", "clean"]
     params = [
         { 
             "name": "wavelet", 
@@ -43,64 +52,118 @@ class wavelet_denoise_step(BaseStep):
             "default": "soft", 
             "help": "Thresholding mode",
             "options": ["soft", "hard"]
-        },
-        { "name": "fs", "type": "float", "default": "", "help": "Sampling frequency (injected from parent channel)" }
+        }
     ]
 
     @classmethod
-    def get_info(cls): return f"{cls.name} — {cls.description} (Category: {cls.category})"
+    def get_info(cls): 
+        return f"{cls.name} — Denoise signal using wavelet thresholding (Category: {cls.category})"
+
     @classmethod
-    def get_prompt(cls): return { "info": cls.description, "params": cls.params }
+    def get_prompt(cls): 
+        return {"info": cls.description, "params": cls.params}
+
+    @classmethod
+    def _validate_input_data(cls, y: np.ndarray) -> None:
+        """Validate input signal data"""
+        if len(y) == 0:
+            raise ValueError("Input signal is empty")
+        if np.all(np.isnan(y)):
+            raise ValueError("Signal contains only NaN values")
+        if len(y) < 4:
+            raise ValueError("Signal too short for wavelet decomposition (minimum 4 samples)")
+
+    @classmethod
+    def _validate_parameters(cls, params: dict) -> None:
+        """Validate parameters and business rules"""
+        threshold = params.get("threshold")
+        mode = params.get("mode", "soft")
+        
+        if threshold < 0 or threshold > 10:
+            raise ValueError("Threshold should typically be between 0 and 10")
+        
+        valid_modes = ["soft", "hard"]
+        if mode not in valid_modes:
+            raise ValueError(f"Mode must be one of {valid_modes}, got '{mode}'")
+
+    @classmethod
+    def _validate_output_data(cls, y_original: np.ndarray, y_new: np.ndarray) -> None:
+        """Validate output signal data"""
+        if len(y_new) != len(y_original):
+            raise ValueError("Output signal length differs from input")
+        if np.any(np.isnan(y_new)) and not np.any(np.isnan(y_original)):
+            raise ValueError("Wavelet denoising produced unexpected NaN values")
+
     @classmethod
     def parse_input(cls, user_input: dict) -> dict:
+        """Parse and validate user input parameters"""
         parsed = {}
         for param in cls.params:
             name = param["name"]
-            if name == "fs": continue
-            
-            val = user_input.get(name, param["default"])
-            
+            val = user_input.get(name, param.get("default"))
             try:
-                if val == "": 
+                if val == "":
                     parsed[name] = None
-                elif param["type"] == "float": 
-                    parsed_val = float(val)
-                    if name == "threshold" and (parsed_val < 0 or parsed_val > 10):
-                        raise ValueError("Threshold should typically be between 0 and 10")
-                    parsed[name] = parsed_val
-                elif param["type"] == "int": 
+                elif param["type"] == "float":
+                    parsed[name] = float(val)
+                elif param["type"] == "int":
                     parsed_val = int(val)
                     if name == "level" and parsed_val < 1:
                         raise ValueError("Decomposition level must be at least 1")
                     parsed[name] = parsed_val
-                else: 
-                    if name == "mode" and val not in ["soft", "hard"]:
-                        raise ValueError("Mode must be 'soft' or 'hard'")
+                else:
                     parsed[name] = val
             except ValueError as e:
                 if "could not convert" in str(e) or "invalid literal" in str(e):
                     raise ValueError(f"{name} must be a valid {param['type']}")
                 raise e
-                
         return parsed
 
     @classmethod
     def apply(cls, channel: Channel, params: dict) -> Channel:
-        # Validate input data
-        if len(channel.ydata) == 0:
-            raise ValueError("Input signal is empty")
-        if np.all(np.isnan(channel.ydata)):
-            raise ValueError("Signal contains only NaN values")
-        if len(channel.ydata) < 4:
-            raise ValueError("Signal too short for wavelet decomposition (minimum 4 samples)")
-            
+        """Apply wavelet denoising to the channel data."""
         try:
-            params = cls._inject_fs_if_needed(channel, params, wavelet_denoise)
-            y_new = wavelet_denoise(channel.ydata, **params)
-            x_new = np.linspace(channel.xdata[0], channel.xdata[-1], len(y_new))
-            return cls.create_new_channel(parent=channel, xdata=x_new, ydata=y_new, params=params)
+            x = channel.xdata
+            y = channel.ydata
+            
+            # Validate input data and parameters
+            cls._validate_input_data(y)
+            cls._validate_parameters(params)
+            
+            # Process the data
+            y_new = cls.script(x, y, params)
+            
+            # Validate output data
+            cls._validate_output_data(y, y_new)
+            
+            return cls.create_new_channel(
+                parent=channel, 
+                xdata=x, 
+                ydata=y_new, 
+                params=params,
+                suffix="WaveletDenoise"
+            )
+            
         except Exception as e:
             if isinstance(e, ValueError):
                 raise e
             else:
                 raise ValueError(f"Wavelet denoising failed: {str(e)}")
+
+    @classmethod
+    def script(cls, x: np.ndarray, y: np.ndarray, params: dict) -> np.ndarray:
+        """Core processing logic for wavelet denoising"""
+        wavelet = params.get("wavelet", "db4")
+        level = params.get("level")
+        threshold = params.get("threshold", 0.2)
+        mode = params.get("mode", "soft")
+        
+        # Perform wavelet decomposition
+        coeffs = pywt.wavedec(y, wavelet, mode='periodization', level=level)
+        
+        # Apply thresholding to detail coefficients
+        thresholded = [pywt.threshold(c, threshold, mode=mode) if i > 0 else c for i, c in enumerate(coeffs)]
+        
+        # Reconstruct signal
+        y_new = pywt.waverec(thresholded, wavelet, mode='periodization')[:len(y)]
+        return y_new

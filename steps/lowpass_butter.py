@@ -3,51 +3,12 @@ from steps.process_registry import register_step
 from steps.base_step import BaseStep
 from channel import Channel
 
-def lowpass_butter(y, fs, cutoff=2.0, order=2):
-    from scipy.signal import butter, filtfilt
-    
-    # Parameter validation
-    if cutoff <= 0:
-        raise ValueError(f"Cutoff frequency must be positive, got {cutoff} Hz")
-    if order <= 0:
-        raise ValueError(f"Filter order must be positive, got {order}")
-    if fs <= 0:
-        raise ValueError(f"Sampling frequency must be positive, got {fs} Hz")
-    
-    nyq = 0.5 * fs
-    if cutoff >= nyq:
-        raise ValueError(f"Cutoff frequency ({cutoff} Hz) must be less than Nyquist frequency ({nyq:.1f} Hz)")
-    
-    normal_cutoff = cutoff / nyq
-    
-    try:
-        b, a = butter(N=order, Wn=normal_cutoff, btype='low', analog=False)
-    except ValueError as e:
-        if "must be less than 1" in str(e):
-            raise ValueError(f"Cutoff frequency too high: {cutoff} Hz >= Nyquist ({nyq:.1f} Hz)")
-        else:
-            raise ValueError(f"Filter design failed: {str(e)}")
-    
-    try:
-        return filtfilt(b, a, y)
-    except ValueError as e:
-        if "padlen" in str(e):
-            padlen = 3 * max(len(a), len(b))
-            msg = (
-                f"Signal too short for Butterworth filter: "
-                f"requires signal length > {padlen} but got {len(y)}. "
-                f"Try reducing filter 'order' (currently {order})."
-            )
-            raise ValueError(msg) from e
-        else:
-            raise
-
 @register_step
 class lowpass_butter_step(BaseStep):
     name = "lowpass_butter"
     category = "Filter"
-    description = "Applies a low-pass Butterworth filter to the signal (flat frequency response)."
-    tags = ["time-series"]
+    description = "Apply lowpass Butterworth filter with flat frequency response to remove high frequencies above the cutoff."
+    tags = ["time-series", "filter", "lowpass", "scipy", "butter", "butterworth", "frequency", "cutoff"]
     params = [
         {"name": "cutoff", "type": "float", "default": "2.0", "help": "Cutoff frequency in Hz"},
         {"name": "order", "type": "int", "default": "2", "help": "Order of the Butterworth filter"},
@@ -55,23 +16,167 @@ class lowpass_butter_step(BaseStep):
     ]
 
     @classmethod
-    def get_info(cls): return f"{cls.name} — {cls.description} (Category: {cls.category})"
+    def get_info(cls): 
+        return f"{cls.name} — {cls.description} (Category: {cls.category})"
+
     @classmethod
-    def get_prompt(cls): return {"info": cls.description, "params": cls.params}
+    def get_prompt(cls): 
+        return {"info": cls.description, "params": cls.params}
+
+    @classmethod
+    def _validate_input_data(cls, y: np.ndarray) -> None:
+        """Validate input signal data"""
+        if len(y) == 0:
+            raise ValueError("Input signal is empty")
+        if np.all(np.isnan(y)):
+            raise ValueError("Signal contains only NaN values")
+        if np.all(np.isinf(y)):
+            raise ValueError("Signal contains only infinite values")
+
+    @classmethod
+    def _validate_parameters(cls, params: dict) -> None:
+        """Validate parameters and business rules"""
+        fs = params.get("fs")
+        order = params.get("order")
+        cutoff = params.get("cutoff")
+        
+        if fs is None or fs <= 0:
+            raise ValueError("Sampling frequency must be positive")
+        if order is None or order <= 0:
+            raise ValueError("Filter order must be positive")
+        if cutoff is None or cutoff <= 0:
+            raise ValueError("Cutoff frequency must be positive")
+        
+        nyq = 0.5 * fs
+        if cutoff >= nyq:
+            raise ValueError(f"Cutoff frequency ({cutoff} Hz) must be less than Nyquist frequency ({nyq:.1f} Hz)")
+        
+        # Validate filter design parameters
+        normal_cutoff = cutoff / nyq
+        if normal_cutoff >= 1.0:
+            raise ValueError("Cutoff frequency too high relative to sampling rate")
+
+    @classmethod
+    def _validate_filter_design(cls, params: dict, y: np.ndarray) -> None:
+        """Validate filter design and signal compatibility"""
+        from scipy.signal import butter
+        
+        order = params["order"]
+        cutoff = params["cutoff"]
+        fs = params["fs"]
+        
+        nyq = 0.5 * fs
+        normal_cutoff = cutoff / nyq
+        
+        try:
+            b, a = butter(N=order, Wn=normal_cutoff, btype='low', analog=False)
+        except ValueError as e:
+            raise ValueError(f"Butterworth lowpass filter design failed: {str(e)}")
+        
+        # Check if signal is long enough for the filter
+        padlen = 3 * max(len(a), len(b))
+        if len(y) <= padlen:
+            raise ValueError(
+                f"Signal too short for Butterworth lowpass filter: "
+                f"requires signal length > {padlen} but got {len(y)}. "
+                f"Try reducing filter 'order' (currently {order})."
+            )
+
+    @classmethod
+    def _validate_output_data(cls, y_original: np.ndarray, y_new: np.ndarray) -> None:
+        """Validate output signal data"""
+        if len(y_new) != len(y_original):
+            raise ValueError("Output signal length differs from input")
+        if np.any(np.isnan(y_new)) and not np.any(np.isnan(y_original)):
+            raise ValueError("Processing produced unexpected NaN values")
+        if np.any(np.isinf(y_new)) and not np.any(np.isinf(y_original)):
+            raise ValueError("Processing produced unexpected infinite values")
+        if np.all(np.isnan(y_new)):
+            raise ValueError("Processing produced only NaN values")
+        if np.all(np.isinf(y_new)):
+            raise ValueError("Processing produced only infinite values")
+
     @classmethod
     def parse_input(cls, user_input: dict) -> dict:
+        """Parse and validate user input parameters"""
         parsed = {}
         for param in cls.params:
             name = param["name"]
-            if name == "fs": continue
-            value = user_input.get(name, param.get("default"))
-            parsed[name] = float(value) if param["type"] == "float" else int(value)
+            if name == "fs": 
+                continue
+            val = user_input.get(name, param.get("default"))
+            try:
+                if val == "":
+                    parsed[name] = None
+                elif param["type"] == "float":
+                    parsed[name] = float(val)
+                elif param["type"] == "int":
+                    parsed[name] = int(val)
+                elif param["type"] == "bool":
+                    parsed[name] = bool(val)
+                else:
+                    parsed[name] = val
+            except ValueError as e:
+                if "could not convert" in str(e) or "invalid literal" in str(e):
+                    raise ValueError(f"{name} must be a valid {param['type']}")
+                raise e
         return parsed
 
     @classmethod
     def apply(cls, channel: Channel, params: dict) -> Channel:
-        y, x = channel.ydata, channel.xdata
-        params = cls._inject_fs_if_needed(channel, params, lowpass_butter)
-        y_new = lowpass_butter(y, **params)
-        x_new = np.linspace(x[0], x[-1], len(y_new))
-        return cls.create_new_channel(parent=channel, xdata=x_new, ydata=y_new, params=params)
+        """Apply the processing step to a channel"""
+        try:
+            x = channel.xdata
+            y = channel.ydata
+            
+            # Get sampling frequency from channel using the helper method
+            fs = cls._get_channel_fs(channel)
+            
+            # Inject sampling frequency if not provided in params
+            if fs is not None and "fs" not in params:
+                params["fs"] = fs
+                print(f"[{cls.name}] Injected fs={fs:.2f} from channel")
+            elif "fs" not in params:
+                # If no fs available from channel, raise an error
+                raise ValueError("No sampling frequency available from channel. Please provide 'fs' parameter.")
+            
+            # Validate input data and parameters
+            cls._validate_input_data(y)
+            cls._validate_parameters(params)
+            cls._validate_filter_design(params, y)
+            
+            # Process the data
+            y_final = cls.script(x, y, fs, params)
+            
+            # Validate output data
+            cls._validate_output_data(y, y_final)
+            
+            return cls.create_new_channel(
+                parent=channel,
+                xdata=x,
+                ydata=y_final,
+                params=params,
+                suffix="LowpassButterworth"
+            )
+        except Exception as e:
+            if isinstance(e, ValueError):
+                raise e
+            else:
+                raise ValueError(f"Butterworth lowpass filter processing failed: {str(e)}")
+
+    @classmethod
+    def script(cls, x: np.ndarray, y: np.ndarray, fs: float, params: dict) -> np.ndarray:
+        """Core processing logic"""
+        from scipy.signal import butter, filtfilt
+        
+        cutoff = params["cutoff"]
+        order = params["order"]
+        fs = params["fs"]
+        
+        nyq = 0.5 * fs
+        normal_cutoff = cutoff / nyq
+        
+        b, a = butter(N=order, Wn=normal_cutoff, btype='low', analog=False)
+        y_new = filtfilt(b, a, y)
+        
+        return y_new

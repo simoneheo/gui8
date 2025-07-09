@@ -7,9 +7,11 @@ including Pearson, Spearman, and Kendall correlation coefficients.
 
 import numpy as np
 from scipy import stats
-from typing import Dict, Any, Optional, Tuple
-from .base_comparison import BaseComparison
+from typing import Dict, Any, Optional, Tuple, List
+from comparison.base_comparison import BaseComparison
+from comparison.comparison_registry import register_comparison
 
+@register_comparison
 class CorrelationComparison(BaseComparison):
     """
     Correlation analysis comparison method.
@@ -18,119 +20,161 @@ class CorrelationComparison(BaseComparison):
     to assess the linear and monotonic relationships between datasets.
     """
     
-    name = "Correlation Analysis"
+    name = "correlation"
     description = "Compute Pearson, Spearman, and Kendall correlation coefficients with significance tests"
     category = "Statistical"
     version = "1.0.0"
+    tags = ["scatter", "correlation", "statistical", "relationship", "linear", "monotonic"]
     
-    # Helpful information for the console
-    helpful_info = """Correlation Analysis - Measures relationships between datasets
-• Pearson: Linear correlation (r), assumes normal distribution
-  - Strong: |r| > 0.7, Moderate: 0.3 < |r| < 0.7, Weak: |r| < 0.3
-• Spearman: Rank-based correlation (ρ), non-parametric
-  - Good for monotonic relationships, robust to outliers
-• Kendall: Tau correlation (τ), robust to outliers
-  - Better for small samples, less sensitive to extreme values
-• R² (coefficient of determination): Proportion of variance explained
-• Use for: Assessing how well two variables move together"""
+    # Parameters following mixer/steps pattern
+    params = [
+        {"name": "correlation_type", "type": "str", "default": "pearson", "help": "Correlation type: pearson, spearman, all"},
+        {"name": "include_rmse", "type": "bool", "default": True, "help": "Include RMSE calculation"},
+        {"name": "outlier_method", "type": "str", "default": "iqr", "help": "Outlier detection method: iqr, zscore, modified_zscore"},
+        {"name": "partial_correlation", "type": "bool", "default": False, "help": "Calculate partial correlation"},
+        {"name": "detrend_method", "type": "str", "default": "none", "help": "Detrending method: none, linear, polynomial"},
+        {"name": "bootstrap_samples", "type": "int", "default": 1000, "help": "Number of bootstrap samples for confidence intervals"},
+        {"name": "confidence_level", "type": "float", "default": 0.95, "help": "Confidence level for statistical tests"}
+    ]
     
-    parameters = {
-        'correlation_type': {
-            'type': str,
-            'default': 'pearson',
-            'choices': ['pearson', 'spearman', 'all'],
-            'description': 'Correlation Type',
-            'tooltip': 'Pearson: Linear relationships\nSpearman: Monotonic relationships\nAll: Compute both types'
-        },
-        'include_rmse': {
-            'type': bool,
-            'default': True,
-            'description': 'Include RMSE',
-            'tooltip': 'Calculate Root Mean Square Error along with correlation'
-        },
-        'outlier_method': {
-            'type': str,
-            'default': 'iqr',
-            'choices': ['iqr', 'zscore', 'modified_zscore'],
-            'description': 'Outlier Method',
-            'tooltip': 'IQR: Interquartile range method (1.5×IQR)\nZ-score: Standard deviation method (>3σ)\nModified Z-score: Median-based robust method'
-        },
-        'partial_correlation': {
-            'type': bool,
-            'default': False,
-            'description': 'Partial Correlation',
-            'tooltip': 'Calculate partial correlation controlling for linear trends (removes time effects)'
-        },
-        'detrend_method': {
-            'type': str,
-            'default': 'none',
-            'choices': ['none', 'linear', 'polynomial'],
-            'description': 'Detrend Method',
-            'tooltip': 'None: No detrending\nLinear: Remove linear trends\nPolynomial: Remove polynomial trends (degree 2)'
-        }
+    # Plot configuration
+    plot_type = "scatter"
+    
+    # Overlay options - defines which overlay controls should be shown in the wizard
+    overlay_options = {
+        'show_identity_line': {'default': True, 'label': 'Show y = x Line', 'tooltip': 'Show identity line for perfect correlation reference'},
+        'show_regression_line': {'default': True, 'label': 'Show Regression Line', 'tooltip': 'Show best-fit regression line'},
+        'show_confidence_bands': {'default': False, 'label': 'Show Confidence Bands', 'tooltip': 'Show confidence bands around regression line'},
+        'show_r_squared': {'default': True, 'label': 'Show R² Value', 'tooltip': 'Display R² value on the plot'},
+        'highlight_outliers': {'default': False, 'label': 'Highlight Outliers', 'tooltip': 'Highlight outlier points on the plot'},
+        'show_statistical_results': {'default': True, 'label': 'Show Statistical Results', 'tooltip': 'Display correlation statistics on the plot'}
     }
     
-    # Display-related options are now handled in overlay section:
-    # - confidence_level: Always computed at 0.95, display controlled by overlay
-    # - remove_outliers: Outliers always computed, display controlled by overlay
-    
-    output_types = ["correlation_statistics", "rmse_metrics", "plot_data"]
-    plot_type = "pearson"
-    
-    def compare(self, ref_data: np.ndarray, test_data: np.ndarray, 
-                ref_time: Optional[np.ndarray] = None, 
-                test_time: Optional[np.ndarray] = None) -> Dict[str, Any]:
+    def apply(self, ref_data: np.ndarray, test_data: np.ndarray, 
+              ref_time: Optional[np.ndarray] = None, 
+              test_time: Optional[np.ndarray] = None) -> Dict[str, Any]:
         """
-        Perform correlation analysis between reference and test data.
+        Main comparison method - orchestrates the correlation analysis.
         
         Args:
             ref_data: Reference data array
-            test_data: Test data array
-            ref_time: Optional time array for reference data (unused)
-            test_time: Optional time array for test data (unused)
+            test_data: Test data array  
+            ref_time: Optional time array for reference data
+            test_time: Optional time array for test data
             
         Returns:
-            Dictionary containing correlation analysis results
+            Dictionary containing correlation results with statistics and plot data
         """
         # Validate and clean input data
         ref_data, test_data = self._validate_input_data(ref_data, test_data)
         ref_clean, test_clean, valid_ratio = self._remove_invalid_data(ref_data, test_data)
         
-        # Remove outliers if requested
-        if self.params['remove_outliers']:
-            ref_clean, test_clean = self._remove_outliers(ref_clean, test_clean)
+        # Calculate statistics
+        stats_results = self.calculate_stats(ref_clean, test_clean, ref_time, test_time)
         
-        # Initialize results
+        # Prepare plot data
+        plot_data = {
+            'ref_data': ref_clean,
+            'test_data': test_clean,
+            'valid_ratio': valid_ratio
+        }
+        
+        # Combine results
         results = {
             'method': self.name,
             'n_samples': len(ref_clean),
             'valid_ratio': valid_ratio,
-            'correlations': {},
-            'plot_data': {
-                'ref_data': ref_clean,
-                'test_data': test_clean
-            }
+            'statistics': stats_results,
+            'plot_data': plot_data
         }
-        
-        correlation_type = self.params['correlation_type']
-        
-        # Compute correlations based on type
-        if correlation_type in ['pearson', 'all']:
-            results['correlations']['pearson'] = self._compute_pearson(ref_clean, test_clean)
-        
-        if correlation_type in ['spearman', 'all']:
-            results['correlations']['spearman'] = self._compute_spearman(ref_clean, test_clean)
-        
-        # Calculate RMSE if requested
-        if self.params['include_rmse']:
-            results['rmse_metrics'] = self._compute_rmse_metrics(ref_clean, test_clean)
-        
-        # Add interpretation
-        results['interpretation'] = self._interpret_correlations(results['correlations'])
         
         # Store results
         self.results = results
         return results
+    
+    def calculate_stats(self, ref_data: np.ndarray, test_data: np.ndarray, 
+                       ref_time: Optional[np.ndarray] = None, 
+                       test_time: Optional[np.ndarray] = None) -> Dict[str, Any]:
+        """
+        Calculate correlation statistics.
+        
+        Args:
+            ref_data: Reference data array
+            test_data: Test data array  
+            ref_time: Optional time array for reference data
+            test_time: Optional time array for test data
+            
+        Returns:
+            Dictionary containing correlation statistics
+        """
+        # Remove outliers if requested
+        if self.kwargs.get('remove_outliers', False):
+            ref_data, test_data = self._remove_outliers(ref_data, test_data)
+        
+        # Initialize results
+        stats_results = {
+            'correlations': {},
+            'interpretation': {}
+        }
+        
+        correlation_type = self.kwargs.get('correlation_type', 'pearson')
+        
+        # Compute correlations based on type
+        if correlation_type in ['pearson', 'all']:
+            stats_results['correlations']['pearson'] = self._compute_pearson(ref_data, test_data)
+        
+        if correlation_type in ['spearman', 'all']:
+            stats_results['correlations']['spearman'] = self._compute_spearman(ref_data, test_data)
+        
+        if correlation_type in ['kendall', 'all']:
+            stats_results['correlations']['kendall'] = self._compute_kendall(ref_data, test_data)
+        
+        # Calculate RMSE if requested
+        if self.kwargs.get('include_rmse', True):
+            stats_results['rmse_metrics'] = self._compute_rmse_metrics(ref_data, test_data)
+        
+        # Add interpretation
+        stats_results['interpretation'] = self._interpret_correlations(stats_results['correlations'])
+        
+        return stats_results
+    
+    def generate_plot(self, ax, ref_data: np.ndarray, test_data: np.ndarray, 
+                     plot_config: Dict[str, Any] = None, 
+                     stats_results: Dict[str, Any] = None) -> None:
+        """
+        Generate correlation plot with performance and overlay options.
+        
+        Args:
+            ax: Matplotlib axes object to plot on
+            ref_data: Reference data array
+            test_data: Test data array
+            plot_config: Plot configuration dictionary
+            stats_results: Statistical results from calculate_stats method
+        """
+        if plot_config is None:
+            plot_config = {}
+        
+        # Apply performance optimizations
+        ref_plot, test_plot = self._apply_performance_optimizations(ref_data, test_data, plot_config)
+        
+        # Create density plot based on configuration
+        self._create_density_plot(ax, ref_plot, test_plot, plot_config)
+        
+        # Add overlay elements
+        self._add_overlay_elements(ax, ref_plot, test_plot, plot_config, stats_results)
+        
+        # Set labels and title
+        ax.set_xlabel('Reference Data')
+        ax.set_ylabel('Test Data')
+        ax.set_title(f'{self.name.title()} Analysis')
+        
+        # Add grid if requested
+        if plot_config.get('show_grid', True):
+            ax.grid(True, alpha=0.3)
+        
+        # Add legend if requested
+        if plot_config.get('show_legend', False):
+            ax.legend()
     
     def _compute_pearson(self, ref_data: np.ndarray, test_data: np.ndarray) -> Dict[str, float]:
         """Compute Pearson correlation coefficient."""
@@ -152,7 +196,7 @@ class CorrelationComparison(BaseComparison):
             }
     
     def _compute_spearman(self, ref_data: np.ndarray, test_data: np.ndarray) -> Dict[str, float]:
-        """Compute Spearman rank correlation coefficient."""
+        """Compute Spearman correlation coefficient."""
         try:
             rho, p_value = stats.spearmanr(ref_data, test_data)
             
@@ -167,161 +211,163 @@ class CorrelationComparison(BaseComparison):
                 'error': str(e)
             }
     
-    def _compute_rmse_metrics(self, ref_data: np.ndarray, test_data: np.ndarray) -> Dict[str, float]:
-        """Compute Root Mean Square Error (RMSE) metrics."""
+    def _compute_kendall(self, ref_data: np.ndarray, test_data: np.ndarray) -> Dict[str, float]:
+        """Compute Kendall correlation coefficient."""
         try:
-            rmse = np.sqrt(np.mean((ref_data - test_data) ** 2))
+            tau, p_value = stats.kendalltau(ref_data, test_data)
+            
             return {
-                'rmse': rmse
+                'coefficient': tau,
+                'p_value': p_value
+            }
+        except Exception as e:
+            return {
+                'coefficient': np.nan,
+                'p_value': np.nan,
+                'error': str(e)
+            }
+    
+    def _compute_rmse_metrics(self, ref_data: np.ndarray, test_data: np.ndarray) -> Dict[str, float]:
+        """Compute RMSE and related metrics."""
+        try:
+            differences = test_data - ref_data
+            rmse = np.sqrt(np.mean(differences ** 2))
+            mae = np.mean(np.abs(differences))
+            mse = np.mean(differences ** 2)
+            
+            return {
+                'rmse': rmse,
+                'mae': mae,
+                'mse': mse
             }
         except Exception as e:
             return {
                 'rmse': np.nan,
+                'mae': np.nan,
+                'mse': np.nan,
                 'error': str(e)
             }
     
     def _interpret_correlations(self, correlations: Dict[str, Dict[str, float]]) -> Dict[str, str]:
-        """Interpret correlation results with simplified categories."""
-        interpretations = {}
+        """Interpret correlation results."""
+        interpretation = {}
         
-        for method, result in correlations.items():
-            if 'error' in result:
-                interpretations[method] = f"Error: {result['error']}"
+        for corr_type, corr_data in correlations.items():
+            if 'coefficient' not in corr_data or np.isnan(corr_data['coefficient']):
+                interpretation[corr_type] = "Could not compute correlation"
                 continue
             
-            coefficient = result.get('coefficient', np.nan)
-            if np.isnan(coefficient):
-                interpretations[method] = "Invalid correlation"
-                continue
+            r = corr_data['coefficient']
+            p_value = corr_data.get('p_value', np.nan)
             
-            abs_coeff = abs(coefficient)
-            direction = "positive" if coefficient > 0 else "negative"
-            
-            if abs_coeff >= 0.8:
-                strength = "very strong"
-            elif abs_coeff >= 0.6:
-                strength = "strong"
-            elif abs_coeff >= 0.4:
-                strength = "moderate"
-            elif abs_coeff >= 0.2:
-                strength = "weak"
+            # Strength interpretation
+            if abs(r) >= 0.9:
+                strength = "Very Strong"
+            elif abs(r) >= 0.7:
+                strength = "Strong"
+            elif abs(r) >= 0.5:
+                strength = "Moderate"
+            elif abs(r) >= 0.3:
+                strength = "Weak"
             else:
-                strength = "very weak"
+                strength = "Very Weak"
             
-            interpretations[method] = f"{strength.title()} {direction} correlation (r = {coefficient:.3f})"
+            # Direction
+            direction = "Positive" if r > 0 else "Negative"
+            
+            # Significance
+            if not np.isnan(p_value):
+                significance = "Significant" if p_value < 0.05 else "Not Significant"
+                interpretation[corr_type] = f"{strength} {direction} ({r:.3f}, p={p_value:.3f}, {significance})"
+            else:
+                interpretation[corr_type] = f"{strength} {direction} ({r:.3f})"
         
-        return interpretations
+        return interpretation
     
     def _remove_outliers(self, ref_data: np.ndarray, test_data: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        """Remove outliers using IQR method."""
-        # Calculate combined z-scores
-        ref_z = np.abs(stats.zscore(ref_data))
-        test_z = np.abs(stats.zscore(test_data))
+        """Remove outliers from data."""
+        method = self.kwargs.get('outlier_method', 'iqr')
         
-        # Remove points where either variable is an outlier (z > 3)
-        outlier_mask = (ref_z < 3) & (test_z < 3)
+        if method == 'iqr':
+            # IQR method
+            q1, q3 = np.percentile(ref_data, [25, 75])
+            iqr = q3 - q1
+            lower_bound = q1 - 1.5 * iqr
+            upper_bound = q3 + 1.5 * iqr
+            mask = (ref_data >= lower_bound) & (ref_data <= upper_bound)
+        elif method == 'zscore':
+            # Z-score method
+            z_scores = np.abs(stats.zscore(ref_data))
+            mask = z_scores < 3
+        else:
+            # No outlier removal
+            mask = np.ones(len(ref_data), dtype=bool)
         
-        return ref_data[outlier_mask], test_data[outlier_mask]
+        return ref_data[mask], test_data[mask]
     
-    def generate_plot_content(self, ax, ref_data: np.ndarray, test_data: np.ndarray, 
-                             plot_config: Dict[str, Any] = None, 
-                             checked_pairs: list = None) -> None:
-        """Generate correlation plot content - scatter plot with correlation statistics"""
-        try:
-            ref_data = np.array(ref_data)
-            test_data = np.array(test_data)
-            
-            if len(ref_data) == 0:
-                ax.text(0.5, 0.5, 'No valid data for correlation analysis', 
-                       ha='center', va='center', transform=ax.transAxes)
-                return
-            
-            # Get correlation type from config
-            correlation_type = plot_config.get('correlation_type', 'pearson') if plot_config else 'pearson'
-            confidence_level = plot_config.get('confidence_level', 0.95) if plot_config else 0.95
-            
-            # Add 1:1 line
-            min_val = min(np.min(ref_data), np.min(test_data))
-            max_val = max(np.max(ref_data), np.max(test_data))
-            ax.plot([min_val, max_val], [min_val, max_val], 'k--', alpha=0.8, 
-                   linewidth=2, label='1:1 line')
-            
-            # Calculate correlation statistics
-            stats_text = ""
-            try:
-                if correlation_type == 'pearson' or correlation_type == 'all':
-                    r_value, p_value = stats.pearsonr(ref_data, test_data)
-                    r2_value = r_value ** 2
-                    stats_text += f'Pearson r = {r_value:.4f}\n'
-                    stats_text += f'R² = {r2_value:.4f}\n'
-                    if not np.isnan(p_value):
-                        stats_text += f'p = {p_value:.2e}\n'
-                    
-                    # Add confidence interval if available
-                    if not np.isnan(p_value) and len(ref_data) > 3:
-                        n = len(ref_data)
-                        # Fisher z-transformation for confidence interval
-                        z_r = 0.5 * np.log((1 + r_value) / (1 - r_value))
-                        se_z = 1 / np.sqrt(n - 3)
-                        alpha = 1 - confidence_level
-                        z_critical = stats.norm.ppf(1 - alpha/2)
-                        
-                        z_lower = z_r - z_critical * se_z
-                        z_upper = z_r + z_critical * se_z
-                        
-                        # Transform back to correlation scale
-                        r_lower = (np.exp(2 * z_lower) - 1) / (np.exp(2 * z_lower) + 1)
-                        r_upper = (np.exp(2 * z_upper) - 1) / (np.exp(2 * z_upper) + 1)
-                        
-                        stats_text += f'{confidence_level*100:.0f}% CI: [{r_lower:.3f}, {r_upper:.3f}]\n'
-                    
-                    # Add best fit line
-                    try:
-                        slope, intercept, _, _, _ = stats.linregress(ref_data, test_data)
-                        if not np.isnan(slope):
-                            x_line = np.array([min_val, max_val])
-                            y_line = slope * x_line + intercept
-                            ax.plot(x_line, y_line, 'r-', linewidth=2, alpha=0.7,
-                                   label=f'Best fit: y = {slope:.3f}x + {intercept:.3f}')
-                    except:
-                        pass
-                
-                # Add other correlation types if requested
-                if correlation_type == 'all':
-                    try:
-                        spearman_r, spearman_p = stats.spearmanr(ref_data, test_data)
-                        kendall_tau, kendall_p = stats.kendalltau(ref_data, test_data)
-                        stats_text += f'Spearman ρ = {spearman_r:.4f}\n'
-                        stats_text += f'Kendall τ = {kendall_tau:.4f}\n'
-                    except:
-                        pass
-                elif correlation_type == 'spearman':
-                    r_value, p_value = stats.spearmanr(ref_data, test_data)
-                    stats_text += f'Spearman ρ = {r_value:.4f}\n'
-                    if not np.isnan(p_value):
-                        stats_text += f'p = {p_value:.2e}\n'
-                elif correlation_type == 'kendall':
-                    r_value, p_value = stats.kendalltau(ref_data, test_data)
-                    stats_text += f'Kendall τ = {r_value:.4f}\n'
-                    if not np.isnan(p_value):
-                        stats_text += f'p = {p_value:.2e}\n'
-                
-                stats_text += f'n = {len(ref_data):,} points'
-                
-            except Exception as e:
-                stats_text = f'Correlation calculation error: {str(e)}'
-            
-            # Add statistics text box
-            ax.text(0.05, 0.95, stats_text, transform=ax.transAxes, 
-                   bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
-                   verticalalignment='top', fontsize=10)
-            
-            ax.set_xlabel('Reference')
-            ax.set_ylabel('Test')
-            ax.set_title(f'{correlation_type.title()} Correlation Analysis')
-            ax.legend(loc='lower right')
-            
-        except Exception as e:
-            print(f"[Correlation] Error in plot generation: {e}")
-            ax.text(0.5, 0.5, f'Error generating correlation plot: {str(e)}', 
-                   ha='center', va='center', transform=ax.transAxes) 
+    def _format_statistical_text(self, stats_results: Dict[str, Any], plot_config: Dict[str, Any] = None) -> List[str]:
+        """Format statistical results for display on plot."""
+        text_lines = []
+        
+        if plot_config is None:
+            plot_config = {}
+        
+        # Add correlation results
+        if 'correlations' in stats_results:
+            for corr_type, corr_data in stats_results['correlations'].items():
+                if 'coefficient' in corr_data and not np.isnan(corr_data['coefficient']):
+                    r = corr_data['coefficient']
+                    p = corr_data.get('p_value', np.nan)
+                    if not np.isnan(p):
+                        text_lines.append(f"{corr_type.title()}: r={r:.3f}, p={p:.3f}")
+                    else:
+                        text_lines.append(f"{corr_type.title()}: r={r:.3f}")
+        
+        # Add R² if available and requested
+        if (plot_config.get('show_r_squared', False) and 
+            'correlations' in stats_results and 'pearson' in stats_results['correlations']):
+            pearson_data = stats_results['correlations']['pearson']
+            r_squared = pearson_data.get('r_squared', np.nan)
+            if not np.isnan(r_squared):
+                text_lines.append(f"R²: {r_squared:.3f}")
+        
+        # Add RMSE if available
+        if 'rmse_metrics' in stats_results:
+            rmse = stats_results['rmse_metrics'].get('rmse', np.nan)
+            if not np.isnan(rmse):
+                text_lines.append(f"RMSE: {rmse:.3f}")
+        
+        # Add interpretation
+        if 'interpretation' in stats_results:
+            for corr_type, interpretation in stats_results['interpretation'].items():
+                if len(interpretation) < 50:  # Only show short interpretations
+                    text_lines.append(f"{corr_type.title()}: {interpretation}")
+        
+        return text_lines
+    
+    @classmethod
+    def get_comparison_guidance(cls):
+        """Get guidance for this comparison method."""
+        return {
+            "title": "Correlation Analysis",
+            "description": "Measures relationships between datasets using correlation coefficients",
+            "interpretation": {
+                "pearson": "Linear correlation (r), assumes normal distribution",
+                "spearman": "Rank-based correlation (ρ), non-parametric, robust to outliers",
+                "kendall": "Rank-based correlation (τ), more robust but computationally intensive",
+                "strength": "Strong: |r| > 0.7, Moderate: 0.3 < |r| < 0.7, Weak: |r| < 0.3"
+            },
+            "use_cases": [
+                "Assessing how well two variables move together",
+                "Method validation and agreement assessment",
+                "Feature correlation analysis",
+                "Signal similarity assessment"
+            ],
+            "tips": [
+                "Use Pearson for linear relationships with normal data",
+                "Use Spearman for monotonic relationships or non-normal data",
+                "Use Kendall for small samples or when robustness is important",
+                "Check p-values for statistical significance",
+                "Consider RMSE for absolute agreement assessment"
+            ]
+        } 

@@ -9,10 +9,13 @@ Available comparison methods:
 - Correlation analysis (Pearson, Spearman) with integrated RMSE
 - Bland-Altman analysis for method comparison
 - Residual analysis with multiple fitting methods
-- Statistical tests (t-test, Wilcoxon, KS test)
-- Cross-correlation for time series analysis
+- Error distribution histogram analysis
+- Relative error time series analysis
+- Time lag cross-correlation analysis
 """
 
+import os
+import importlib
 from .base_comparison import BaseComparison
 from .comparison_registry import ComparisonRegistry
 
@@ -20,8 +23,6 @@ from .comparison_registry import ComparisonRegistry
 from .correlation_comparison import CorrelationComparison
 from .bland_altman_comparison import BlandAltmanComparison
 from .residual_comparison import ResidualComparison
-from .statistical_comparison import StatisticalComparison
-from .cross_correlation_comparison import CrossCorrelationComparison
 
 # Initialize the registry on import to avoid double loading
 try:
@@ -45,7 +46,22 @@ def load_all_comparisons(directory=None):
         # Registry should already be initialized from import
         if not ComparisonRegistry._initialized:
             ComparisonRegistry.initialize()
-        print("[Comparison] Comparison methods are ready")
+        
+        # Auto-load all comparison methods from the comparison folder
+        comparison_folder = os.path.dirname(__file__)
+        for filename in os.listdir(comparison_folder):
+            if filename.endswith(".py") and filename not in ("__init__.py", "base_comparison.py", "comparison_registry.py"):
+                module_name = filename[:-3]
+                try:
+                    # Import the module to trigger the @register_comparison decorator
+                    importlib.import_module(f".{module_name}", package="comparison")
+                    print(f"[Comparison] Successfully loaded {module_name}")
+                except Exception as e:
+                    print(f"[Comparison] Error importing {module_name}: {e}")
+        
+        # Show loaded methods
+        methods = ComparisonRegistry.all_comparisons()
+        print(f"[Comparison] Loaded {len(methods)} comparison methods: {methods}")
         return True
     except Exception as e:
         print(f"[Comparison] Error loading comparison methods: {e}")
@@ -57,8 +73,6 @@ __all__ = [
     'CorrelationComparison',
     'BlandAltmanComparison', 
     'ResidualComparison',
-    'StatisticalComparison',
-    'CrossCorrelationComparison',
     'load_all_comparisons'
 ]
 

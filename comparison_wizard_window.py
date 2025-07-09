@@ -13,7 +13,52 @@ from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as Navigatio
 import matplotlib.pyplot as plt
 import time
 import numpy as np
-from comparison.comparison_registry import ComparisonRegistry, load_all_comparisons
+# Import comparison methods from the new comparison folder
+try:
+    from comparison.comparison_registry import ComparisonRegistry
+    from comparison import load_all_comparisons
+    COMPARISON_AVAILABLE = True
+    print("[ComparisonWizardWindow] Comparison registry imported successfully")
+except ImportError as e:
+    print(f"[ComparisonWizardWindow] Warning: Could not import comparison registry: {e}")
+    COMPARISON_AVAILABLE = False
+    
+    # Create dummy classes if comparison module is not available
+    class ComparisonRegistry:
+        @staticmethod
+        def get_all_methods():
+            return ["Correlation Analysis", "Bland-Altman Analysis", "Residual Analysis"]
+        
+        @staticmethod
+        def get_all_categories():
+            return ["Statistical", "Agreement", "Error Analysis"]
+        
+        @staticmethod
+        def get_methods_by_category(category):
+            if category == "Statistical":
+                return ["correlation"]
+            elif category == "Agreement":
+                return ["bland_altman"]
+            elif category == "Error Analysis":
+                return ["residual"]
+            return []
+        
+        @staticmethod
+        def get_method_info(method_name):
+            return {
+                'name': method_name,
+                'description': f'Description for {method_name}',
+                'parameters': {},
+                'category': 'Statistical'
+            }
+        
+        @staticmethod
+        def create_method(method_name, **kwargs):
+            return None
+    
+    def load_all_comparisons(directory=None):
+        print(f"[ComparisonWizardWindow] Warning: Comparison module not available")
+        return False
 
 class ComparisonWizardWindow(QMainWindow):
     """
@@ -188,32 +233,99 @@ class ComparisonWizardWindow(QMainWindow):
         
         layout.addWidget(group)
         
+    def _generate_clean_display_name(self, comparison_cls, registry_name):
+        """Generate a clean, user-friendly display name from comparison class"""
+        if hasattr(comparison_cls, 'description') and comparison_cls.description:
+            description = comparison_cls.description
+            
+            # If description contains ' - ', take the first part
+            if ' - ' in description:
+                return description.split(' - ')[0]
+            
+            # If description contains 'analysis' or 'comparison', extract the key part
+            desc_lower = description.lower()
+            
+            # Common patterns to extract clean names
+            if desc_lower.startswith('histogram analysis'):
+                return 'Error Distribution Histogram'
+            elif desc_lower.startswith('time series analysis'):
+                return 'Relative Error Time Series'
+            elif desc_lower.startswith('cross-correlation analysis'):
+                return 'Time Lag Cross-Correlation'
+            elif 'correlation' in desc_lower and 'coefficients' in desc_lower:
+                return 'Correlation Analysis'
+            elif 'bland-altman' in desc_lower or 'bland altman' in desc_lower:
+                return 'Bland-Altman Analysis'
+            elif 'residual' in desc_lower and 'analysis' in desc_lower:
+                return 'Residual Analysis'
+            else:
+                # Try to extract first few meaningful words
+                words = description.split()
+                if len(words) >= 2:
+                    # Take first 2-3 significant words and add 'Analysis'
+                    significant_words = [w for w in words[:3] if len(w) > 2 and w.lower() not in ['of', 'the', 'and', 'with', 'for']]
+                    if significant_words:
+                        return ' '.join(significant_words[:2]).title() + ' Analysis'
+        
+        # Fallback: convert registry name to title case
+        return registry_name.replace('_', ' ').title() + ' Analysis'
+        
     def _populate_comparison_methods(self):
         """Populate comparison methods from the registry"""
         try:
-            # Initialize comparison registry if not already done
-            if not ComparisonRegistry._initialized:
+            if COMPARISON_AVAILABLE:
+                # Load comparison methods if not already done
                 load_all_comparisons()
-            
-            # Get methods from registry
-            methods = ComparisonRegistry.get_all_methods()
-            
-            if not methods:
-                # Fallback methods if registry is empty
-                methods = ["Bland-Altman Analysis", "Correlation Analysis", "Residual Analysis", "Statistical Tests", "Cross-Correlation"]
-                print("[ComparisonWizard] Using fallback methods - comparison registry may not be loaded")
-            
-            self.method_list.clear()
-            self.method_list.addItems(methods)
-            if methods:
-                self.method_list.setCurrentRow(0)  # Select first method by default
                 
-            print(f"[ComparisonWizard] Loaded {len(methods)} comparison methods from registry")
+                # Get methods from registry (these are registry names)
+                registry_methods = ComparisonRegistry.all_comparisons()
+                
+                if registry_methods:
+                    # Convert registry names to display names using comparison classes
+                    display_methods = []
+                    for registry_name in registry_methods:
+                        try:
+                            comparison_cls = ComparisonRegistry.get(registry_name)
+                            if comparison_cls:
+                                # Generate clean display name
+                                display_name = self._generate_clean_display_name(comparison_cls, registry_name)
+                                display_methods.append(display_name)
+                            else:
+                                display_methods.append(registry_name.replace('_', ' ').title() + ' Analysis')
+                        except Exception as e:
+                            print(f"[ComparisonWizard] Error getting display name for {registry_name}: {e}")
+                            display_methods.append(registry_name.replace('_', ' ').title() + ' Analysis')
+                    
+                    self.method_list.clear()
+                    self.method_list.addItems(display_methods)
+                    if display_methods:
+                        self.method_list.setCurrentRow(0)  # Select first method by default
+                        
+                    print(f"[ComparisonWizard] Loaded {len(display_methods)} comparison methods from registry")
+                    print(f"[ComparisonWizard] Registry names: {registry_methods}")
+                    print(f"[ComparisonWizard] Display names: {display_methods}")
+                else:
+                    # Fallback methods if registry is empty
+                    fallback_methods = ["Bland-Altman Analysis", "Correlation Analysis", "Residual Analysis"]
+                    self.method_list.clear()
+                    self.method_list.addItems(fallback_methods)
+                    if fallback_methods:
+                        self.method_list.setCurrentRow(0)
+                    print("[ComparisonWizard] Using fallback methods - comparison registry may not be loaded")
+                
+            else:
+                # Use fallback methods if comparison module not available
+                fallback_methods = ["Bland-Altman Analysis", "Correlation Analysis", "Residual Analysis"]
+                self.method_list.clear()
+                self.method_list.addItems(fallback_methods)
+                if fallback_methods:
+                    self.method_list.setCurrentRow(0)
+                print(f"[ComparisonWizard] Using {len(fallback_methods)} fallback comparison methods")
                 
         except Exception as e:
             print(f"[ComparisonWizard] Error populating methods: {e}")
             # Fallback methods
-            methods = ["Bland-Altman Analysis", "Correlation Analysis", "Residual Analysis", "Statistical Tests", "Cross-Correlation"]
+            methods = ["Bland-Altman Analysis", "Correlation Analysis", "Residual Analysis"]
             self.method_list.clear()
             self.method_list.addItems(methods)
             if methods:
@@ -303,39 +415,62 @@ class ComparisonWizardWindow(QMainWindow):
     def _create_dynamic_method_controls(self):
         """Create method controls dynamically from comparison registry"""
         try:
-            # Initialize comparison registry if not already done
-            if not ComparisonRegistry._initialized:
+            if COMPARISON_AVAILABLE:
+                # Load comparison methods if not already done
                 load_all_comparisons()
-            
-            # Get methods from registry
-            methods = ComparisonRegistry.get_all_methods()
-            
-            if methods:
-                print(f"[ComparisonWizard] Creating dynamic controls for methods: {methods}")
                 
-                for method_name in methods:
-                    try:
-                        method_info = ComparisonRegistry.get_method_info(method_name)
-                        if method_info:
-                            widget = self._create_controls_for_method(method_name, method_info)
-                            self.method_controls_stack.addWidget(widget)
-                            print(f"[ComparisonWizard] Created controls for {method_name}")
-                        else:
-                            print(f"[ComparisonWizard] No method info found for {method_name}")
+                # Get methods from registry (these are registry names)
+                registry_methods = ComparisonRegistry.all_comparisons()
+                
+                if registry_methods:
+                    # Convert registry names to display names using comparison classes
+                    display_methods = []
+                    for registry_name in registry_methods:
+                        try:
+                            comparison_cls = ComparisonRegistry.get(registry_name)
+                            if comparison_cls:
+                                # Generate clean display name
+                                display_name = self._generate_clean_display_name(comparison_cls, registry_name)
+                                display_methods.append(display_name)
+                            else:
+                                display_name = registry_name.replace('_', ' ').title() + ' Analysis'
+                                display_methods.append(display_name)
+                        except Exception as e:
+                            print(f"[ComparisonWizard] Error getting display name for {registry_name}: {e}")
+                            display_name = registry_name.replace('_', ' ').title() + ' Analysis'
+                            display_methods.append(display_name)
+                    
+                    print(f"[ComparisonWizard] Creating dynamic controls for methods: {display_methods}")
+                    
+                    for i, registry_name in enumerate(registry_methods):
+                        display_name = display_methods[i]
+                        try:
+                            # Use registry name directly since we have it
+                            comparison_cls = ComparisonRegistry.get(registry_name)
+                            if comparison_cls:
+                                method_info = comparison_cls().get_info()
+                                widget = self._create_controls_for_method(display_name, method_info)
+                                self.method_controls_stack.addWidget(widget)
+                                print(f"[ComparisonWizard] Created controls for {display_name} ({registry_name})")
+                            else:
+                                print(f"[ComparisonWizard] No comparison class found for {registry_name}")
+                                # Create a simple placeholder widget for this method
+                                placeholder = QWidget()
+                                placeholder_layout = QVBoxLayout(placeholder)
+                                placeholder_layout.addWidget(QLabel(f"No parameters available for {display_name}"))
+                                self.method_controls_stack.addWidget(placeholder)
+                        except Exception as method_error:
+                            print(f"[ComparisonWizard] Error creating controls for {display_name}: {method_error}")
                             # Create a simple placeholder widget for this method
                             placeholder = QWidget()
                             placeholder_layout = QVBoxLayout(placeholder)
-                            placeholder_layout.addWidget(QLabel(f"No parameters available for {method_name}"))
+                            placeholder_layout.addWidget(QLabel(f"Error loading controls for {display_name}"))
                             self.method_controls_stack.addWidget(placeholder)
-                    except Exception as method_error:
-                        print(f"[ComparisonWizard] Error creating controls for {method_name}: {method_error}")
-                        # Create a simple placeholder widget for this method
-                        placeholder = QWidget()
-                        placeholder_layout = QVBoxLayout(placeholder)
-                        placeholder_layout.addWidget(QLabel(f"Error loading controls for {method_name}"))
-                        self.method_controls_stack.addWidget(placeholder)
+                else:
+                    print("[ComparisonWizard] No methods available from registry, using static controls")
+                    self._create_static_method_controls()
             else:
-                print("[ComparisonWizard] No methods available from registry, using static controls")
+                print("[ComparisonWizard] Comparison module not available, using static controls")
                 self._create_static_method_controls()
                 
         except Exception as e:
@@ -350,14 +485,14 @@ class ComparisonWizardWindow(QMainWindow):
         self._create_correlation_controls()
         self._create_bland_altman_controls()
         self._create_residual_controls()
-        self._create_statistical_controls()
         
     def _create_controls_for_method(self, method_name, method_info):
         """Create controls for a specific comparison method"""
         widget = QWidget()
         layout = QFormLayout(widget)
         
-        parameters = method_info.get('parameters', {})
+        # Get parameters from the params list (new structure)
+        parameters = method_info.get('params', [])
         
         # Store parameter controls for later retrieval
         if not hasattr(self, '_method_controls'):
@@ -371,15 +506,21 @@ class ComparisonWizardWindow(QMainWindow):
             'bootstrap_ci', 'confidence_interval'
         }
         
-        for param_name, param_config in parameters.items():
+        # Process parameters from params list
+        for param_config in parameters:
+            param_name = param_config.get('name', '')
+            
             # Skip overlay-related parameters
             if param_name in overlay_params:
                 continue
                 
             control = self._create_parameter_control(param_name, param_config)
             if control:
-                # Use the shorter description for the label
-                label_text = param_config.get('description', param_name)
+                # Use the help text as the label
+                label_text = param_config.get('help', param_name)
+                # Truncate long help text for label
+                if len(label_text) > 50:
+                    label_text = param_name.replace('_', ' ').title()
                 layout.addRow(label_text + ":", control)
                 self._method_controls[method_name][param_name] = control
         
@@ -393,10 +534,10 @@ class ComparisonWizardWindow(QMainWindow):
     
     def _create_parameter_control(self, param_name, param_config):
         """Create appropriate control widget for a parameter"""
-        param_type = param_config.get('type', str)
+        param_type = param_config.get('type', 'str')
         default_value = param_config.get('default')
         choices = param_config.get('choices')
-        tooltip = param_config.get('tooltip', '')
+        tooltip = param_config.get('help', '')  # Use 'help' field for tooltip
         
         control = None
         
@@ -407,18 +548,18 @@ class ComparisonWizardWindow(QMainWindow):
             if default_value in choices:
                 control.setCurrentText(str(default_value))
                 
-        elif param_type == bool:
+        elif param_type == 'bool':
             # Checkbox for boolean
             control = QCheckBox()
             control.setChecked(bool(default_value))
             
-        elif param_type == int:
+        elif param_type == 'int':
             # Spinbox for integer
             control = QSpinBox()
             control.setRange(param_config.get('min', -999999), param_config.get('max', 999999))
             control.setValue(int(default_value) if default_value is not None else 0)
             
-        elif param_type == float:
+        elif param_type == 'float':
             # Double spinbox for float
             control = QDoubleSpinBox()
             control.setRange(param_config.get('min', -999999.0), param_config.get('max', 999999.0))
@@ -522,46 +663,7 @@ class ComparisonWizardWindow(QMainWindow):
         
         self.method_controls_stack.addWidget(widget)
         
-    def _create_statistical_controls(self):
-        """Create controls for statistical tests - computational parameters only"""
-        widget = QWidget()
-        layout = QFormLayout(widget)
-        
-        # Alpha level (significance level) - computational parameter
-        self.alpha_spin = QDoubleSpinBox()
-        self.alpha_spin.setRange(0.001, 0.1)
-        self.alpha_spin.setValue(0.05)
-        self.alpha_spin.setDecimals(3)
-        layout.addRow("Significance Level (α):", self.alpha_spin)
-        
-        # Test suite (computational parameter)
-        self.test_suite_combo = QComboBox()
-        self.test_suite_combo.addItems(["basic", "comprehensive", "nonparametric", "robust"])
-        layout.addRow("Test Suite:", self.test_suite_combo)
-        
-        # Equal variance assumption (computational parameter)
-        self.equal_var_combo = QComboBox()
-        self.equal_var_combo.addItems(["assume_equal", "assume_unequal", "test"])
-        layout.addRow("Equal Variance:", self.equal_var_combo)
-        
-        # Normality assumption (computational parameter)
-        self.normality_assume_combo = QComboBox()
-        self.normality_assume_combo.addItems(["assume_normal", "assume_nonnormal", "test"])
-        layout.addRow("Normality:", self.normality_assume_combo)
-        
-        # Multiple comparisons correction
-        self.multiple_comp_combo = QComboBox()
-        self.multiple_comp_combo.addItems(["none", "bonferroni", "holm", "fdr_bh"])
-        layout.addRow("Multiple Comparisons:", self.multiple_comp_combo)
-        
-        # Effect size measures
-        self.effect_size_checkbox = QCheckBox()
-        self.effect_size_checkbox.setChecked(True)
-        layout.addRow("Effect Size Measures:", self.effect_size_checkbox)
-        
-        # Note: confidence_intervals moved to overlay section
-        
-        self.method_controls_stack.addWidget(widget)
+
         
     def _create_alignment_group(self, layout):
         """Create alignment controls group (like mixer wizard alignment section)"""
@@ -1027,26 +1129,62 @@ class ComparisonWizardWindow(QMainWindow):
         self.tab_widget = QTabWidget()
         layout.addWidget(self.tab_widget)
         
-        # Add tabs
-        self._create_comparison_plot_tab()
-        self._create_statistics_tab()
-        self._create_results_tab()
+        # Add tabs in the new order
+        self._create_scatter_tab()      # Renamed from comparison_plot_tab
+        self._create_histogram_tab()    # New tab
+        self._create_heatmap_tab()      # New tab
+        self._create_statistics_tab()   # Keep existing
+        self._create_results_tab()      # Keep existing
         
-    def _create_comparison_plot_tab(self):
-        """Create the comparison plot tab"""
-        plot_tab = QWidget()
-        plot_layout = QVBoxLayout(plot_tab)
+    def _create_scatter_tab(self):
+        """Create the scatter plot tab (renamed from comparison plot tab)"""
+        scatter_tab = QWidget()
+        scatter_layout = QVBoxLayout(scatter_tab)
         
         # Matplotlib canvas (like process wizard - no plot controls)
         self.figure = plt.figure(figsize=(10, 6))
         self.canvas = FigureCanvas(self.figure)
         self.toolbar = NavigationToolbar(self.canvas, self)
         
-        plot_layout.addWidget(self.toolbar)
-        plot_layout.addWidget(self.canvas)
+        scatter_layout.addWidget(self.toolbar)
+        scatter_layout.addWidget(self.canvas)
         
-        self.tab_widget.addTab(plot_tab, "📊 Plot")
+        self.tab_widget.addTab(scatter_tab, "📊 Scatter")
         
+    def _create_histogram_tab(self):
+        """Create the histogram tab for distribution comparisons"""
+        histogram_tab = QWidget()
+        histogram_layout = QVBoxLayout(histogram_tab)
+        
+        # Matplotlib canvas for histogram
+        self.histogram_figure = plt.figure(figsize=(10, 6))
+        self.histogram_canvas = FigureCanvas(self.histogram_figure)
+        self.histogram_toolbar = NavigationToolbar(self.histogram_canvas, self)
+        
+        histogram_layout.addWidget(self.histogram_toolbar)
+        histogram_layout.addWidget(self.histogram_canvas)
+        
+        self.tab_widget.addTab(histogram_tab, "📊 Histogram")
+        
+    def _create_heatmap_tab(self):
+        """Create the heatmap tab for density visualizations"""
+        heatmap_tab = QWidget()
+        heatmap_layout = QVBoxLayout(heatmap_tab)
+        
+        # Matplotlib canvas for heatmap
+        self.heatmap_figure = plt.figure(figsize=(10, 6))
+        self.heatmap_canvas = FigureCanvas(self.heatmap_figure)
+        self.heatmap_toolbar = NavigationToolbar(self.heatmap_canvas, self)
+        
+        heatmap_layout.addWidget(self.heatmap_toolbar)
+        heatmap_layout.addWidget(self.heatmap_canvas)
+        
+        self.tab_widget.addTab(heatmap_tab, "📊 Heatmap")
+        
+    def _create_comparison_plot_tab(self):
+        """Legacy method - kept for backward compatibility, redirects to scatter tab"""
+        self._create_scatter_tab()
+    
     def _create_statistics_tab(self):
         """Create the statistics tab"""
         stats_tab = QWidget()
@@ -1245,10 +1383,9 @@ class ComparisonWizardWindow(QMainWindow):
     def _connect_overlay_signals(self):
         """Connect overlay option signals to plot update"""
         overlay_widgets = [
-            'y_equals_x_checkbox', 'ci_checkbox', 'confidence_bands_checkbox', 'outlier_checkbox',
-            'bias_line_checkbox', 'loa_checkbox', 'regression_line_checkbox', 'trend_line_checkbox',
-            'error_bands_checkbox', 'residual_stats_checkbox', 'density_overlay_checkbox',
-            'histogram_overlay_checkbox', 'stats_results_checkbox', 'custom_line_checkbox'
+            'y_equals_x_checkbox', 'ci_checkbox', 'outlier_checkbox',
+            'bias_line_checkbox', 'loa_checkbox', 'regression_line_checkbox',
+            'error_bands_checkbox', 'density_overlay_checkbox', 'stats_results_checkbox', 'custom_line_checkbox'
         ]
         
         for widget_name in overlay_widgets:
@@ -1418,60 +1555,38 @@ class ComparisonWizardWindow(QMainWindow):
         # Update console with method information
         self._update_console_for_method(method_name)
         
-        # Update overlay options based on method
+        # Update overlay options based on method (also sets default states)
         self._update_overlay_options(method_name)
-        
-        # Set default overlay states for the method
-        self._set_default_overlay_states(method_name)
         
         # No automatic plot update - only when Generate Plot button is clicked
 
-    def _set_default_overlay_states(self, method_name):
-        """Set default overlay states based on the selected method"""
-        try:
-            print(f"[ComparisonWizard] Setting default overlay states for: {method_name}")
-            
-            # Reset all to unchecked first
-            overlay_checkboxes = [
-                'y_equals_x_checkbox', 'ci_checkbox', 'confidence_bands_checkbox', 'outlier_checkbox',
-                'bias_line_checkbox', 'loa_checkbox', 'regression_line_checkbox', 'trend_line_checkbox',
-                'error_bands_checkbox', 'residual_stats_checkbox', 'density_overlay_checkbox',
-                'histogram_overlay_checkbox', 'stats_results_checkbox', 'custom_line_checkbox'
-            ]
-            
-            for checkbox_name in overlay_checkboxes:
-                if hasattr(self, checkbox_name):
-                    checkbox = getattr(self, checkbox_name)
-                    checkbox.setChecked(False)
-            
-            # Set method-specific defaults
-            if method_name == "Bland-Altman Analysis":
-                print("[ComparisonWizard] Setting Bland-Altman defaults: bias line and LoA")
-                if hasattr(self, 'bias_line_checkbox') and self.bias_line_checkbox.isVisible():
-                    self.bias_line_checkbox.setChecked(True)
-                    print("[ComparisonWizard] ✓ Bias line checkbox set to checked")
-                if hasattr(self, 'loa_checkbox') and self.loa_checkbox.isVisible():
-                    self.loa_checkbox.setChecked(True)
-                    print("[ComparisonWizard] ✓ LoA checkbox set to checked")
-                    
-            elif method_name == "Correlation Analysis":
-                print("[ComparisonWizard] Setting Correlation defaults: y=x line and regression line")
-                if hasattr(self, 'y_equals_x_checkbox') and self.y_equals_x_checkbox.isVisible():
-                    self.y_equals_x_checkbox.setChecked(True)
-                if hasattr(self, 'regression_line_checkbox') and self.regression_line_checkbox.isVisible():
-                    self.regression_line_checkbox.setChecked(True)
-                    
-            elif method_name == "Cross-Correlation":
-                print("[ComparisonWizard] Setting Cross-Correlation defaults: confidence bands")
-                if hasattr(self, 'confidence_bands_checkbox') and self.confidence_bands_checkbox.isVisible():
-                    self.confidence_bands_checkbox.setChecked(True)
-                    
-            print(f"[ComparisonWizard] Completed setting default overlay states for {method_name}")
-                    
-        except Exception as e:
-            print(f"[ComparisonWizard] Error setting default overlay states: {e}")
-            import traceback
-            traceback.print_exc()
+
+
+    def _get_registry_name_from_display_name(self, display_name):
+        """Map display names to registry names using the comparison registry"""
+        if COMPARISON_AVAILABLE:
+            try:
+                # Check each registered method to find matching display name
+                for registry_name in ComparisonRegistry.all_comparisons():
+                    comparison_cls = ComparisonRegistry.get(registry_name)
+                    if comparison_cls:
+                        # Generate display name and check if it matches
+                        if hasattr(comparison_cls, 'description'):
+                            method_display_name = comparison_cls.description.split(' - ')[0]
+                        else:
+                            method_display_name = registry_name.replace('_', ' ').title() + ' Analysis'
+                        
+                        if method_display_name == display_name:
+                            return registry_name
+                            
+                # Fallback: convert display name to registry name
+                return display_name.lower().replace(' analysis', '').replace(' ', '_')
+            except Exception as e:
+                print(f"[ComparisonWizard] Error converting display name {display_name}: {e}")
+                return display_name.lower().replace(' analysis', '').replace(' ', '_')
+        
+        # Fallback conversion if registry not available
+        return display_name.lower().replace(' analysis', '').replace(' ', '_')
 
     def _update_overlay_options(self, method_name):
         """Show or hide overlay options based on the selected method"""
@@ -1479,16 +1594,90 @@ class ComparisonWizardWindow(QMainWindow):
         for widget in self.overlay_widgets.values():
             widget.hide()
 
-        # Show specific overlays based on method
+        if COMPARISON_AVAILABLE:
+            # Try to get overlay options from the comparison method class
+            try:
+                # Map display names to registry names
+                method_registry_name = self._get_registry_name_from_display_name(method_name)
+                
+                if method_registry_name:
+                    comparison_cls = ComparisonRegistry.get(method_registry_name)
+                    
+                    if comparison_cls and hasattr(comparison_cls, 'overlay_options'):
+                        overlay_options = comparison_cls.overlay_options
+                        print(f"[ComparisonWizard] Found overlay options for {method_name}: {list(overlay_options.keys())}")
+                        
+                        # Map overlay option names to widget names
+                        option_to_widget = {
+                            'show_bias_line': 'bias_line',
+                            'show_limits_of_agreement': 'loa',
+                            'show_identity_line': 'y_equals_x',
+                            'show_regression_line': 'regression_line',
+                            'show_confidence_bands': 'ci',
+                            'confidence_interval': 'ci',
+                            'show_confidence_intervals': 'ci',
+                            'show_confidence_bounds': 'ci',
+                            'highlight_outliers': 'outlier',
+                            'detect_outliers': 'outlier',
+                            'show_density_overlay': 'density_overlay',
+                            'show_statistical_results': 'stats_results',
+                            'show_residual_statistics': 'stats_results',
+                            'show_effect_size': 'stats_results',
+                            'show_peak': 'stats_results',  # Cross-correlation peak info
+                            'show_custom_line': 'custom_line',
+                            'show_trend_line': 'regression_line'  # Residual trend line
+                        }
+                        
+                        # Show relevant widgets and set their default states
+                        for option_name, option_config in overlay_options.items():
+                            widget_name = option_to_widget.get(option_name)
+                            
+                            if widget_name and widget_name in self.overlay_widgets:
+                                # Show the widget
+                                self.overlay_widgets[widget_name].show()
+                                
+                                # Set default state
+                                checkbox_name = f"{widget_name}_checkbox"
+                                if hasattr(self, checkbox_name):
+                                    checkbox = getattr(self, checkbox_name)
+                                    default_state = option_config.get('default', False)
+                                    checkbox.setChecked(default_state)
+                                    print(f"[ComparisonWizard] Set {checkbox_name} to {default_state}")
+                        
+                        print(f"[ComparisonWizard] Successfully configured overlay options for {method_name}")
+                        return
+                        
+            except Exception as e:
+                print(f"[ComparisonWizard] Error getting overlay options for {method_name}: {e}")
+                import traceback
+                traceback.print_exc()
+
+        # Fallback to hardcoded options if registry lookup fails
+        print(f"[ComparisonWizard] Using fallback overlay options for {method_name}")
+        self._set_fallback_overlay_options(method_name)
+
+    def _set_fallback_overlay_options(self, method_name):
+        """Fallback method for overlay options if registry lookup fails"""
+        # Set method-specific overlay options and their default states
         if method_name == "Bland-Altman Analysis":
+            # Show relevant overlays
             self.overlay_widgets['ci'].show()
             self.overlay_widgets['bias_line'].show()
             self.overlay_widgets['loa'].show()
             self.overlay_widgets['outlier'].show()
-            self.overlay_widgets['stats_results'].show()
             self.overlay_widgets['custom_line'].show()
+            self.overlay_widgets['stats_results'].show()
+            
+            # Set default states to match comparison method defaults
+            self.ci_checkbox.setChecked(True)  # confidence_interval defaults to True
+            self.bias_line_checkbox.setChecked(True)  # show_bias_line defaults to True
+            self.loa_checkbox.setChecked(True)  # show_limits_of_agreement defaults to True
+            self.outlier_checkbox.setChecked(False)  # highlight_outliers defaults to False
+            self.custom_line_checkbox.setChecked(False)  # show_custom_line defaults to False
+            self.stats_results_checkbox.setChecked(False)  # show_statistical_results defaults to False
             
         elif method_name == "Correlation Analysis":
+            # Show relevant overlays
             self.overlay_widgets['y_equals_x'].show()
             self.overlay_widgets['ci'].show()
             self.overlay_widgets['regression_line'].show()
@@ -1497,27 +1686,27 @@ class ComparisonWizardWindow(QMainWindow):
             self.overlay_widgets['stats_results'].show()
             self.overlay_widgets['custom_line'].show()
             
+            # Set default states to match comparison method defaults
+            self.y_equals_x_checkbox.setChecked(False)  # show_identity_line defaults to False
+            self.ci_checkbox.setChecked(False)  # show_confidence_bands defaults to False
+            self.regression_line_checkbox.setChecked(False)  # show_regression_line defaults to False
+            self.outlier_checkbox.setChecked(False)  # highlight_outliers defaults to False
+            self.density_overlay_checkbox.setChecked(False)  # show_density_overlay defaults to False
+            self.stats_results_checkbox.setChecked(False)  # show_statistical_results defaults to False
+            self.custom_line_checkbox.setChecked(False)  # show_custom_line defaults to False
+            
         elif method_name == "Residual Analysis":
-            self.overlay_widgets['outlier'].show()
-            self.overlay_widgets['ci'].show()
-            self.overlay_widgets['trend_line'].show()
-            self.overlay_widgets['residual_stats'].show()
-            self.overlay_widgets['histogram_overlay'].show()
-            self.overlay_widgets['stats_results'].show()
-            self.overlay_widgets['custom_line'].show()
+            # Show relevant overlays  
+            self.overlay_widgets['outlier'].show()  # detect_outliers
+            self.overlay_widgets['regression_line'].show()  # show_trend_line
+            self.overlay_widgets['stats_results'].show()  # show_residual_statistics
+            self.overlay_widgets['custom_line'].show()  # custom_line
             
-        elif method_name == "Statistical Tests":
-            self.overlay_widgets['ci'].show()
-            self.overlay_widgets['outlier'].show()
-            self.overlay_widgets['y_equals_x'].show()
-            self.overlay_widgets['stats_results'].show()
-            self.overlay_widgets['custom_line'].show()
-            
-        elif method_name == "Cross-Correlation":
-            self.overlay_widgets['confidence_bands'].show()
-            self.overlay_widgets['trend_line'].show()
-            self.overlay_widgets['stats_results'].show()
-            self.overlay_widgets['custom_line'].show()
+            # Set default states to match comparison method defaults
+            self.outlier_checkbox.setChecked(True)  # detect_outliers defaults to True
+            self.regression_line_checkbox.setChecked(False)  # show_trend_line defaults to False
+            self.stats_results_checkbox.setChecked(False)  # show_residual_statistics defaults to False
+            self.custom_line_checkbox.setChecked(False)  # show_custom_line defaults to False
             
         # Default case - show basic overlays
         else:
@@ -1526,28 +1715,31 @@ class ComparisonWizardWindow(QMainWindow):
             self.overlay_widgets['outlier'].show()
             self.overlay_widgets['stats_results'].show()
             self.overlay_widgets['custom_line'].show()
+            
+            # Set conservative defaults
+            self.y_equals_x_checkbox.setChecked(False)
+            self.ci_checkbox.setChecked(False)
+            self.outlier_checkbox.setChecked(False)
+            self.stats_results_checkbox.setChecked(False)
+            self.custom_line_checkbox.setChecked(False)
 
     def _create_overlay_options(self, layout):
-        """Create comprehensive overlay options group - only display-related toggles"""
+        """Create streamlined overlay options group - only essential display toggles"""
         self.overlay_group = QGroupBox("Overlay Options")
         self.overlay_group.setStyleSheet("QGroupBox { font-weight: bold; }")
         self.overlay_layout = QVBoxLayout(self.overlay_group)
 
-        # Identity/reference lines
+        # Essential reference lines
         self.y_equals_x_checkbox = QCheckBox("Show y = x Line")
         self.y_equals_x_checkbox.setToolTip("Show identity line for perfect agreement reference")
         self.overlay_layout.addWidget(self.y_equals_x_checkbox)
 
-        # Confidence intervals and bands
+        # Confidence intervals
         self.ci_checkbox = QCheckBox("Show Confidence Intervals")
         self.ci_checkbox.setToolTip("Show confidence intervals around statistics")
         self.overlay_layout.addWidget(self.ci_checkbox)
 
-        self.confidence_bands_checkbox = QCheckBox("Show Confidence Bands")
-        self.confidence_bands_checkbox.setToolTip("Show confidence bands (for cross-correlation and time series)")
-        self.overlay_layout.addWidget(self.confidence_bands_checkbox)
-
-        # Outlier detection and highlighting
+        # Outlier detection
         self.outlier_checkbox = QCheckBox("Highlight Outliers")
         self.outlier_checkbox.setToolTip("Identify and highlight statistical outliers on the plot")
         self.overlay_layout.addWidget(self.outlier_checkbox)
@@ -1561,44 +1753,32 @@ class ComparisonWizardWindow(QMainWindow):
         self.loa_checkbox.setToolTip("Show limits of agreement (±1.96×SD of differences)")
         self.overlay_layout.addWidget(self.loa_checkbox)
 
-        # Regression and trend lines
-        self.regression_line_checkbox = QCheckBox("Show Regression Line")
-        self.regression_line_checkbox.setToolTip("Show linear regression line (best fit)")
-        self.overlay_layout.addWidget(self.regression_line_checkbox)
-
-        self.trend_line_checkbox = QCheckBox("Show Trend Line")
-        self.trend_line_checkbox.setToolTip("Show trend line for time series or residual patterns")
-        self.overlay_layout.addWidget(self.trend_line_checkbox)
-
-        # Error analysis overlays
-        self.error_bands_checkbox = QCheckBox("Show Error Bands")
-        self.error_bands_checkbox.setToolTip("Show ±RMSE error bands around identity line")
-        self.overlay_layout.addWidget(self.error_bands_checkbox)
-
-        self.residual_stats_checkbox = QCheckBox("Show Residual Statistics")
-        self.residual_stats_checkbox.setToolTip("Display residual statistics on the plot")
-        self.overlay_layout.addWidget(self.residual_stats_checkbox)
-
-        # Distribution overlays
-        self.density_overlay_checkbox = QCheckBox("Show Density Overlay")
-        self.density_overlay_checkbox.setToolTip("Show kernel density estimation overlay")
-        self.overlay_layout.addWidget(self.density_overlay_checkbox)
-
-        self.histogram_overlay_checkbox = QCheckBox("Show Histogram Overlay")
-        self.histogram_overlay_checkbox.setToolTip("Show histogram overlay for distributions")
-        self.overlay_layout.addWidget(self.histogram_overlay_checkbox)
-
-        # Statistical test results
+        # Statistical results (restored for Bland-Altman)
         self.stats_results_checkbox = QCheckBox("Show Statistical Results")
         self.stats_results_checkbox.setToolTip("Display statistical test results on the plot")
         self.overlay_layout.addWidget(self.stats_results_checkbox)
 
-        # Custom line option (general purpose)
+        # Regression line
+        self.regression_line_checkbox = QCheckBox("Show Regression Line")
+        self.regression_line_checkbox.setToolTip("Show linear regression line (best fit)")
+        self.overlay_layout.addWidget(self.regression_line_checkbox)
+
+        # Error bands
+        self.error_bands_checkbox = QCheckBox("Show Error Bands")
+        self.error_bands_checkbox.setToolTip("Show ±RMSE error bands around identity line")
+        self.overlay_layout.addWidget(self.error_bands_checkbox)
+
+        # Density overlay
+        self.density_overlay_checkbox = QCheckBox("Show Density Overlay")
+        self.density_overlay_checkbox.setToolTip("Show density contour overlay for data distribution")
+        self.overlay_layout.addWidget(self.density_overlay_checkbox)
+
+        # Custom line option
         self.custom_line_widget = QWidget()
         custom_line_layout = QHBoxLayout(self.custom_line_widget)
         custom_line_layout.setContentsMargins(0, 0, 0, 0)
         self.custom_line_checkbox = QCheckBox("Custom Line (y = ")
-        self.custom_line_checkbox.setToolTip("Add a custom horizontal or diagonal line to the plot")
+        self.custom_line_checkbox.setToolTip("Add a custom horizontal line to the plot")
         self.custom_line_edit = QLineEdit("0.0")
         self.custom_line_edit.setMaximumWidth(60)
         custom_line_layout.addWidget(self.custom_line_checkbox)
@@ -1611,16 +1791,12 @@ class ComparisonWizardWindow(QMainWindow):
         self.overlay_widgets = {
             'y_equals_x': self.y_equals_x_checkbox,
             'ci': self.ci_checkbox,
-            'confidence_bands': self.confidence_bands_checkbox,
             'outlier': self.outlier_checkbox,
             'bias_line': self.bias_line_checkbox,
             'loa': self.loa_checkbox,
             'regression_line': self.regression_line_checkbox,
-            'trend_line': self.trend_line_checkbox,
             'error_bands': self.error_bands_checkbox,
-            'residual_stats': self.residual_stats_checkbox,
             'density_overlay': self.density_overlay_checkbox,
-            'histogram_overlay': self.histogram_overlay_checkbox,
             'stats_results': self.stats_results_checkbox,
             'custom_line': self.custom_line_widget
         }
@@ -1772,8 +1948,8 @@ class ComparisonWizardWindow(QMainWindow):
                     'Correlation Analysis': 'pearson',
                     'Bland-Altman Analysis': 'bland_altman', 
                     'Residual Analysis': 'residual',
-                    'Statistical Tests': 'scatter',
-                    'Cross-Correlation': 'cross_correlation'
+        
+
                 }
                 plot_type = method_to_plot_type.get(method_name, 'scatter')
             config['plot_type'] = plot_type
@@ -2295,20 +2471,7 @@ class ComparisonWizardWindow(QMainWindow):
                 if hasattr(self, 'autocorr_checkbox'):
                     parameters['autocorrelation_test'] = self.autocorr_checkbox.isChecked()
                     
-            elif method_name == "Statistical Tests":
-                if hasattr(self, 'alpha_spin'):
-                    parameters['significance_level'] = self.alpha_spin.value()
-                if hasattr(self, 'test_suite_combo'):
-                    parameters['test_suite'] = self.test_suite_combo.currentText()
-                if hasattr(self, 'equal_var_combo'):
-                    parameters['equal_variance_assumption'] = self.equal_var_combo.currentText()
-                if hasattr(self, 'normality_assume_combo'):
-                    parameters['normality_assumption'] = self.normality_assume_combo.currentText()
-                if hasattr(self, 'multiple_comp_combo'):
-                    parameters['multiple_comparisons'] = self.multiple_comp_combo.currentText()
-                if hasattr(self, 'effect_size_checkbox'):
-                    parameters['effect_size_measures'] = self.effect_size_checkbox.isChecked()
-                    
+
         except Exception as e:
             print(f"[ComparisonWizard] Error getting static control parameters: {e}")
         
@@ -2332,14 +2495,35 @@ class ComparisonWizardWindow(QMainWindow):
                 overlay_params['show_identity_line'] = self.y_equals_x_checkbox.isChecked()
                 
             if hasattr(self, 'ci_checkbox') and self.ci_checkbox.isVisible():
-                overlay_params['confidence_interval'] = self.ci_checkbox.isChecked()  # Match expected name
+                # Map confidence interval checkbox to method-specific parameter names
+                current_item = self.method_list.currentItem()
+                method_name = current_item.text() if current_item else ""
+                
+                if method_name == "Bland-Altman Analysis":
+                    overlay_params['confidence_interval'] = self.ci_checkbox.isChecked()
+                elif method_name == "Correlation Analysis":
+                    overlay_params['show_confidence_bands'] = self.ci_checkbox.isChecked()
+
+                elif method_name == "Residual Analysis":
+                    # For residual analysis, confidence level is used for outlier detection
+                    # The confidence_interval parameter is not used, but confidence_level is
+                    # We'll use the confidence_level parameter that's already set below
+                    pass
+                else:
+                    # Default fallback
+                    overlay_params['confidence_interval'] = self.ci_checkbox.isChecked()
+                
                 overlay_params['confidence_level'] = 0.95  # Default confidence level
                 
-            if hasattr(self, 'confidence_bands_checkbox') and self.confidence_bands_checkbox.isVisible():
-                overlay_params['show_confidence_bands'] = self.confidence_bands_checkbox.isChecked()
-                
             if hasattr(self, 'outlier_checkbox') and self.outlier_checkbox.isVisible():
-                overlay_params['highlight_outliers'] = self.outlier_checkbox.isChecked()
+                # For residual analysis, map to detect_outliers parameter
+                current_item = self.method_list.currentItem()
+                method_name = current_item.text() if current_item else ""
+                
+                if method_name == "Residual Analysis":
+                    overlay_params['detect_outliers'] = self.outlier_checkbox.isChecked()
+                else:
+                    overlay_params['highlight_outliers'] = self.outlier_checkbox.isChecked()
                 
             if hasattr(self, 'bias_line_checkbox') and self.bias_line_checkbox.isVisible():
                 overlay_params['show_bias_line'] = self.bias_line_checkbox.isChecked()
@@ -2350,31 +2534,35 @@ class ComparisonWizardWindow(QMainWindow):
             if hasattr(self, 'regression_line_checkbox') and self.regression_line_checkbox.isVisible():
                 overlay_params['show_regression_line'] = self.regression_line_checkbox.isChecked()
                 
-            if hasattr(self, 'trend_line_checkbox') and self.trend_line_checkbox.isVisible():
-                overlay_params['show_trend_line'] = self.trend_line_checkbox.isChecked()
-                
             if hasattr(self, 'error_bands_checkbox') and self.error_bands_checkbox.isVisible():
                 overlay_params['show_error_bands'] = self.error_bands_checkbox.isChecked()
-                
-            if hasattr(self, 'residual_stats_checkbox') and self.residual_stats_checkbox.isVisible():
-                overlay_params['show_residual_statistics'] = self.residual_stats_checkbox.isChecked()
                 
             if hasattr(self, 'density_overlay_checkbox') and self.density_overlay_checkbox.isVisible():
                 overlay_params['show_density_overlay'] = self.density_overlay_checkbox.isChecked()
                 
-            if hasattr(self, 'histogram_overlay_checkbox') and self.histogram_overlay_checkbox.isVisible():
-                overlay_params['show_histogram_overlay'] = self.histogram_overlay_checkbox.isChecked()
-                
             if hasattr(self, 'stats_results_checkbox') and self.stats_results_checkbox.isVisible():
-                overlay_params['show_statistical_results'] = self.stats_results_checkbox.isChecked()
+                # Map stats results checkbox to method-specific parameter names
+                current_item = self.method_list.currentItem()
+                method_name = current_item.text() if current_item else ""
                 
-            if hasattr(self, 'custom_line_checkbox') and self.custom_line_checkbox.isVisible() and self.custom_line_checkbox.isChecked():
-                try:
-                    custom_value = float(self.custom_line_edit.text())
-                    overlay_params['custom_line'] = custom_value  # Match expected name
-                except (ValueError, AttributeError):
-                    overlay_params['custom_line'] = 0.0
+                if method_name == "Residual Analysis":
+                    overlay_params['show_residual_statistics'] = self.stats_results_checkbox.isChecked()
+                else:
+                    overlay_params['show_statistical_results'] = self.stats_results_checkbox.isChecked()
+                
+            if hasattr(self, 'custom_line_checkbox') and self.custom_line_checkbox.isVisible():
+                if self.custom_line_checkbox.isChecked():
+                    try:
+                        custom_value = float(self.custom_line_edit.text())
+                        overlay_params['show_custom_line'] = True
+                        overlay_params['custom_line_value'] = custom_value
+                    except (ValueError, AttributeError):
+                        overlay_params['show_custom_line'] = True
+                        overlay_params['custom_line_value'] = 0.0
+                else:
+                    overlay_params['show_custom_line'] = False
             
+            # Debug: Print overlay parameters
             print(f"[ComparisonWizard] Overlay parameters for {method_name}: {overlay_params}")
                     
         except Exception as e:
@@ -2570,31 +2758,35 @@ class ComparisonWizardWindow(QMainWindow):
         try:
             print("[ComparisonWizard] Starting comparison data refresh...")
             
-            # Repopulate comparison methods
-            self._populate_comparison_methods()
-            
-            # Recreate dynamic method controls
-            if hasattr(self, 'method_controls_stack'):
-                print(f"[ComparisonWizard] Clearing {self.method_controls_stack.count()} existing controls")
+            if COMPARISON_AVAILABLE:
+                # Repopulate comparison methods
+                self._populate_comparison_methods()
                 
-                # Clear existing controls
-                while self.method_controls_stack.count() > 0:
-                    widget = self.method_controls_stack.widget(0)
-                    self.method_controls_stack.removeWidget(widget)
-                    if widget:
-                        widget.deleteLater()
-                
-                # Recreate controls
-                self._create_dynamic_method_controls()
-                
-                # Update current method selection
-                if self.method_list.currentItem():
-                    current_row = self.method_list.currentRow()
-                    if current_row < self.method_controls_stack.count():
-                        self.method_controls_stack.setCurrentIndex(current_row)
-                        print(f"[ComparisonWizard] Set method controls to index {current_row}")
-                        
-            print("[ComparisonWizard] Successfully refreshed comparison data from registry")
+                # Recreate dynamic method controls
+                if hasattr(self, 'method_controls_stack'):
+                    print(f"[ComparisonWizard] Clearing {self.method_controls_stack.count()} existing controls")
+                    
+                    # Clear existing controls
+                    while self.method_controls_stack.count() > 0:
+                        widget = self.method_controls_stack.widget(0)
+                        self.method_controls_stack.removeWidget(widget)
+                        if widget:
+                            widget.deleteLater()
+                    
+                    # Recreate controls
+                    self._create_dynamic_method_controls()
+                    
+                    # Update current method selection
+                    if self.method_list.currentItem():
+                        current_row = self.method_list.currentRow()
+                        if current_row < self.method_controls_stack.count():
+                            self.method_controls_stack.setCurrentIndex(current_row)
+                            print(f"[ComparisonWizard] Set method controls to index {current_row}")
+                            
+                print("[ComparisonWizard] Successfully refreshed comparison data from registry")
+            else:
+                print("[ComparisonWizard] Comparison module not available, using fallback methods")
+                self._populate_comparison_methods()
             
         except Exception as e:
             print(f"[ComparisonWizard] Error refreshing comparison data: {e}")
@@ -3033,11 +3225,7 @@ class ComparisonWizardWindow(QMainWindow):
                     if method_params.get('trend_analysis'):
                         self.console_output.append("   ✓ Trend analysis enabled")
                         
-                elif method_name == "Statistical Tests":
-                    alpha = method_params.get('significance_level', 0.05)
-                    test_suite = method_params.get('test_suite', 'basic')
-                    self.console_output.append(f"   Significance Level: α = {alpha}")
-                    self.console_output.append(f"   Test Suite: {test_suite}")
+
             
             # Show overlay settings
             overlay_info = []

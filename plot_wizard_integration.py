@@ -369,8 +369,9 @@ def create_integrated_plot_wizard(wizard_type: str, file_manager=None, channel_m
         from signal_mixer_wizard_refactored import SignalMixerWizardRefactored
         plot_wizard = SignalMixerWizardRefactored(file_manager, channel_manager, signal_bus, parent)
     elif wizard_type == 'comparison':
-        from comparison_wizard_refactored import ComparisonWizardRefactored
-        plot_wizard = ComparisonWizardRefactored(file_manager, channel_manager, signal_bus, parent)
+        # Use the current window-based comparison wizard
+        from comparison_wizard_manager import ComparisonWizardManager
+        plot_wizard = ComparisonWizardManager(file_manager, channel_manager, signal_bus, parent)
     elif wizard_type == 'plot':
         from plot_wizard_refactored import PlotWizardRefactored
         plot_wizard = PlotWizardRefactored(file_manager, channel_manager, signal_bus, parent)

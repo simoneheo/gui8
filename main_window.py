@@ -1446,12 +1446,12 @@ Recommendations:
             # Overall summary
             self.log_message(f"Process Wizard created {len(new_channels)} new channels:", "success")
             
-            # Build tree structure by grouping channels by lineage and sorting by step
-            trees = self._build_channel_tree(new_channels)
+            # # Build tree structure by grouping channels by lineage and sorting by step
+            # trees = self._build_channel_tree(new_channels)
             
-            # Display each tree
-            for tree in trees:
-                self._display_channel_tree(tree, 0)
+            # # Display each tree
+            # for tree in trees:
+            #     self._display_channel_tree(tree, 0)
         else:
             self.log_message("Process Wizard closed - no new channels created", "info")
         

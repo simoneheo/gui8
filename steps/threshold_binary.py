@@ -26,7 +26,7 @@ The comparison operators work as follows:
 • **<=**: Values less than or equal to threshold → 1
 • **==**: Values equal to threshold (within tolerance) → 1
 • **!=**: Values not equal to threshold → 1"""
-    tags = ["time-series", "binary", "threshold", "detection"]
+    tags = ["time-series", "binary", "threshold", "detection", "decision", "classify"]
     params = [
         {
             "name": "threshold", 
@@ -52,123 +52,84 @@ The comparison operators work as follows:
         return {"info": cls.description, "params": cls.params}
 
     @classmethod
-    def parse_input(cls, user_input: dict) -> dict:
-        parsed = {}
+    def _validate_input_data(cls, y: np.ndarray) -> None:
+        """Validate input signal data"""
+        if len(y) == 0:
+            raise ValueError("Input signal is empty")
+        if np.all(np.isnan(y)):
+            raise ValueError("Signal contains only NaN values")
+
+    @classmethod
+    def _validate_parameters(cls, params: dict) -> None:
+        """Validate parameters and business rules"""
+        threshold = params.get("threshold")
+        operator = params.get("operator", ">")
         
-        try:
-            # Parse threshold parameter
-            threshold_val = user_input.get("threshold", "0.0")
-            
-            # Handle both string and numeric inputs
-            if isinstance(threshold_val, str):
-                threshold_val = threshold_val.strip()
-                if not threshold_val:
-                    raise ValueError("Threshold parameter cannot be empty")
-                try:
-                    threshold = float(threshold_val)
-                except ValueError:
-                    raise ValueError(f"Threshold must be a valid number, got '{threshold_val}'")
-            elif isinstance(threshold_val, (int, float)):
-                threshold = float(threshold_val)
-            else:
-                raise ValueError(f"Threshold must be a number, got {type(threshold_val).__name__}: {threshold_val}")
-            
-            # Validate threshold value
-            if np.isnan(threshold):
-                raise ValueError("Threshold cannot be NaN")
-            if np.isinf(threshold):
-                raise ValueError("Threshold cannot be infinite")
-            
-            parsed["threshold"] = threshold
-            
-            # Parse operator parameter
-            operator = user_input.get("operator", ">")
-            
-            # Handle string input (strip if it's a string)
-            if isinstance(operator, str):
-                operator = operator.strip()
-            else:
-                raise ValueError(f"Operator must be a string, got {type(operator).__name__}: {operator}")
-            
-            # Validate operator
-            valid_operators = [">", ">=", "<", "<=", "==", "!="]
-            if operator not in valid_operators:
-                raise ValueError(f"Operator must be one of {valid_operators}, got '{operator}'")
-            
-            parsed["operator"] = operator
-            
-            return parsed
-            
-        except Exception as e:
-            if isinstance(e, ValueError):
+        if np.isnan(threshold):
+            raise ValueError("Threshold cannot be NaN")
+        if np.isinf(threshold):
+            raise ValueError("Threshold cannot be infinite")
+        
+        valid_operators = [">", ">=", "<", "<=", "==", "!="]
+        if operator not in valid_operators:
+            raise ValueError(f"Operator must be one of {valid_operators}, got '{operator}'")
+
+    @classmethod
+    def _validate_output_data(cls, y_original: np.ndarray, y_new: np.ndarray) -> None:
+        """Validate output signal data"""
+        if len(y_new) != len(y_original):
+            raise ValueError("Output signal length differs from input")
+        
+        # Ensure output is actually binary
+        unique_values = np.unique(y_new[~np.isnan(y_new)])
+        if not np.all(np.isin(unique_values, [0, 1])):
+            raise ValueError(f"Threshold operation produced non-binary values: {unique_values}")
+
+    @classmethod
+    def parse_input(cls, user_input: dict) -> dict:
+        """Parse and validate user input parameters"""
+        parsed = {}
+        for param in cls.params:
+            name = param["name"]
+            val = user_input.get(name, param.get("default"))
+            try:
+                if val == "":
+                    parsed[name] = None
+                elif param["type"] == "float":
+                    parsed[name] = float(val)
+                elif param["type"] == "int":
+                    parsed[name] = int(val)
+                else:
+                    parsed[name] = val
+            except ValueError as e:
+                if "could not convert" in str(e) or "invalid literal" in str(e):
+                    raise ValueError(f"{name} must be a valid {param['type']}")
                 raise e
-            else:
-                raise ValueError(f"Failed to parse threshold binary parameters: {str(e)}")
+        return parsed
 
     @classmethod
     def apply(cls, channel: Channel, params: dict) -> Channel:
-        # Input validation
-        if channel is None:
-            raise ValueError("Input channel cannot be None")
-        
-        if not hasattr(channel, 'ydata') or channel.ydata is None:
-            raise ValueError("Channel must have valid signal data (ydata)")
-        
-        if not hasattr(channel, 'xdata') or channel.xdata is None:
-            raise ValueError("Channel must have valid time data (xdata)")
-        
-        y = channel.ydata
-        x = channel.xdata
-        
-        # Data validation
-        if len(y) == 0:
-            raise ValueError("Signal data cannot be empty")
-        
-        if len(x) != len(y):
-            raise ValueError(f"Time and signal data length mismatch: {len(x)} vs {len(y)}")
-        
-        # Check for all NaN values
-        if np.all(np.isnan(y)):
-            raise ValueError("Signal contains only NaN values")
-        
-        # Extract parameters
-        threshold = params.get('threshold', 0.0)
-        operator = params.get('operator', '>')
-        
+        """Apply threshold binary conversion to the channel data."""
         try:
-            # Apply threshold with specified operator
-            if operator == ">":
-                y_new = np.where(y > threshold, 1, 0)
-            elif operator == ">=":
-                y_new = np.where(y >= threshold, 1, 0)
-            elif operator == "<":
-                y_new = np.where(y < threshold, 1, 0)
-            elif operator == "<=":
-                y_new = np.where(y <= threshold, 1, 0)
-            elif operator == "==":
-                # Use tolerance for floating point comparison
-                tolerance = np.finfo(float).eps * 100
-                y_new = np.where(np.abs(y - threshold) <= tolerance, 1, 0)
-            elif operator == "!=":
-                # Use tolerance for floating point comparison
-                tolerance = np.finfo(float).eps * 100
-                y_new = np.where(np.abs(y - threshold) > tolerance, 1, 0)
-            else:
-                raise ValueError(f"Unknown operator: {operator}")
+            x = channel.xdata
+            y = channel.ydata
             
-            # Validate output
-            if len(y_new) != len(y):
-                raise ValueError(f"Threshold operation changed signal length: {len(y)} -> {len(y_new)}")
+            # Validate input data and parameters
+            cls._validate_input_data(y)
+            cls._validate_parameters(params)
             
-            # Ensure output is actually binary
-            unique_values = np.unique(y_new[~np.isnan(y_new)])
-            if not np.all(np.isin(unique_values, [0, 1])):
-                raise ValueError(f"Threshold operation produced non-binary values: {unique_values}")
+            # Process the data
+            y_new = cls.script(x, y, params)
+            
+            # Validate output data
+            cls._validate_output_data(y, y_new)
             
             # Create descriptive suffix
+            threshold = params.get("threshold", 0.0)
+            operator = params.get("operator", ">")
             suffix = f"Thresh{operator}{threshold:g}"
             
-            # Create output channel with appropriate labels
+            # Create output channel
             new_channel = cls.create_new_channel(
                 parent=channel, 
                 xdata=x, 
@@ -188,3 +149,31 @@ The comparison operators work as follows:
                 raise e
             else:
                 raise ValueError(f"Threshold binary operation failed: {str(e)}")
+
+    @classmethod
+    def script(cls, x: np.ndarray, y: np.ndarray, params: dict) -> np.ndarray:
+        """Core processing logic for threshold binary conversion"""
+        threshold = params.get("threshold", 0.0)
+        operator = params.get("operator", ">")
+        
+        # Apply threshold with specified operator
+        if operator == ">":
+            y_new = np.where(y > threshold, 1, 0)
+        elif operator == ">=":
+            y_new = np.where(y >= threshold, 1, 0)
+        elif operator == "<":
+            y_new = np.where(y < threshold, 1, 0)
+        elif operator == "<=":
+            y_new = np.where(y <= threshold, 1, 0)
+        elif operator == "==":
+            # Use tolerance for floating point comparison
+            tolerance = np.finfo(float).eps * 100
+            y_new = np.where(np.abs(y - threshold) <= tolerance, 1, 0)
+        elif operator == "!=":
+            # Use tolerance for floating point comparison
+            tolerance = np.finfo(float).eps * 100
+            y_new = np.where(np.abs(y - threshold) > tolerance, 1, 0)
+        else:
+            raise ValueError(f"Unknown operator: {operator}")
+        
+        return y_new

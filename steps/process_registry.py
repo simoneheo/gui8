@@ -19,6 +19,13 @@ class _ProcessRegistry:
     def get(self, name: str) -> Type[BaseStep]:
         return self._registry[name]
 
+    def has_script_method(self, name: str) -> bool:
+        """Check if a step has a script method available for editing"""
+        if name not in self._registry:
+            return False
+        step_cls = self._registry[name]
+        return hasattr(step_cls, 'script') and callable(getattr(step_cls, 'script', None))
+
     def all(self) -> Dict[str, Type[BaseStep]]:
         return self._registry.copy()
 

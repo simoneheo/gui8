@@ -1,9 +1,9 @@
 # steps/base_step.py
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
 from channel import Channel  # Import the Channel class
 import numpy as np
+from typing import Optional, Dict, Any, List
 
 
 class BaseStep(ABC):
@@ -71,20 +71,75 @@ class BaseStep(ABC):
         Automatically inject fs from parent channel if the processing function requires it.
         """
         if "fs" in func.__code__.co_varnames:
-            params["fs"] = channel.fs_median
-            print(f"[{cls.name}Step] Injected fs={channel.fs_median:.2f} from parent channel")
+            fs = cls._get_channel_fs(channel)
+            if fs is not None:
+                params["fs"] = fs
+                print(f"[{cls.name}Step] Injected fs={fs:.2f} from parent channel")
+            else:
+                print(f"[{cls.name}Step] Warning: Could not extract sampling frequency from channel")
         return params
 
     @classmethod
-    def create_new_channel(cls, parent: Channel, xdata: np.ndarray, ydata: np.ndarray, params: dict) -> Channel:
+    def _get_channel_fs(cls, channel: Channel) -> Optional[float]:
+        """
+        Extract sampling frequency from a channel using the correct attribute hierarchy.
+        
+        Args:
+            channel: Channel object to extract fs from
+            
+        Returns:
+            float: Sampling frequency in Hz, or None if not available
+        """
+        # Priority 1: Use fs_median (primary source in Channel class)
+        fs = getattr(channel, 'fs_median', None)
+        if fs is not None and fs > 0:
+            return fs
+        
+        # Priority 2: Fallback to fs attribute (backwards compatibility)
+        fs = getattr(channel, 'fs', None)
+        if fs is not None and fs > 0:
+            return fs
+        
+        # Priority 3: Try to calculate from sampling_stats
+        if hasattr(channel, 'sampling_stats') and channel.sampling_stats:
+            fs = getattr(channel.sampling_stats, 'median_fs', None)
+            if fs is not None and fs > 0:
+                return fs
+        
+        # Priority 4: Try to calculate from time data if available
+        if hasattr(channel, 'xdata') and channel.xdata is not None and len(channel.xdata) > 1:
+            try:
+                time_diffs = np.diff(channel.xdata)
+                valid_diffs = time_diffs[time_diffs > 0]
+                if len(valid_diffs) > 0:
+                    median_dt = np.median(valid_diffs)
+                    if median_dt > 0:
+                        return 1.0 / median_dt
+            except Exception as e:
+                print(f"[{cls.name}Step] Error calculating fs from time data: {e}")
+        
+        return None
+
+    @classmethod
+    def create_new_channel(cls, parent: Channel, xdata: np.ndarray, ydata: np.ndarray, params: dict, suffix: str = None) -> Channel:
         """
         Helper method to create a new channel with consistent parameter handling.
+        
+        Args:
+            parent: Parent channel to inherit properties from
+            xdata: Time/index data for the new channel
+            ydata: Signal data for the new channel
+            params: Parameters used for processing
+            suffix: Optional suffix for the channel name (defaults to step name)
         """
+        # Use provided suffix or default to step name
+        name_suffix = suffix if suffix else cls.name
+        
         return Channel.from_parent(
             parent=parent,
             xdata=xdata,
             ydata=ydata,
-            legend_label=f"{parent.legend_label} - {cls.name}",
+            legend_label=f"{parent.legend_label} - {name_suffix}",
             description=cls.description,
             tags=cls.tags,
             params=params  # Pass the parameters to the new channel

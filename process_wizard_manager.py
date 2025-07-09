@@ -31,6 +31,9 @@ class ProcessWizardManager:
         # Processing state
         self.pending_step = None
         
+        # Script tracking for customization detection
+        self.original_script_content = ""  # Store original script content for comparison
+        
         # Undo state tracking
         self.undo_stack = []  # List of (step_name, parent_channel_id, new_channel_ids) tuples
         self.max_undo_steps = 10  # Maximum number of undo steps to remember
@@ -479,22 +482,23 @@ class ProcessWizardManager:
                 import traceback
                 traceback.print_exc()
 
+            # Always update script tab when filter is selected (like parameters tab)
+            try:
+                print(f"[ProcessWizardManager] Updating script tab for filter selection...")
+                if hasattr(self.ui, '_sync_script_from_params'):
+                    self.ui._sync_script_from_params()
+                    # Store the original script content for customization detection
+                    if hasattr(self.ui, 'script_editor'):
+                        self.original_script_content = self.ui.script_editor.toPlainText()
+                        print(f"[ProcessWizardManager] Original script content stored for customization detection")
+                    print(f"[ProcessWizardManager] Script tab updated successfully")
+                else:
+                    print(f"[ProcessWizardManager] Script sync method not available")
+            except Exception as script_update_e:
+                print(f"[ProcessWizardManager] Error updating script tab: {script_update_e}")
+
             print(f"[ProcessWizardManager] === FILTER SELECTION COMPLETED SUCCESSFULLY ===")
             return
-
-            # Update script tab if it exists and if not on the script tab currently
-            try:
-                print(f"[ProcessWizardManager] Checking for script sync capability...")
-                if (hasattr(self.ui, '_sync_script_from_params') and 
-                    hasattr(self.ui, 'param_tab_widget') and 
-                    self.ui.param_tab_widget.currentIndex() == 1):  # Script tab is active
-                    print(f"[ProcessWizardManager] Script tab is active, syncing script...")
-                    self.ui._sync_script_from_params()
-                    print(f"[ProcessWizardManager] Script sync completed")
-                else:
-                    print(f"[ProcessWizardManager] Script sync not needed (not on script tab)")
-            except Exception as sync_e:
-                print(f"[ProcessWizardManager] Error with script sync: {sync_e}")
                 
         except Exception as e:
             print(f"[ProcessWizardManager] CRITICAL ERROR in _on_filter_selected: {e}")
@@ -591,6 +595,69 @@ class ProcessWizardManager:
         except Exception as e:
             pass
     
+    def _collect_parameters_from_table(self):
+        """Unified method to collect parameters from the parameter table"""
+        user_input_dict = {}
+        
+        for row in range(self.ui.param_table.rowCount()):
+            key_item = self.ui.param_table.item(row, 0)
+            if not key_item:
+                continue
+                
+            key = key_item.text().strip()
+            if not key:
+                continue
+            
+            # Check if the value cell contains a widget or text item
+            widget = self.ui.param_table.cellWidget(row, 1)
+            
+            if widget:
+                # Handle different widget types in correct order
+                if isinstance(widget, QComboBox):
+                    val = widget.currentText().strip()
+                elif isinstance(widget, QTextEdit):
+                    val = widget.toPlainText().strip()
+                elif isinstance(widget, QSpinBox):
+                    val = widget.value()
+                elif isinstance(widget, QDoubleSpinBox):
+                    val = widget.value()
+                elif hasattr(widget, 'findChild'):
+                    # This is a container widget (like for checkboxes)
+                    checkbox = widget.findChild(QCheckBox)
+                    if checkbox:
+                        val = checkbox.isChecked()
+                    else:
+                        val = ""
+                else:
+                    val = ""
+            else:
+                # It's a regular text item
+                val_item = self.ui.param_table.item(row, 1)
+                val = val_item.text().strip() if val_item else ""
+            
+            # Store the value with appropriate type conversion
+            if isinstance(val, bool):
+                user_input_dict[key] = val
+            elif isinstance(val, (int, float)):
+                user_input_dict[key] = val
+            elif val:
+                # Try to convert string values to appropriate types
+                try:
+                    if '.' in str(val) and str(val).replace('.', '').replace('-', '').isdigit():
+                        user_input_dict[key] = float(val)
+                    elif str(val).replace('-', '').isdigit():
+                        user_input_dict[key] = int(val)
+                    else:
+                        user_input_dict[key] = str(val)  # Keep as string
+                except ValueError:
+                    user_input_dict[key] = str(val)  # Keep as string if conversion fails
+            else:
+                # Handle empty values - don't add them to the dict unless they're boolean False
+                if isinstance(val, bool):
+                    user_input_dict[key] = val
+        
+        return user_input_dict
+
     def on_input_submitted(self, user_input_dict: dict):
         """Handle input submission with parameters from table."""
         if not self.pending_step:
@@ -783,206 +850,19 @@ class ProcessWizardManager:
             self.ui.console_output.setPlainText("No step selected.")
             return None
 
-        # Collect parameters from table
-        user_input_dict = {}
-        for row in range(self.ui.param_table.rowCount()):
-            key_item = self.ui.param_table.item(row, 0)
-            if key_item:
-                key = key_item.text().strip()
-                if key:
-                    # Check if the value cell contains a widget or text item
-                    widget = self.ui.param_table.cellWidget(row, 1)
-                    if widget:
-                        # Handle different widget types
-                        if isinstance(widget, QComboBox):
-                            val = widget.currentText().strip()
-                        elif isinstance(widget, QTextEdit):
-                            val = widget.toPlainText().strip()
-                        elif hasattr(widget, 'findChild'):
-                            # This is a container widget (like for checkboxes)
-                            from PySide6.QtWidgets import QCheckBox, QSpinBox, QDoubleSpinBox
-                            checkbox = widget.findChild(QCheckBox)
-                            if checkbox:
-                                val = checkbox.isChecked()
-                            else:
-                                val = ""
-                        elif isinstance(widget, QSpinBox):
-                            val = widget.value()
-                        elif isinstance(widget, QDoubleSpinBox):
-                            val = widget.value()
-                        else:
-                            val = ""
-                    else:
-                        # It's a regular text item
-                        val_item = self.ui.param_table.item(row, 1)
-                        val = val_item.text().strip() if val_item else ""
-                    
-                    # Store the value with appropriate type conversion
-                    if isinstance(val, bool):
-                        user_input_dict[key] = val
-                    elif isinstance(val, (int, float)):
-                        user_input_dict[key] = val
-                    elif val:
-                        # Try to convert string values to appropriate types
-                        try:
-                            if '.' in str(val) and str(val).replace('.', '').replace('-', '').isdigit():
-                                user_input_dict[key] = float(val)
-                            elif str(val).replace('-', '').isdigit():
-                                user_input_dict[key] = int(val)
-                            else:
-                                user_input_dict[key] = str(val)  # Keep as string
-                        except ValueError:
-                            user_input_dict[key] = str(val)  # Keep as string if conversion fails
+        # Use unified parameter collection method
+        user_input_dict = self._collect_parameters_from_table()
         
-        try:
-            params = self.pending_step.parse_input(user_input_dict)
-            
-            # Debug: Check what the step class expects vs what we're providing
-            step_params = self.pending_step.get_prompt().get("params", [])
-            expected_param_names = [p["name"] for p in step_params if p["name"] != "fs"]
-            print(f"[ProcessWizardManager] Step expects parameters: {expected_param_names}")
-            print(f"[ProcessWizardManager] We provided parameters: {list(user_input_dict.keys())}")
-        except Exception as e:
-            self.ui.console_output.setPlainText(f"Input error: {e}")
-            return None
-
-        # Get the exact channel selected by radio button (don't override it)
-        selected_channel = self.channel_lookup()
-        if not selected_channel:
-            self.ui.console_output.setPlainText("No active channel.")
-            return None
-            
-        print(f"[ProcessWizardManager] Using radio-button-selected channel: {selected_channel.channel_id} (step {selected_channel.step})")
-
-        # Use the radio-button-selected channel directly as parent (don't find "most recent")
-        parent_channel = selected_channel
-        print(f"[ProcessWizardManager] Applying step to parent channel {parent_channel.channel_id} (step {parent_channel.step})")
-
-        try:
-            new_channels = self.pending_step.apply(parent_channel, params)
-            # Handle both single channel and list of channels
-            if not isinstance(new_channels, list):
-                new_channels = [new_channels]
-            
-            # Check for empty channels and filter them out
-            valid_channels = []
-            empty_channels = []
-            
-            for new_channel in new_channels:
-                # Check if channel has empty or invalid data
-                if (hasattr(new_channel, 'ydata') and hasattr(new_channel, 'xdata') and
-                    new_channel.ydata is not None and new_channel.xdata is not None and
-                    len(new_channel.ydata) > 0 and len(new_channel.xdata) > 0):
-                    valid_channels.append(new_channel)
-                else:
-                    empty_channels.append(new_channel)
-            
-            # If no valid channels were created, inform the user
-            if not valid_channels:
-                step_name = self.pending_step.name if self.pending_step else "Unknown step"
-                self.ui.console_output.setPlainText(
-                    f"Step '{step_name}' completed but produced no results.\n"
-                    f"This may happen when:\n"
-                    f"• No events/features match the specified criteria\n"
-                    f"• Parameter values are too restrictive\n"
-                    f"• Input signal doesn't contain the target patterns\n\n"
-                    f"Try adjusting the parameters and running again."
-                )
-                self.ui.param_table.setRowCount(0)
-                self.pending_step = None
-                return None
-            
-            # Process valid channels
-            new_channel_ids = []  # Track created channel IDs for undo
-            for new_channel in valid_channels:
-                new_channel.step = parent_channel.step + 1
-                
-                # Apply custom channel name from entry field if provided
-                if (hasattr(self.ui, 'channel_name_entry') and 
-                    self.ui.channel_name_entry.text().strip()):
-                    custom_name = self.ui.channel_name_entry.text().strip()
-                    new_channel.legend_label = custom_name
-                    new_channel.ylabel = custom_name
-                
-                # Assign a unique color to the new channel based on existing channels in the file
-                if not hasattr(new_channel, 'color') or new_channel.color is None:
-                    # Get all channels from the same file to count existing colors
-                    file_channels = self.ui.channel_manager.get_channels_by_file(parent_channel.file_id)
-                    existing_colors = set()
-                    for ch in file_channels:
-                        if hasattr(ch, 'color') and ch.color is not None:
-                            existing_colors.add(ch.color)
-                    
-                    # Define color palette
-                    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
-                    
-                    # Find the first available color not used by other channels in the file
-                    available_colors = [c for c in colors if c not in existing_colors]
-                    if available_colors:
-                        new_channel.color = available_colors[0]
-                    else:
-                        # If all colors are used, cycle through them based on total channel count
-                        color_index = len(file_channels) % len(colors)
-                        new_channel.color = colors[color_index]
-                
-                # Add the new channel to the manager
-                self.ui.channel_manager.add_channel(new_channel)
-                new_channel_ids.append(new_channel.channel_id)
-            
-            # Update new_channels to only include valid ones
-            new_channels = valid_channels
-            
-            # Add operation to undo stack
-            step_name = self.pending_step.name if self.pending_step else "Unknown step"
-            self._add_to_undo_stack(step_name, parent_channel.channel_id, new_channel_ids)
-            
-            # Inform user if some channels were empty
-            if empty_channels:
-                print(f"[ProcessWizardManager] Filtered out {len(empty_channels)} empty channel(s)")
-                
-        except Exception as e:
-            self.ui.console_output.setPlainText(f"Step execution failed: {e}")
-            return None
-
-        # Set the most recent new channel as the input for next step
-        if new_channels:
-            self.ui.input_ch = new_channels[-1]  # Use the last created channel
+        # Debug output to see what parameters were collected
+        print(f"[ProcessWizardManager] Collected parameters: {user_input_dict}")
         
-        print(f"[ProcessWizardManager] Created {len(new_channels)} new channel(s)")
-        
-        # Get the step name for the console message
-        step_name = self.pending_step.name if self.pending_step else "Unknown step"
-        # Clean up the step name for display
-        display_step_name = step_name.replace('_', ' ').title()
-        
-        if len(new_channels) == 1:
-            # Get the channel name for display
-            channel_name = new_channels[0].legend_label or new_channels[0].ylabel or f"Channel {new_channels[0].channel_id}"
-            self.ui.console_output.setPlainText(
-                f"Filter Applied: {display_step_name}\n"
-                f"New Channel: {channel_name}"
-            )
+        # Check if we should use script execution
+        if self._should_use_script_execution():
+            # Use script execution with fallback to original step implementation
+            return self._execute_from_script(user_input_dict)
         else:
-            # For multiple channels, show names if available
-            channel_names = []
-            for ch in new_channels:
-                name = ch.legend_label or ch.ylabel or f"Channel {ch.channel_id}"
-                channel_names.append(name)
-            channel_list = ", ".join(channel_names)
-            self.ui.console_output.setPlainText(
-                f"Filter Applied: {display_step_name}\n"
-                f"Created {len(new_channels)} channels: {channel_list}"
-            )
-        
-        # Clear the channel name entry for next use
-        if hasattr(self.ui, 'channel_name_entry'):
-            self.ui.channel_name_entry.clear()
-        
-        # Clear the parameter table and pending step
-        self.ui.param_table.setRowCount(0)
-        self.pending_step = None
-        
-        return new_channels[-1] if new_channels else None  # Return the last channel for UI consistency
+            # Use parameter-based execution (original behavior)
+            return self._execute_from_parameters_direct(user_input_dict)
 
     def can_undo(self) -> bool:
         """Check if undo operation is available."""
@@ -1040,16 +920,35 @@ class ProcessWizardManager:
     
     def _should_use_script_execution(self):
         """Check if we should use script execution instead of parameter-based execution"""
-        # Check if UI has script tab and user is on script tab with read-only disabled
-        if (hasattr(self.ui, 'param_tab_widget') and 
-            hasattr(self.ui, 'script_readonly_checkbox') and
-            self.ui.param_tab_widget.currentIndex() == 1 and  # Script tab is active
-            not self.ui.script_readonly_checkbox.isChecked()):  # Read-only is disabled
-            return True
-        return False
+        # Check if UI has script editor
+        if not hasattr(self.ui, 'script_editor'):
+            return False
+        
+        # Check if there's actual script content
+        script_text = self.ui.script_editor.toPlainText().strip()
+        if not script_text or script_text.startswith("# No filter selected"):
+            return False
+        
+        # Check if script has been customized by user
+        return self._is_script_customized()
+    
+    def _is_script_customized(self):
+        """Check if the current script content is different from the original"""
+        if not hasattr(self.ui, 'script_editor'):
+            return False
+        
+        current_script = self.ui.script_editor.toPlainText().strip()
+        original_script = self.original_script_content.strip()
+        
+        # Normalize whitespace for comparison
+        current_normalized = '\n'.join(line.strip() for line in current_script.split('\n') if line.strip())
+        original_normalized = '\n'.join(line.strip() for line in original_script.split('\n') if line.strip())
+        
+        # Return True if content is different (user has customized it)
+        return current_normalized != original_normalized
     
     def _execute_from_script(self, fallback_params):
-        """Execute processing using the script, falling back to parameters if script has errors"""
+        """Execute processing using the script, falling back to original step implementation if script has errors"""
         if not hasattr(self.ui, 'script_editor'):
             return self._execute_from_parameters_direct(fallback_params)
             
@@ -1060,17 +959,17 @@ class ProcessWizardManager:
             # Basic syntax check
             compile(script_text, '<script>', 'exec')
         except SyntaxError as e:
-            # Script has syntax errors, fall back to parameter-based execution
+            # Script has syntax errors, fall back to original step implementation
             self.ui.console_output.setPlainText(
                 f"Script syntax error at line {e.lineno}: {e.msg}\n"
-                f"Falling back to parameter-based execution..."
+                f"Falling back to original step implementation..."
             )
             return self._execute_from_parameters_direct(fallback_params)
         except Exception as e:
-            # Other compilation errors, fall back to parameter-based execution
+            # Other compilation errors, fall back to original step implementation
             self.ui.console_output.setPlainText(
                 f"Script error: {str(e)}\n"
-                f"Falling back to parameter-based execution..."
+                f"Falling back to original step implementation..."
             )
             return self._execute_from_parameters_direct(fallback_params)
         
@@ -1078,10 +977,10 @@ class ProcessWizardManager:
         try:
             return self._execute_script_safely(script_text, fallback_params)
         except Exception as e:
-            # Script execution failed, fall back to parameter-based execution
+            # Script execution failed, fall back to original step implementation
             self.ui.console_output.setPlainText(
                 f"Script execution error: {str(e)}\n"
-                f"Falling back to parameter-based execution..."
+                f"Falling back to original step implementation..."
             )
             return self._execute_from_parameters_direct(fallback_params)
     
@@ -1090,9 +989,14 @@ class ProcessWizardManager:
         if not self.pending_step:
             return
 
+        # Debug output to see what parameters are being passed
+        print(f"[ProcessWizardManager] Executing step '{self.pending_step.name}' with parameters: {user_input_dict}")
+
         try:
             params = self.pending_step.parse_input(user_input_dict)
+            print(f"[ProcessWizardManager] Parsed parameters: {params}")
         except Exception as e:
+            print(f"[ProcessWizardManager] Parameter parsing error: {e}")
             self.ui.console_output.setPlainText(f"Parameter parsing error: {e}")
             return
 
@@ -1126,12 +1030,16 @@ class ProcessWizardManager:
             
             # Check for empty channels and filter them out
             valid_channels = []
+            empty_channels = []
+            
             for new_channel in new_channels:
                 # Check if channel has empty or invalid data
                 if (hasattr(new_channel, 'ydata') and hasattr(new_channel, 'xdata') and
                     new_channel.ydata is not None and new_channel.xdata is not None and
                     len(new_channel.ydata) > 0 and len(new_channel.xdata) > 0):
                     valid_channels.append(new_channel)
+                else:
+                    empty_channels.append(new_channel)
             
             # If no valid channels were created, inform the user
             if not valid_channels:
@@ -1149,6 +1057,7 @@ class ProcessWizardManager:
                 return
             
             # Process valid channels
+            new_channel_ids = []  # Track created channel IDs for undo
             for new_channel in valid_channels:
                 new_channel.step = parent_channel.step + 1
                 # Ensure lineage ID is inherited from parent
@@ -1186,9 +1095,18 @@ class ProcessWizardManager:
                 
                 # Add the new channel to the manager
                 self.ui.channel_manager.add_channel(new_channel)
+                new_channel_ids.append(new_channel.channel_id)
             
             # Update new_channels to only include valid ones
             new_channels = valid_channels
+            
+            # Add operation to undo stack
+            step_name = self.pending_step.name if self.pending_step else "Unknown step"
+            self._add_to_undo_stack(step_name, parent_channel.channel_id, new_channel_ids)
+            
+            # Inform user if some channels were empty
+            if empty_channels:
+                print(f"[ProcessWizardManager] Filtered out {len(empty_channels)} empty channel(s)")
             
             # Set the most recent new channel as the input for next step
             if new_channels:
@@ -1211,16 +1129,32 @@ class ProcessWizardManager:
             self._stats['failed_steps'] += 1
             self._log_state_change(f"Step execution failed: {str(e)}")
             
+            print(f"[ProcessWizardManager] Step execution failed: {e}")
             self.ui.console_output.setPlainText(f"Step execution failed: {e}")
             return
 
-        self.ui.console_output.setPlainText(
-            f"Step '{step_name}' applied successfully.\n"
-            f"New channel: {new_channels[0].channel_id}\n"
-            f"Description: {new_channels[0].description}\n"
-            f"Step: {new_channels[0].step}\n"
-            f"Parent: {parent_channel.channel_id}"
-        )
+        # Get the step name for the console message (use stored step_name)
+        # Clean up the step name for display
+        display_step_name = step_name.replace('_', ' ').title()
+        
+        if len(new_channels) == 1:
+            # Get the channel name for display
+            channel_name = new_channels[0].legend_label or new_channels[0].ylabel or f"Channel {new_channels[0].channel_id}"
+            self.ui.console_output.setPlainText(
+                f"Filter Applied: {display_step_name}\n"
+                f"New Channel: {channel_name}"
+            )
+        else:
+            # For multiple channels, show names if available
+            channel_names = []
+            for ch in new_channels:
+                name = ch.legend_label or ch.ylabel or f"Channel {ch.channel_id}"
+                channel_names.append(name)
+            channel_list = ", ".join(channel_names)
+            self.ui.console_output.setPlainText(
+                f"Filter Applied: {display_step_name}\n"
+                f"Created {len(new_channels)} channels: {channel_list}"
+            )
 
         # Update UI
         self.ui._update_file_selector()
@@ -1228,28 +1162,10 @@ class ProcessWizardManager:
         self.ui._update_step_table()
         self.ui._update_plot()
 
-        if len(new_channels) == 1:
-            self.ui.console_output.setPlainText(
-                f"Step applied successfully.\nNew channel: {new_channels[0].channel_id}"
-            )
-        else:
-            channel_list = ", ".join([ch.channel_id for ch in new_channels])
-            self.ui.console_output.setPlainText(
-                f"Step applied successfully.\nCreated {len(new_channels)} channels: {channel_list}"
-            )
-        
-        # Clear the channel name entry for next use
-        if hasattr(self.ui, 'channel_name_entry'):
-            self.ui.channel_name_entry.clear()
-        
-        # Clear the parameter table and pending step
-        self.ui.param_table.setRowCount(0)
-        self.pending_step = None
-        
         return new_channels[-1] if new_channels else None  # Return the last channel for UI consistency
 
     def _execute_script_safely(self, script_text, fallback_params):
-        """Execute the user's script in a controlled environment"""
+        """Execute the user's script in a controlled environment with fallback to original step"""
         import numpy as np
         import scipy.signal
         import copy
@@ -1257,20 +1173,12 @@ class ProcessWizardManager:
         # Get the parent channel
         parent_channel = self.channel_lookup()
         if not parent_channel:
-            return
+            raise ValueError("No parent channel available")
         
         # Get all channels in the lineage for context
         lineage_dict = self.ui.channel_manager.get_channels_by_lineage(parent_channel.lineage_id)
-        all_lineage_channels = []
-        all_lineage_channels.extend(lineage_dict.get('parents', []))
-        all_lineage_channels.extend(lineage_dict.get('children', []))
-        all_lineage_channels.extend(lineage_dict.get('siblings', []))
         
-        # Use the most recent channel in the lineage as the parent
-        if all_lineage_channels:
-            parent_channel = max(all_lineage_channels, key=lambda ch: ch.step)
-        
-        # Create a safe execution environment
+        # Create safe global variables for the script
         safe_globals = {
             '__builtins__': {
                 'len': len,
@@ -1281,20 +1189,32 @@ class ProcessWizardManager:
                 'max': max,
                 'abs': abs,
                 'round': round,
+                'print': print,
+                'isinstance': isinstance,
+                'type': type,
+                'str': str,
                 'int': int,
                 'float': float,
-                'str': str,
                 'bool': bool,
                 'list': list,
                 'dict': dict,
                 'tuple': tuple,
                 'set': set,
-                'print': print,
+                '__import__': __import__,  # Needed for import statements
+                'hasattr': hasattr,
+                'getattr': getattr,
+                'setattr': setattr,
             },
             'np': np,
+            'numpy': np,
             'scipy': scipy,
             'copy': copy,
             'parent_channel': parent_channel,
+            'x': parent_channel.xdata,  # Simple variable access for user scripts
+            'y': parent_channel.ydata,  # Simple variable access for user scripts
+            'fs': getattr(parent_channel, 'fs_median', None),  # Sampling frequency
+            'params': fallback_params,  # Parameters from the UI
+            'lineage': lineage_dict,
             'channel_manager': self.ui.channel_manager,
             'registry': self.registry,
         }
@@ -1302,39 +1222,107 @@ class ProcessWizardManager:
         # Create local variables for the script
         safe_locals = {}
         
-        # Execute the script
-        exec(script_text, safe_globals, safe_locals)
+        try:
+            # Execute the script
+            print(f"[ProcessWizardManager] Executing script...")
+            exec(script_text, safe_globals, safe_locals)
+            print(f"[ProcessWizardManager] Script executed successfully")
+            print(f"[ProcessWizardManager] Script locals: {list(safe_locals.keys())}")
+        except Exception as e:
+            # Script execution failed, raise to trigger fallback
+            raise ValueError(f"Script execution failed: {str(e)}")
         
-        # The script should define a variable called 'result_channel' or 'result_channels'
+        # Handle different script output formats
         new_channels = None
+        print(f"[ProcessWizardManager] Looking for result variables...")
+        
+        # Format 1: Script returns result_channel or result_channels (complex format)
         if 'result_channels' in safe_locals:
             new_channels = safe_locals['result_channels']
+            print(f"[ProcessWizardManager] Found result_channels: {type(new_channels)}, count: {len(new_channels) if hasattr(new_channels, '__len__') else 'unknown'}")
         elif 'result_channel' in safe_locals:
             new_channels = [safe_locals['result_channel']]
+            print(f"[ProcessWizardManager] Found result_channel: {type(safe_locals['result_channel'])}")
+        # Format 2: Script returns y_new directly (simple format)
+        elif 'y_new' in safe_locals:
+            print(f"[ProcessWizardManager] Found y_new: {type(safe_locals['y_new'])}")
+            # Create a new channel from y_new
+            y_new = safe_locals['y_new']
+            
+            # Get x_new if provided, otherwise use original x
+            x_new = safe_locals.get('x_new', parent_channel.xdata)
+            
+            # Validate the output data
+            if y_new is None:
+                print(f"[ProcessWizardManager] ERROR: y_new is None")
+                raise ValueError("Script output y_new cannot be None")
+            
+            # Convert to numpy arrays if needed
+            y_new = np.array(y_new)
+            x_new = np.array(x_new)
+            
+            print(f"[ProcessWizardManager] y_new shape: {y_new.shape}, x_new shape: {x_new.shape}")
+            
+            if len(y_new) == 0:
+                print(f"[ProcessWizardManager] ERROR: y_new is empty")
+                raise ValueError("Script output y_new cannot be empty")
+            
+            # Create new channel from the simple output
+            print(f"[ProcessWizardManager] Creating new channel from y_new...")
+            new_channel = copy.deepcopy(parent_channel)
+            new_channel.ydata = y_new
+            new_channel.xdata = x_new
+            
+            # Generate a new unique channel ID (critical fix!)
+            import uuid
+            new_channel.channel_id = str(uuid.uuid4())[:8]
+            print(f"[ProcessWizardManager] Assigned new channel ID: {new_channel.channel_id}")
+            
+            # Update channel metadata
+            if hasattr(self, 'pending_step') and self.pending_step:
+                new_channel.description = parent_channel.description + f' -> {self.pending_step.name} (custom)'
+            else:
+                new_channel.description = parent_channel.description + ' -> custom_script'
+            
+            print(f"[ProcessWizardManager] Created new channel: {new_channel.channel_id}")
+            new_channels = [new_channel]
         else:
-            raise ValueError("Script must define 'result_channel' or 'result_channels' variable")
+            print(f"[ProcessWizardManager] ERROR: No result variables found in script locals")
+            raise ValueError("Script must define 'result_channel', 'result_channels', or 'y_new' variable")
         
         # Ensure we have a list
         if not isinstance(new_channels, list):
             new_channels = [new_channels]
         
         # Validate and process the result channels
+        print(f"[ProcessWizardManager] Validating {len(new_channels)} channel(s)...")
         valid_channels = []
-        for new_channel in new_channels:
+        for i, new_channel in enumerate(new_channels):
+            print(f"[ProcessWizardManager] Validating channel {i}: {new_channel.channel_id}")
             # Basic validation
             if not hasattr(new_channel, 'ydata') or not hasattr(new_channel, 'xdata'):
+                print(f"[ProcessWizardManager] ERROR: Channel missing ydata or xdata attributes")
                 raise ValueError("Result channel must have 'ydata' and 'xdata' attributes")
             
             if new_channel.ydata is None or new_channel.xdata is None:
+                print(f"[ProcessWizardManager] ERROR: Channel data is None")
                 raise ValueError("Result channel data cannot be None")
             
             if len(new_channel.ydata) == 0 or len(new_channel.xdata) == 0:
+                print(f"[ProcessWizardManager] ERROR: Channel data is empty")
                 raise ValueError("Result channel data cannot be empty")
+            
+            # Ensure unique channel ID (fix for result_channel/result_channels format)
+            if new_channel.channel_id == parent_channel.channel_id:
+                import uuid
+                new_channel.channel_id = str(uuid.uuid4())[:8]
+                print(f"[ProcessWizardManager] Assigned new unique channel ID: {new_channel.channel_id}")
             
             # Set up channel metadata
             new_channel.step = parent_channel.step + 1
             new_channel.lineage_id = parent_channel.lineage_id
             new_channel.parent_ids = [parent_channel.channel_id]
+            print(f"[ProcessWizardManager] Set step: {new_channel.step}, lineage: {new_channel.lineage_id}, parent: {parent_channel.channel_id}")
             
             # Apply custom channel name if provided
             if (hasattr(self.ui, 'channel_name_entry') and 
@@ -1343,28 +1331,30 @@ class ProcessWizardManager:
                 new_channel.legend_label = custom_name
                 new_channel.ylabel = custom_name
             
-                            # Assign color if not already set
-                if not hasattr(new_channel, 'color') or new_channel.color is None:
-                    file_channels = self.ui.channel_manager.get_channels_by_file(parent_channel.file_id)
-                    existing_colors = set()
-                    for ch in file_channels:
-                        if hasattr(ch, 'color') and ch.color is not None:
-                            existing_colors.add(ch.color)
-                    
-                    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
-                    available_colors = [c for c in colors if c not in existing_colors]
-                    if available_colors:
-                        new_channel.color = available_colors[0]
-                    else:
-                        color_index = len(file_channels) % len(colors)
-                        new_channel.color = colors[color_index]
+            # Assign color if not already set
+            if not hasattr(new_channel, 'color') or new_channel.color is None:
+                file_channels = self.ui.channel_manager.get_channels_by_file(parent_channel.file_id)
+                existing_colors = set()
+                for ch in file_channels:
+                    if hasattr(ch, 'color') and ch.color is not None:
+                        existing_colors.add(ch.color)
                 
-                # Ensure new channel is visible by default
-                if not hasattr(new_channel, 'show'):
-                    new_channel.show = True
-                
-                # Add to channel manager
-                self.ui.channel_manager.add_channel(new_channel)
+                colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+                available_colors = [c for c in colors if c not in existing_colors]
+                if available_colors:
+                    new_channel.color = available_colors[0]
+                else:
+                    color_index = len(file_channels) % len(colors)
+                    new_channel.color = colors[color_index]
+            
+            # Ensure new channel is visible by default
+            if not hasattr(new_channel, 'show'):
+                new_channel.show = True
+            
+            # Add to channel manager
+            print(f"[ProcessWizardManager] Adding channel to manager: {new_channel.channel_id}")
+            success = self.ui.channel_manager.add_channel(new_channel)
+            print(f"[ProcessWizardManager] Channel added successfully: {success}")
             valid_channels.append(new_channel)
         
         # Update UI state
@@ -1380,31 +1370,42 @@ class ProcessWizardManager:
             self.ui.channel_name_entry.clear()
         
         # Update UI components - force refresh of cached lineage to include new channels
+        print(f"[ProcessWizardManager] Updating UI components...")
         self.ui._cached_lineage = []  # Clear cache to force rebuild
+        print(f"[ProcessWizardManager] Updating file selector...")
         self.ui._update_file_selector()
+        print(f"[ProcessWizardManager] Updating channel selector...")
         self.ui._update_channel_selector()
+        print(f"[ProcessWizardManager] Updating step table...")
         self.ui._update_step_table()
         
         # Rebuild lineage for the active channel to include new channels
+        print(f"[ProcessWizardManager] Rebuilding lineage...")
         active_channel = self.ui.get_active_channel_info()
         if active_channel:
+            print(f"[ProcessWizardManager] Building lineage for active channel: {active_channel.channel_id}")
             self.ui._build_lineage_for_channel(active_channel)
+        else:
+            print(f"[ProcessWizardManager] No active channel found")
         
         # Update input channel combobox to include new channels
+        print(f"[ProcessWizardManager] Updating input channel combobox...")
         self.ui._update_input_channel_combobox()
         
         # Update plot with refreshed data
+        print(f"[ProcessWizardManager] Updating plot...")
         self.ui._update_plot()
+        print(f"[ProcessWizardManager] UI updates completed")
         
         # Show success message
         if len(valid_channels) == 1:
             self.ui.console_output.setPlainText(
-                f"Script executed successfully.\nNew channel: {valid_channels[0].channel_id}"
+                f"Custom script executed successfully.\nNew channel: {valid_channels[0].channel_id}"
             )
         else:
             channel_list = ", ".join([ch.channel_id for ch in valid_channels])
             self.ui.console_output.setPlainText(
-                f"Script executed successfully.\nCreated {len(valid_channels)} channels: {channel_list}"
+                f"Custom script executed successfully.\nCreated {len(valid_channels)} channels: {channel_list}"
             )
         
         return valid_channels[-1] if valid_channels else None

@@ -2,7 +2,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QComboBox,
     QLabel, QLineEdit, QPushButton, QListWidget, QTableWidget, QTableWidgetItem,
     QSplitter, QTextEdit, QCheckBox, QFrame, QTabWidget, QRadioButton, QButtonGroup,
-    QGroupBox, QSpinBox, QHeaderView
+    QGroupBox, QSpinBox, QDoubleSpinBox, QHeaderView
 )
 from PySide6.QtCore import Qt, QEvent, Signal
 from PySide6.QtGui import QFont
@@ -255,20 +255,14 @@ class ProcessWizardWindow(QMainWindow):
         self.script_editor.setPlaceholderText("Python script will appear here when a filter is selected...")
         self.script_editor.setFont(QFont("Consolas", 10))
         
-        # Script controls
+        # Script controls - simplified
         script_controls_layout = QHBoxLayout()
         self.script_readonly_checkbox = QCheckBox("Read-only")
-        self.script_readonly_checkbox.setChecked(True)
+        self.script_readonly_checkbox.setChecked(False)  # Default to editable
         self.script_readonly_checkbox.stateChanged.connect(self._on_script_readonly_changed)
-        self.sync_from_params_btn = QPushButton("Sync from Parameters")
-        self.sync_from_params_btn.clicked.connect(self._sync_script_from_params)
-        self.sync_to_params_btn = QPushButton("Sync to Parameters")
-        self.sync_to_params_btn.clicked.connect(self._sync_script_to_params)
         
         script_controls_layout.addWidget(self.script_readonly_checkbox)
         script_controls_layout.addStretch()
-        script_controls_layout.addWidget(self.sync_from_params_btn)
-        script_controls_layout.addWidget(self.sync_to_params_btn)
         
         script_layout.addWidget(self.script_editor)
         script_layout.addLayout(script_controls_layout)
@@ -445,16 +439,10 @@ class ProcessWizardWindow(QMainWindow):
         main_splitter.setSizes([500, 800])  # Left: 300px, Right: 800px
 
         # Load steps and setup wizard manager
-        load_all_steps("steps")
-        self.process_registry = ProcessRegistry
-        self.all_filters = self.process_registry.all_steps()  # Store original list for searching
-        self.filter_list.addItems(self.all_filters)
+        self._refresh_steps()
         
         # Clear any default selection that might have been set
         self.filter_list.setCurrentRow(-1)  # Clear selection
-        
-        # Populate category dropdown with unique categories
-        self._populate_category_filter()
         # Create wizard manager
         try:
             print(f"[ProcessWizard] Creating wizard manager...")
@@ -1199,7 +1187,64 @@ class ProcessWizardWindow(QMainWindow):
         parent_id = parent_channel.channel_id
         lineage_id = parent_channel.lineage_id
 
-        new_channel = self.wizard_manager.apply_pending_step()
+        # Try to use custom script first, then fallback to hardcoded script
+        new_channel = None
+        used_custom_script = False
+        
+        try:
+            # Check if we have a custom script in the script editor
+            if hasattr(self, 'script_editor') and self.script_editor:
+                script_text = self.script_editor.toPlainText().strip()
+                
+                # Check if script has been modified from default (contains user changes)
+                if script_text and self._is_script_customized(script_text):
+                    print(f"[ProcessWizard] Attempting to use custom script...")
+                    
+                    # Try to execute the custom script
+                    try:
+                        # Collect current parameters for fallback
+                        fallback_params = self._get_params_from_table()
+                        
+                        # Execute the custom script
+                        new_channel = self.wizard_manager._execute_script_safely(script_text, fallback_params)
+                        used_custom_script = True
+                        print(f"[ProcessWizard] Custom script executed successfully!")
+                        
+                        # Update console with success message
+                        self.console_output.setPlainText(
+                            f"Custom script executed successfully!\n"
+                            f"Created channel: {new_channel.channel_id if new_channel else 'Unknown'}"
+                        )
+                        
+                    except Exception as script_e:
+                        print(f"[ProcessWizard] Custom script failed: {script_e}")
+                        # Don't return here - fall through to use hardcoded script
+                        self.console_output.setPlainText(
+                            f"Custom script failed: {script_e}\n"
+                            f"Falling back to hardcoded script..."
+                        )
+                        
+        except Exception as e:
+            print(f"[ProcessWizard] Error checking custom script: {e}")
+        
+        # If custom script didn't work or wasn't used, use hardcoded script
+        if not new_channel:
+            print(f"[ProcessWizard] Using hardcoded script...")
+            try:
+                new_channel = self.wizard_manager.apply_pending_step()
+                if new_channel:
+                    print(f"[ProcessWizard] Hardcoded script executed successfully!")
+                    if not used_custom_script:  # Only update console if we didn't already show a custom script message
+                        self.console_output.setPlainText(
+                            f"Operation applied successfully!\n"
+                            f"Created channel: {new_channel.channel_id}"
+                        )
+            except Exception as fallback_e:
+                print(f"[ProcessWizard] Hardcoded script also failed: {fallback_e}")
+                self.console_output.setPlainText(f"Both custom and hardcoded scripts failed: {fallback_e}")
+                self._adding_filter = False
+                return
+
         if not new_channel:
             self._adding_filter = False
             return
@@ -1242,66 +1287,72 @@ class ProcessWizardWindow(QMainWindow):
         self.spectrogram_canvas.draw()
         self.bar_chart_canvas.draw()
 
+    def _is_script_customized(self, script_text):
+        """Check if the script has been customized by the user (not just the default generated script)"""
+        try:
+            # Use the wizard manager's script customization detection if available
+            if hasattr(self, 'wizard_manager') and self.wizard_manager:
+                return self.wizard_manager._is_script_customized()
+            
+            # Fallback: Basic check for customization signs
+            if not script_text or script_text.strip().startswith("# No filter selected"):
+                return False
+            
+            # Look for actual code changes (presence of return statements, different variables, etc.)
+            if ('return' in script_text and 
+                ('y_new' in script_text or 'result_channel' in script_text or 'result_channels' in script_text)):
+                return True
+            
+            return False
+            
+        except Exception as e:
+            print(f"[ProcessWizard] Error checking if script is customized: {e}")
+            # If we can't determine, assume it might be customized if it contains return statements
+            return 'return' in script_text.lower()
+
 
             
 
 
     def _on_console_input(self):
         """Handle console input submission."""
-        # Collect parameters from table
-        params = {}
-        for row in range(self.param_table.rowCount()):
-            key_item = self.param_table.item(row, 0)
-            if key_item:
-                key = key_item.text().strip()
-                if key:
-                    # Check if the value cell contains a widget or text item
-                    widget = self.param_table.cellWidget(row, 1)
-                    if widget:
-                        # Handle different widget types
-                        if isinstance(widget, QComboBox):
-                            val = widget.currentText().strip()
-                        elif isinstance(widget, QTextEdit):
-                            val = widget.toPlainText().strip()
-                        elif hasattr(widget, 'findChild'):
-                            # This is a container widget (like for checkboxes)
-                            from PySide6.QtWidgets import QCheckBox, QSpinBox, QDoubleSpinBox
-                            checkbox = widget.findChild(QCheckBox)
-                            if checkbox:
-                                val = checkbox.isChecked()
-                            else:
-                                val = ""
-                        elif isinstance(widget, QSpinBox):
-                            val = widget.value()
-                        elif isinstance(widget, QDoubleSpinBox):
-                            val = widget.value()
-                        else:
-                            val = ""
-                    else:
-                        # It's a regular text item
-                        val_item = self.param_table.item(row, 1)
-                        val = val_item.text().strip() if val_item else ""
-                    
-                    # Store the value with appropriate type conversion
-                    if isinstance(val, bool):
-                        params[key] = val
-                    elif isinstance(val, (int, float)):
-                        params[key] = val
-                    elif val:
-                        # Try to convert string values to appropriate types
-                        try:
-                            if '.' in str(val) and str(val).replace('.', '').replace('-', '').isdigit():
-                                params[key] = float(val)
-                            elif str(val).replace('-', '').isdigit():
-                                params[key] = int(val)
-                            else:
-                                params[key] = str(val)  # Keep as string
-                        except ValueError:
-                            params[key] = str(val)  # Keep as string if conversion fails
+        # Use the wizard manager's unified parameter collection method
+        if hasattr(self, 'wizard_manager') and self.wizard_manager:
+            params = self.wizard_manager._collect_parameters_from_table()
+        else:
+            # Fallback to local collection if wizard manager is not available
+            params = self._get_params_from_table()
+        
+        # Debug output
+        print(f"[ProcessWizardWindow] Console input parameters: {params}")
         
         self.wizard_manager.on_input_submitted(params)
         self._update_step_table()
         self._update_plot()
+
+    def _refresh_steps(self):
+        """Refresh the step list by reloading all steps from the steps directory."""
+        print("[ProcessWizard] Refreshing steps...")
+        
+        # Initialize or clear the registry
+        if not hasattr(self, 'process_registry') or self.process_registry is None:
+            self.process_registry = ProcessRegistry
+        else:
+            # Clear the current registry (this is important to avoid duplicates)
+            self.process_registry._registry.clear()
+        
+        # Reload all steps
+        load_all_steps("steps")
+        self.all_filters = self.process_registry.all_steps()
+        
+        # Update the filter list
+        self.filter_list.clear()
+        self.filter_list.addItems(self.all_filters)
+        
+        # Update the category filter
+        self._populate_category_filter()
+        
+        print(f"[ProcessWizard] Refreshed {len(self.all_filters)} steps with categories: {[self.category_filter.itemText(i) for i in range(1, self.category_filter.count())]}")
 
     def _populate_category_filter(self):
         """Populate the category dropdown with unique categories from all steps."""
@@ -1311,6 +1362,10 @@ class ProcessWizardWindow(QMainWindow):
             step_cls = self.process_registry.get(step_name)
             if step_cls and hasattr(step_cls, 'category'):
                 categories.add(step_cls.category)
+        
+        # Clear existing items and add "All Categories" option
+        self.category_filter.clear()
+        self.category_filter.addItem("All Categories")
         
         # Sort categories alphabetically and add to dropdown
         sorted_categories = sorted(categories)
@@ -1449,6 +1504,8 @@ class ProcessWizardWindow(QMainWindow):
             )
             if reply == QMessageBox.Yes:
                 self.channel_manager.remove_channel(channel_id)
+                # Clear cached lineage to force rebuild with updated channel list
+                self._cached_lineage = []
                 self._update_step_table()
                 self._update_plot()
 
@@ -1582,10 +1639,10 @@ class ProcessWizardWindow(QMainWindow):
     def _on_script_readonly_changed(self, state):
         """Handle script read-only checkbox change"""
         self.script_editor.setReadOnly(state == Qt.Checked)
-        self.sync_to_params_btn.setEnabled(state != Qt.Checked)
+        # self.sync_to_params_btn.setEnabled(state != Qt.Checked) # Removed as per edit hint
     
     def _sync_script_from_params(self):
-        """Generate script from current parameters"""
+        """Generate script from current parameters or expose step's script method"""
         try:
             print(f"[ProcessWizard] _sync_script_from_params() called")
             
@@ -1606,10 +1663,17 @@ class ProcessWizardWindow(QMainWindow):
                 self.script_editor.setPlainText(f"# Error getting parameters: {param_e}\n# Please check the parameter table")
                 return
             
-            # Generate script safely
+            # Try to get the step's actual script method
+            script = self._generate_script_from_step_method(step_cls, params)
+            if script:
+                self.script_editor.setPlainText(script)
+                print(f"[ProcessWizard] Step script method exposed successfully")
+                return
+            
+            # Fallback to generated script if step doesn't have script method
             try:
                 script = self._generate_script(step_cls, params)
-                print(f"[ProcessWizard] Script generated successfully")
+                print(f"[ProcessWizard] Generated script successfully")
             except Exception as gen_e:
                 print(f"[ProcessWizard] Error generating script: {gen_e}")
                 self.script_editor.setPlainText(f"# Error generating script: {gen_e}\n# Using basic template instead")
@@ -1653,52 +1717,62 @@ class ProcessWizardWindow(QMainWindow):
         params = {}
         for row in range(self.param_table.rowCount()):
             key_item = self.param_table.item(row, 0)
-            if key_item:
-                key = key_item.text().strip()
-                if key:
-                    # Check if the value cell contains a widget or text item
-                    widget = self.param_table.cellWidget(row, 1)
-                    if widget:
-                        # Handle different widget types
-                        if hasattr(widget, 'currentText'):  # QComboBox
-                            val = widget.currentText().strip()
-                        elif hasattr(widget, 'toPlainText'):  # QTextEdit
-                            val = widget.toPlainText().strip()
-                        elif hasattr(widget, 'findChild'):
-                            # This is a container widget (like for checkboxes)
-                            from PySide6.QtWidgets import QCheckBox, QSpinBox, QDoubleSpinBox
-                            checkbox = widget.findChild(QCheckBox)
-                            if checkbox:
-                                val = checkbox.isChecked()
-                            else:
-                                val = ""
-                        elif isinstance(widget, QSpinBox):
-                            val = widget.value()
-                        elif isinstance(widget, QDoubleSpinBox):
-                            val = widget.value()
-                        else:
-                            val = ""
+            if not key_item:
+                continue
+                
+            key = key_item.text().strip()
+            if not key:
+                continue
+            
+            # Check if the value cell contains a widget or text item
+            widget = self.param_table.cellWidget(row, 1)
+            
+            if widget:
+                # Handle different widget types in correct order
+                if isinstance(widget, QComboBox):
+                    val = widget.currentText().strip()
+                elif isinstance(widget, QTextEdit):
+                    val = widget.toPlainText().strip()
+                elif isinstance(widget, QSpinBox):
+                    val = widget.value()
+                elif isinstance(widget, QDoubleSpinBox):
+                    val = widget.value()
+                elif hasattr(widget, 'findChild'):
+                    # This is a container widget (like for checkboxes)
+                    from PySide6.QtWidgets import QCheckBox
+                    checkbox = widget.findChild(QCheckBox)
+                    if checkbox:
+                        val = checkbox.isChecked()
                     else:
-                        # It's a regular text item
-                        val_item = self.param_table.item(row, 1)
-                        val = val_item.text().strip() if val_item else ""
-                    
-                    # Store the value with appropriate type conversion
-                    if isinstance(val, bool):
-                        params[key] = val
-                    elif isinstance(val, (int, float)):
-                        params[key] = val
-                    elif val:
-                        # Try to convert string values to appropriate types
-                        try:
-                            if '.' in str(val) and str(val).replace('.', '').replace('-', '').isdigit():
-                                params[key] = float(val)
-                            elif str(val).replace('-', '').isdigit():
-                                params[key] = int(val)
-                            else:
-                                params[key] = str(val)  # Keep as string
-                        except ValueError:
-                            params[key] = str(val)  # Keep as string if conversion fails
+                        val = ""
+                else:
+                    val = ""
+            else:
+                # It's a regular text item
+                val_item = self.param_table.item(row, 1)
+                val = val_item.text().strip() if val_item else ""
+            
+            # Store the value with appropriate type conversion
+            if isinstance(val, bool):
+                params[key] = val
+            elif isinstance(val, (int, float)):
+                params[key] = val
+            elif val:
+                # Try to convert string values to appropriate types
+                try:
+                    if '.' in str(val) and str(val).replace('.', '').replace('-', '').isdigit():
+                        params[key] = float(val)
+                    elif str(val).replace('-', '').isdigit():
+                        params[key] = int(val)
+                    else:
+                        params[key] = str(val)  # Keep as string
+                except ValueError:
+                    params[key] = str(val)  # Keep as string if conversion fails
+            else:
+                # Handle empty values - don't add them to the dict unless they're boolean False
+                if isinstance(val, bool):
+                    params[key] = val
+        
         return params
     
     def _generate_script(self, step_cls, params):
@@ -1813,6 +1887,193 @@ result_channel.description = parent_channel.description + ' -> {step_name}'
             return script
         except:
             return "# Basic script generation failed\n# Please select a filter again"
+
+    def _generate_script_from_step_method(self, step_cls, params):
+        """Extract and format the step's actual script method for user editing"""
+        try:
+            # Check if the step has a script method
+            if not hasattr(step_cls, 'script'):
+                return None
+            
+            # Get the source code of the script method
+            import inspect
+            try:
+                source_lines = inspect.getsource(step_cls.script).split('\n')
+            except (OSError, TypeError):
+                # If we can't get the source, create a simple template
+                return self._generate_simple_script_template(step_cls, params)
+            
+            # Find the method definition
+            start_line = None
+            for i, line in enumerate(source_lines):
+                if line.strip().startswith('def script('):
+                    start_line = i
+                    break
+            
+            if start_line is None:
+                return self._generate_simple_script_template(step_cls, params)
+            
+            # Extract method body (skip the def line)
+            method_body = source_lines[start_line + 1:]
+            
+            # Find minimum indentation and adjust
+            min_indent = float('inf')
+            non_empty_lines = [line for line in method_body if line.strip()]
+            
+            if not non_empty_lines:
+                return self._generate_simple_script_template(step_cls, params)
+            
+            for line in non_empty_lines:
+                if line.strip():
+                    indent = len(line) - len(line.lstrip())
+                    min_indent = min(min_indent, indent)
+            
+            # Remove common indentation
+            if min_indent < float('inf'):
+                adjusted_lines = []
+                for line in method_body:
+                    if line.strip():
+                        adjusted_lines.append(line[min_indent:])
+                    else:
+                        adjusted_lines.append(line)
+            else:
+                adjusted_lines = method_body
+            
+            # Remove empty lines at the end
+            while adjusted_lines and not adjusted_lines[-1].strip():
+                adjusted_lines.pop()
+            
+            # Format parameters for display
+            param_info = []
+            if params:
+                for key, value in params.items():
+                    param_info.append(f"# {key}: {value}")
+            else:
+                param_info.append("# No parameters")
+            
+            # Create the user-friendly script
+            script_parts = [
+                f"# {step_cls.name} step script - edit to customize",
+                "# Available: x (time), y (signal), fs (frequency), params",
+                "",
+                "import numpy as np",
+                "import scipy.signal",
+                "",
+                "# Parameters:",
+                *param_info,
+                "",
+                "# Original step logic:",
+            ]
+            
+            # Add the actual method body with comments, converting return statements
+            for line in adjusted_lines:
+                if line.strip():
+                    # Convert return statements to variable assignments
+                    if line.strip().startswith('return '):
+                        # Convert "return expression" to "y_new = expression"
+                        return_expr = line.strip()[7:]  # Remove "return "
+                        
+                        # Skip redundant "return y_new" since y_new is already assigned
+                        if return_expr.strip() == 'y_new':
+                            script_parts.append("# Result is already stored in y_new")
+                        else:
+                            script_parts.append(f"y_new = {return_expr}")
+                    else:
+                        script_parts.append(line)
+                else:
+                    script_parts.append("")
+            
+            # Ensure script sets y_new variable (no return statement needed at module level)
+            if adjusted_lines and not any('y_new' in line for line in adjusted_lines[-3:]):
+                script_parts.append("")
+                script_parts.append("# Set y_new variable for the result")
+                script_parts.append("y_new = y  # Replace with your processed data")
+            
+            return "\n".join(script_parts)
+            
+        except Exception as e:
+            print(f"[ProcessWizard] Error extracting step script: {e}")
+            return self._generate_simple_script_template(step_cls, params)
+    
+    def _generate_simple_script_template(self, step_cls, params):
+        """Generate a simple script template based on step information"""
+        try:
+            step_name = step_cls.name
+            description = getattr(step_cls, 'description', '')
+            
+            # Format parameters
+            param_info = []
+            if params:
+                for key, value in params.items():
+                    param_info.append(f"# {key}: {value}")
+            else:
+                param_info.append("# No parameters")
+            
+            # Create basic template based on common step patterns
+            processing_logic = self._guess_processing_logic(step_name, params)
+            
+            script_parts = [
+                f"# {step_name} step script - edit to customize",
+                "# Available: x (time), y (signal), fs (frequency), params",
+                "",
+                "import numpy as np",
+                "import scipy.signal",
+                "",
+                "# Parameters:",
+                *param_info,
+                "",
+                f"# Step description: {description}" if description else "# Custom processing step",
+                "",
+                "# Processing logic:",
+                processing_logic,
+                "",
+                "# Result must be stored in y_new variable",
+                "# y_new = your_processed_data"
+            ]
+            
+            return "\n".join(script_parts)
+            
+        except Exception as e:
+            print(f"[ProcessWizard] Error generating simple template: {e}")
+            return f"# Error generating script for {step_cls.name}\n# Please check the step implementation"
+    
+    def _guess_processing_logic(self, step_name, params):
+        """Guess the processing logic based on step name and parameters"""
+        
+        # Common processing patterns
+        if 'abs' in step_name.lower():
+            return "y_new = np.abs(y)"
+        elif 'normalize' in step_name.lower():
+            return "y_new = (y - np.min(y)) / (np.max(y) - np.min(y))"
+        elif 'smooth' in step_name.lower() or 'average' in step_name.lower():
+            window = params.get('window', 5)
+            return f"# Apply smoothing with window size {window}\ny_new = np.convolve(y, np.ones({window})/{window}, mode='same')"
+        elif 'filter' in step_name.lower():
+            return "# Apply filtering operation\ny_new = scipy.signal.filtfilt(b, a, y)  # Define b, a coefficients"
+        elif 'threshold' in step_name.lower():
+            threshold = params.get('threshold', 0.0)
+            return f"# Apply threshold operation\ny_new = np.where(y > {threshold}, y, 0)"
+        elif 'power' in step_name.lower():
+            exponent = params.get('exponent', 2.0)
+            return f"y_new = np.power(y, {exponent})"
+        elif 'log' in step_name.lower():
+            return "y_new = np.log(np.abs(y) + 1e-10)  # Add small value to avoid log(0)"
+        elif 'exp' in step_name.lower():
+            return "y_new = np.exp(y)"
+        elif 'derivative' in step_name.lower():
+            return "y_new = np.gradient(y)"
+        elif 'cumulative' in step_name.lower():
+            return "y_new = np.cumsum(y)"
+        elif 'clip' in step_name.lower():
+            return "y_new = np.clip(y, a_min, a_max)  # Define a_min, a_max"
+        elif 'multiply' in step_name.lower():
+            constant = params.get('constant', 1.0)
+            return f"y_new = y * {constant}"
+        elif 'add' in step_name.lower():
+            constant = params.get('constant', 0.0)
+            return f"y_new = y + {constant}"
+        else:
+            return "# Add your custom processing here\ny_new = y.copy()  # Replace with your processing logic"
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

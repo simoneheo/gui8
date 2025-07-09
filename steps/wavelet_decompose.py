@@ -5,55 +5,12 @@ from channel import Channel
 
 import pywt
 
-def wavelet_decompose(y, wavelet='db4', level=None, decompose_levels='1,2'):
-    # Validate decompose_levels parameter
-    try:
-        decompose_levels = [int(l.strip()) for l in str(decompose_levels).split(',')]
-    except ValueError:
-        raise ValueError("decompose_levels must be comma-separated integers")
-    
-    if not decompose_levels:
-        raise ValueError("At least one decomposition level must be specified")
-    
-    if any(level < 0 for level in decompose_levels):
-        raise ValueError("Decomposition levels must be non-negative")
-    
-    try:
-        coeffs = pywt.wavedec(y, wavelet, mode='periodization', level=level)
-    except Exception as e:
-        raise ValueError(f"Wavelet decomposition failed: {str(e)}")
-    
-    # Validate that requested levels exist
-    max_available_level = len(coeffs) - 1
-    invalid_levels = [l for l in decompose_levels if l >= len(coeffs)]
-    if invalid_levels:
-        raise ValueError(f"Requested levels {invalid_levels} exceed maximum available level {max_available_level}")
-    
-    # Create reconstructed signals for each requested level
-    reconstructed_levels = []
-    for level_idx in decompose_levels:
-        if level_idx < len(coeffs):
-            try:
-                # Create coefficients array with only this level
-                level_coeffs = [np.zeros_like(c) for c in coeffs]
-                level_coeffs[level_idx] = coeffs[level_idx]
-                # Reconstruct from this level only
-                reconstructed = pywt.waverec(level_coeffs, wavelet, mode='periodization')[:len(y)]
-                reconstructed_levels.append((level_idx, reconstructed))
-            except Exception as e:
-                raise ValueError(f"Failed to reconstruct level {level_idx}: {str(e)}")
-    
-    if not reconstructed_levels:
-        raise ValueError("No valid decomposition levels could be reconstructed")
-    
-    return reconstructed_levels
-
 @register_step
 class wavelet_decompose_step(BaseStep):
     name = "wavelet_decompose"
-    category = "Wavelet"
+    category = "pywt"
     description = "Decomposes a signal into separate wavelet levels, creating multiple channels."
-    tags = ["time-series"]
+    tags = ["time-series", "wavelet", "decomposition", "pywt", "multiresolution", "levels"]
     params = [
         { 
             "name": "wavelet", 
@@ -81,6 +38,48 @@ class wavelet_decompose_step(BaseStep):
     def get_info(cls): return f"{cls.name} — {cls.description} (Category: {cls.category})"
     @classmethod
     def get_prompt(cls): return { "info": cls.description, "params": cls.params }
+    
+    @classmethod
+    def _validate_input_data(cls, y: np.ndarray) -> None:
+        """Validate input signal data"""
+        if len(y) == 0:
+            raise ValueError("Input signal is empty")
+        if np.all(np.isnan(y)):
+            raise ValueError("Signal contains only NaN values")
+        if len(y) < 4:
+            raise ValueError("Signal too short for wavelet decomposition (minimum 4 samples)")
+
+    @classmethod
+    def _validate_parameters(cls, params: dict) -> None:
+        """Validate cross-field logic and business rules"""
+        # Check if decompose_levels has duplicate values
+        decompose_levels = params.get("decompose_levels", [])
+        if len(set(decompose_levels)) != len(decompose_levels):
+            raise ValueError("Duplicate levels are not allowed in decompose_levels")
+        
+        # Check if level is specified and decompose_levels contains levels beyond it
+        level = params.get("level")
+        if level is not None:
+            max_requested_level = max(decompose_levels) if decompose_levels else 0
+            if max_requested_level >= level:
+                raise ValueError(f"Requested levels {decompose_levels} exceed or equal specified decomposition level {level}")
+
+    @classmethod
+    def _validate_output(cls, y_original: np.ndarray, y_processed_list: list) -> None:
+        """Validate processed output data"""
+        if not y_processed_list:
+            raise ValueError("No output channels were generated")
+        
+        for i, y_processed in enumerate(y_processed_list):
+            if len(y_processed) != len(y_original):
+                raise ValueError(f"Output length mismatch for level {i}: expected {len(y_original)}, got {len(y_processed)}")
+            
+            if np.all(np.isnan(y_processed)):
+                raise ValueError(f"Processing produced only NaN values for level {i}")
+            
+            if np.all(np.isinf(y_processed)):
+                raise ValueError(f"Processing produced only infinite values for level {i}")
+
     @classmethod
     def parse_input(cls, user_input: dict) -> dict:
         parsed = {}
@@ -103,20 +102,20 @@ class wavelet_decompose_step(BaseStep):
                     parsed[name] = parsed_val
                 else: 
                     if name == "decompose_levels":
-                        # Validate decompose_levels format
+                        # Parse and validate decompose_levels format
                         try:
                             levels = [int(l.strip()) for l in str(val).split(',')]
                             if not levels:
                                 raise ValueError("At least one level must be specified")
                             if any(l < 0 for l in levels):
                                 raise ValueError("Levels must be non-negative")
-                            if len(set(levels)) != len(levels):
-                                raise ValueError("Duplicate levels are not allowed")
                         except ValueError as e:
                             if "invalid literal" in str(e):
                                 raise ValueError("decompose_levels must be comma-separated integers")
                             raise e
-                    parsed[name] = val
+                        parsed[name] = levels
+                    else:
+                        parsed[name] = val
             except ValueError as e:
                 if "could not convert" in str(e) or "invalid literal" in str(e):
                     raise ValueError(f"{name} must be a valid {param['type']}")
@@ -126,25 +125,29 @@ class wavelet_decompose_step(BaseStep):
 
     @classmethod
     def apply(cls, channel: Channel, params: dict) -> list:
-        # Validate input data
-        if len(channel.ydata) == 0:
-            raise ValueError("Input signal is empty")
-        if np.all(np.isnan(channel.ydata)):
-            raise ValueError("Signal contains only NaN values")
-        if len(channel.ydata) < 4:
-            raise ValueError("Signal too short for wavelet decomposition (minimum 4 samples)")
+        # Validate input data and parameters
+        cls._validate_input_data(channel.ydata)
+        cls._validate_parameters(params)
         
         try:
-            params = cls._inject_fs_if_needed(channel, params, wavelet_decompose)
-            level_data = wavelet_decompose(channel.ydata, **params)
+            params = cls._inject_fs_if_needed(channel, params, cls.script)
+            x = channel.xdata
+            y = channel.ydata
+            fs = getattr(channel, 'fs', None)
+            
+            # Get processed data from script method
+            processed_data = cls.script(x, y, fs, params)
+            
+            # Validate output
+            cls._validate_output(y, processed_data)
             
             # Create multiple channels, one for each decomposition level
             new_channels = []
-            for level_idx, y_new in level_data:
-                x_new = np.linspace(channel.xdata[0], channel.xdata[-1], len(y_new))
+            for i, y_new in enumerate(processed_data):
+                x_new = np.linspace(x[0], x[-1], len(y_new))
                 # Add level information to the channel name/params
                 level_params = params.copy()
-                level_params['level_extracted'] = level_idx
+                level_params['level_extracted'] = i
                 new_channel = cls.create_new_channel(
                     parent=channel, 
                     xdata=x_new, 
@@ -153,7 +156,7 @@ class wavelet_decompose_step(BaseStep):
                 )
                 # Modify the name to indicate which level this is
                 if hasattr(new_channel, 'name'):
-                    new_channel.name = f"{new_channel.name}_level_{level_idx}"
+                    new_channel.name = f"{new_channel.name}_level_{i}"
                 new_channels.append(new_channel)
             
             if not new_channels:
@@ -165,4 +168,44 @@ class wavelet_decompose_step(BaseStep):
             if isinstance(e, ValueError):
                 raise e
             else:
-                raise ValueError(f"Wavelet decomposition failed: {str(e)}") 
+                raise ValueError(f"Wavelet decomposition failed: {str(e)}")
+
+    @classmethod
+    def script(cls, x: np.ndarray, y: np.ndarray, fs: float, params: dict) -> list[np.ndarray]:
+        wavelet = params["wavelet"]
+        level = params.get("level")
+        decompose_levels = params["decompose_levels"]
+        
+        # Perform wavelet decomposition
+        try:
+            coeffs = pywt.wavedec(y, wavelet, mode='periodization', level=level)
+        except Exception as e:
+            raise ValueError(f"Wavelet decomposition failed: {str(e)}")
+        
+        # Validate that requested levels exist
+        max_available_level = len(coeffs) - 1
+        invalid_levels = [l for l in decompose_levels if l >= len(coeffs)]
+        if invalid_levels:
+            raise ValueError(f"Requested levels {invalid_levels} exceed maximum available level {max_available_level}")
+        
+        # Create reconstructed signals for each requested level
+        reconstructed_levels = []
+        for level_idx in decompose_levels:
+            if level_idx < len(coeffs):
+                try:
+                    # Create coefficients array with only this level
+                    level_coeffs = [np.zeros_like(c) for c in coeffs]
+                    level_coeffs[level_idx] = coeffs[level_idx]
+                    # Reconstruct from this level only
+                    reconstructed = pywt.waverec(level_coeffs, wavelet, mode='periodization')[:len(y)]
+                    reconstructed_levels.append((level_idx, reconstructed))
+                except Exception as e:
+                    raise ValueError(f"Failed to reconstruct level {level_idx}: {str(e)}")
+        
+        if not reconstructed_levels:
+            raise ValueError("No valid decomposition levels could be reconstructed")
+        
+        # Extract just the processed arrays (without level indices)
+        y_new_arrays = [y_new for level_idx, y_new in reconstructed_levels]
+        
+        return y_new_arrays 
