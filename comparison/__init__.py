@@ -20,9 +20,7 @@ from .base_comparison import BaseComparison
 from .comparison_registry import ComparisonRegistry
 
 # Import streamlined comparison methods
-from .correlation_comparison import CorrelationComparison
 from .bland_altman_comparison import BlandAltmanComparison
-from .residual_comparison import ResidualComparison
 
 # Initialize the registry on import to avoid double loading
 try:
@@ -70,9 +68,7 @@ def load_all_comparisons(directory=None):
 __all__ = [
     'BaseComparison',
     'ComparisonRegistry',
-    'CorrelationComparison',
     'BlandAltmanComparison', 
-    'ResidualComparison',
     'load_all_comparisons'
 ]
 

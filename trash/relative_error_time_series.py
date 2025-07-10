@@ -55,11 +55,6 @@ class RelativeErrorTimeSeriesComparison(BaseComparison):
         """
         Main comparison method - orchestrates the relative error time series analysis.
         
-        Streamlined 3-step workflow:
-        1. Validate input data (basic validation + remove NaN/infinite values)
-        2. plot_script (core transformation + error computation)
-        3. stats_script (statistical calculations)
-        
         Args:
             ref_data: Reference data array
             test_data: Test data array  
@@ -67,29 +62,28 @@ class RelativeErrorTimeSeriesComparison(BaseComparison):
             test_time: Optional time array for test data
             
         Returns:
-            Dictionary containing relative error time series analysis results
+            Dictionary containing relative error time series results with statistics and plot data
         """
-        try:
-            # === STEP 1: VALIDATE INPUT DATA ===
-            # Basic validation (shape, type, length compatibility)
+        # Validate and clean input data
         ref_data, test_data = self._validate_input_data(ref_data, test_data)
-            # Remove NaN and infinite values
         ref_clean, test_clean, valid_ratio = self._remove_invalid_data(ref_data, test_data)
         
-            # === STEP 2: PLOT SCRIPT (core transformation + error computation) ===
-            x_data, y_data, plot_metadata = self.plot_script(ref_clean, test_clean, self.kwargs, ref_time)
+        # Create time axis if not provided
+        time_axis = ref_time if ref_time is not None else np.arange(len(ref_clean))
         
-            # === STEP 3: STATS SCRIPT (statistical calculations) ===
-            stats_results = self.stats_script(x_data, y_data, ref_clean, test_clean, self.kwargs)
+        # Calculate error values
+        error_data = self._calculate_error_values(ref_clean, test_clean)
+        
+        # Calculate statistics
+        stats_results = self.calculate_stats(ref_clean, test_clean, ref_time, test_time)
         
         # Prepare plot data
         plot_data = {
-                'time': x_data,
-                'relative_error': y_data,
+            'time': time_axis,
+            'error_values': error_data,
             'ref_data': ref_clean,
             'test_data': test_clean,
-                'valid_ratio': valid_ratio,
-                'metadata': plot_metadata
+            'valid_ratio': valid_ratio
         }
         
         # Combine results
@@ -104,159 +98,12 @@ class RelativeErrorTimeSeriesComparison(BaseComparison):
         # Store results
         self.results = results
         return results
-            
-        except Exception as e:
-            raise RuntimeError(f"Relative error time series analysis failed: {str(e)}")
-
-    def plot_script(self, ref_data: np.ndarray, test_data: np.ndarray, params: dict, 
-                   ref_time: Optional[np.ndarray] = None) -> tuple:
-        """
-        Core plotting transformation for relative error time series analysis
-        
-        This defines what gets plotted on X and Y axes for relative error visualization.
-        
-        Args:
-            ref_data: Reference measurements (already cleaned of NaN/infinite values)
-            test_data: Test measurements (already cleaned of NaN/infinite values)
-            params: Method parameters dictionary
-            ref_time: Optional time array for reference data
-            
-        Returns:
-            tuple: (x_data, y_data, metadata)
-                x_data: Time values for X-axis
-                y_data: Relative error values for Y-axis
-                metadata: Plot configuration dictionary
-        """
-        # Calculate relative error
-        relative_error = self._calculate_relative_error(ref_data, test_data, params)
-        
-        # Create time axis if not provided
-        if ref_time is None:
-            time_axis = np.arange(len(relative_error))
-        else:
-            time_axis = ref_time
-            
-        # Apply smoothing if requested
-        if params.get("apply_smoothing", False):
-            relative_error = self._apply_smoothing(relative_error, params)
-            
-        # Handle outlier exclusion
-        if params.get("exclude_outliers", False):
-            relative_error, time_axis = self._remove_outliers(relative_error, time_axis, params)
-            
-        if len(relative_error) == 0:
-            raise ValueError("No valid data points after outlier removal")
-        
-        # Prepare metadata for plotting
-        metadata = {
-            'x_label': 'Time' if ref_time is not None else 'Sample Index',
-            'y_label': 'Relative Error (%)',
-            'title': 'Relative Error Time Series Analysis',
-            'plot_type': 'line',
-            'error_type': params.get("error_type", "percentage"),
-            'smoothing_applied': params.get("apply_smoothing", False),
-            'outliers_removed': params.get("exclude_outliers", False)
-        }
-        
-        return time_axis.tolist(), relative_error.tolist(), metadata
-
-    def _calculate_relative_error(self, ref_data: np.ndarray, test_data: np.ndarray, params: dict) -> np.ndarray:
-        """Calculate relative error based on configuration."""
-        error_type = params.get("error_type", "percentage")
-        
-        if error_type == "percentage":
-            # Percentage error
-            with np.errstate(divide='ignore', invalid='ignore'):
-                relative_error = (test_data - ref_data) / ref_data * 100
-                relative_error = np.nan_to_num(relative_error, nan=0.0, posinf=0.0, neginf=0.0)
-        elif error_type == "absolute_percentage":
-            # Absolute percentage error
-            with np.errstate(divide='ignore', invalid='ignore'):
-                relative_error = np.abs(test_data - ref_data) / np.abs(ref_data) * 100
-                relative_error = np.nan_to_num(relative_error, nan=0.0, posinf=0.0, neginf=0.0)
-        elif error_type == "normalized":
-            # Normalized error (by reference range)
-            ref_range = np.ptp(ref_data)
-            if ref_range > 0:
-                relative_error = (test_data - ref_data) / ref_range * 100
-            else:
-                relative_error = np.zeros_like(test_data)
-        else:
-            # Default to percentage
-            with np.errstate(divide='ignore', invalid='ignore'):
-                relative_error = (test_data - ref_data) / ref_data * 100
-                relative_error = np.nan_to_num(relative_error, nan=0.0, posinf=0.0, neginf=0.0)
-                
-        return relative_error
-
-    def _apply_smoothing(self, relative_error: np.ndarray, params: dict) -> np.ndarray:
-        """Apply smoothing to relative error time series."""
-        smoothing_method = params.get("smoothing_method", "moving_average")
-        window_size = params.get("smoothing_window", 5)
-        
-        if smoothing_method == "moving_average":
-            # Simple moving average
-            from scipy.ndimage import uniform_filter1d
-            smoothed = uniform_filter1d(relative_error.astype(float), size=window_size)
-        elif smoothing_method == "exponential":
-            # Exponential smoothing
-            alpha = params.get("smoothing_alpha", 0.3)
-            smoothed = np.zeros_like(relative_error)
-            smoothed[0] = relative_error[0]
-            for i in range(1, len(relative_error)):
-                smoothed[i] = alpha * relative_error[i] + (1 - alpha) * smoothed[i-1]
-        elif smoothing_method == "savgol":
-            # Savitzky-Golay filter
-            try:
-                from scipy.signal import savgol_filter
-                poly_order = min(params.get("savgol_polyorder", 2), window_size - 1)
-                smoothed = savgol_filter(relative_error, window_size, poly_order)
-            except:
-                # Fallback to moving average
-                from scipy.ndimage import uniform_filter1d
-                smoothed = uniform_filter1d(relative_error.astype(float), size=window_size)
-        else:
-            # Default to moving average
-            from scipy.ndimage import uniform_filter1d
-            smoothed = uniform_filter1d(relative_error.astype(float), size=window_size)
-            
-        return smoothed
-
-    def _remove_outliers(self, relative_error: np.ndarray, time_axis: np.ndarray, params: dict) -> Tuple[np.ndarray, np.ndarray]:
-        """Remove outliers from relative error time series."""
-        outlier_method = params.get("outlier_method", "z_score")
-        
-        if outlier_method == "z_score":
-            threshold = params.get("outlier_z_threshold", 3.0)
-            z_scores = np.abs((relative_error - np.mean(relative_error)) / np.std(relative_error))
-            mask = z_scores <= threshold
-        elif outlier_method == "iqr":
-            iqr_factor = params.get("outlier_iqr_factor", 1.5)
-            q25, q75 = np.percentile(relative_error, [25, 75])
-            iqr = q75 - q25
-            lower_bound = q25 - iqr_factor * iqr
-            upper_bound = q75 + iqr_factor * iqr
-            mask = (relative_error >= lower_bound) & (relative_error <= upper_bound)
-        elif outlier_method == "percentile":
-            lower_percentile = params.get("outlier_lower_percentile", 1)
-            upper_percentile = params.get("outlier_upper_percentile", 99)
-            lower_bound = np.percentile(relative_error, lower_percentile)
-            upper_bound = np.percentile(relative_error, upper_percentile)
-            mask = (relative_error >= lower_bound) & (relative_error <= upper_bound)
-        else:
-            # No outlier removal
-            mask = np.ones(len(relative_error), dtype=bool)
-            
-        return relative_error[mask], time_axis[mask]
     
     def calculate_stats(self, ref_data: np.ndarray, test_data: np.ndarray, 
                        ref_time: Optional[np.ndarray] = None, 
                        test_time: Optional[np.ndarray] = None) -> Dict[str, Any]:
         """
-        BACKWARD COMPATIBILITY + SAFETY WRAPPER: Calculate relative error time series statistics.
-        
-        This method maintains compatibility with existing code and provides comprehensive
-        validation and error handling around the core statistical calculations.
+        Calculate relative error time series statistics.
         
         Args:
             ref_data: Reference data array
@@ -265,214 +112,38 @@ class RelativeErrorTimeSeriesComparison(BaseComparison):
             test_time: Optional time array for test data
             
         Returns:
-            Dictionary containing relative error time series statistics
+            Dictionary containing time series statistics
         """
-        # Get plot data using the script-based approach
-        x_data, y_data, plot_metadata = self.plot_script(ref_data, test_data, self.kwargs, ref_time)
+        # Calculate error values
+        error_data = self._calculate_error_values(ref_data, test_data)
+        time_axis = ref_time if ref_time is not None else np.arange(len(ref_data))
         
-        # === INPUT VALIDATION ===
-        if len(x_data) != len(y_data):
-            raise ValueError("X and Y data arrays must have the same length")
-        
-        if len(y_data) < 3:
-            raise ValueError("Insufficient data for statistical analysis (minimum 3 samples required)")
-        
-        # === PURE CALCULATIONS (delegated to stats_script) ===
-        stats_results = self.stats_script(x_data, y_data, ref_data, test_data, self.kwargs)
-        
-        return stats_results
-
-    def stats_script(self, x_data: List[float], y_data: List[float], 
-                    ref_data: np.ndarray, test_data: np.ndarray, params: dict) -> Dict[str, Any]:
-        """
-        Statistical calculations for relative error time series analysis
-        
-        Args:
-            x_data: Time values
-            y_data: Relative error values
-            ref_data: Original reference data
-            test_data: Original test data
-            params: Method parameters dictionary
-            
-        Returns:
-            Dictionary containing statistical results
-        """
-        relative_error = np.array(y_data)
-        
-        # Basic error statistics
-        error_stats = {
-            'mean': np.mean(relative_error),
-            'std': np.std(relative_error),
-            'min': np.min(relative_error),
-            'max': np.max(relative_error),
-            'median': np.median(relative_error),
-            'q25': np.percentile(relative_error, 25),
-            'q75': np.percentile(relative_error, 75),
-            'iqr': np.percentile(relative_error, 75) - np.percentile(relative_error, 25),
-            'range': np.ptp(relative_error),
-            'rms': np.sqrt(np.mean(relative_error**2))
+        # Initialize results
+        stats_results = {
+            'descriptive': {},
+            'temporal': {},
+            'outliers': {}
         }
         
-        # Bias analysis
-        bias_analysis = {
-            'mean_bias': np.mean(relative_error),
-            'absolute_bias': np.abs(np.mean(relative_error)),
-            'bias_direction': 'positive' if np.mean(relative_error) > 0 else 'negative' if np.mean(relative_error) < 0 else 'neutral',
-            'mean_absolute_error': np.mean(np.abs(relative_error)),
-            'positive_error_count': np.sum(relative_error > 0),
-            'negative_error_count': np.sum(relative_error < 0),
-            'zero_error_count': np.sum(relative_error == 0)
-        }
+        # Basic descriptive statistics
+        stats_results['descriptive'] = self._compute_descriptive_stats(error_data)
         
         # Temporal analysis
-        temporal_analysis = self._analyze_temporal_patterns(relative_error, params)
+        stats_results['temporal'] = self._compute_temporal_analysis(error_data, time_axis)
         
-        # Stability analysis
-        stability_analysis = self._analyze_stability(relative_error, params)
+        # Outlier analysis
+        stats_results['outliers'] = self._compute_outlier_analysis(error_data)
         
-        # Distribution analysis
-        distribution_analysis = self._analyze_distribution(relative_error, params)
+        # Trend analysis if requested
+        if self.kwargs.get('trend_analysis', True):
+            stats_results['trend'] = self._compute_trend_analysis(error_data, time_axis)
         
-        # Trend analysis
-        trend_analysis = self._analyze_trend(relative_error, params)
-        
-        stats_results = {
-            'error_stats': error_stats,
-            'bias_analysis': bias_analysis,
-            'temporal_analysis': temporal_analysis,
-            'stability_analysis': stability_analysis,
-            'distribution_analysis': distribution_analysis,
-            'trend_analysis': trend_analysis
-        }
+        # Smoothing analysis
+        smoothing_window = self.kwargs.get('smoothing_window', 10)
+        if smoothing_window > 1:
+            stats_results['smoothed'] = self._compute_smoothed_analysis(error_data, smoothing_window)
         
         return stats_results
-
-    def _analyze_temporal_patterns(self, relative_error: np.ndarray, params: dict) -> Dict[str, Any]:
-        """Analyze temporal patterns in relative error."""
-        try:
-            # Autocorrelation analysis
-            if len(relative_error) > 1:
-                autocorr_lag1 = np.corrcoef(relative_error[:-1], relative_error[1:])[0, 1]
-            else:
-                autocorr_lag1 = 0
-                
-            # Periodicity detection (simplified)
-            if len(relative_error) > 10:
-                try:
-                    from scipy.fft import fft, fftfreq
-                    fft_vals = fft(relative_error - np.mean(relative_error))
-                    freqs = fftfreq(len(relative_error))
-                    power = np.abs(fft_vals)**2
-                    dominant_freq_idx = np.argmax(power[1:len(power)//2]) + 1
-                    dominant_period = 1 / freqs[dominant_freq_idx] if freqs[dominant_freq_idx] != 0 else np.inf
-                except:
-                    dominant_period = np.inf
-            else:
-                dominant_period = np.inf
-                
-            return {
-                'autocorr_lag1': autocorr_lag1,
-                'dominant_period': dominant_period,
-                'has_strong_autocorr': abs(autocorr_lag1) > 0.5,
-                'has_periodic_pattern': dominant_period < len(relative_error) / 2
-            }
-        except Exception as e:
-            return {'error': str(e)}
-
-    def _analyze_stability(self, relative_error: np.ndarray, params: dict) -> Dict[str, Any]:
-        """Analyze stability of relative error over time."""
-        try:
-            # Divide into segments and analyze variance
-            n_segments = params.get('stability_segments', 5)
-            segment_size = len(relative_error) // n_segments
-            
-            if segment_size > 0:
-                segment_means = []
-                segment_stds = []
-                
-                for i in range(n_segments):
-                    start_idx = i * segment_size
-                    end_idx = (i + 1) * segment_size if i < n_segments - 1 else len(relative_error)
-                    segment = relative_error[start_idx:end_idx]
-                    
-                    segment_means.append(np.mean(segment))
-                    segment_stds.append(np.std(segment))
-                
-                # Stability metrics
-                mean_stability = np.std(segment_means)
-                variance_stability = np.std(segment_stds)
-                
-                return {
-                    'n_segments': n_segments,
-                    'segment_means': segment_means,
-                    'segment_stds': segment_stds,
-                    'mean_stability': mean_stability,
-                    'variance_stability': variance_stability,
-                    'is_stable_mean': mean_stability < np.std(relative_error) * 0.5,
-                    'is_stable_variance': variance_stability < np.std(relative_error) * 0.5
-                }
-            else:
-                return {'error': 'Insufficient data for stability analysis'}
-        except Exception as e:
-            return {'error': str(e)}
-
-    def _analyze_distribution(self, relative_error: np.ndarray, params: dict) -> Dict[str, Any]:
-        """Analyze distribution characteristics of relative error."""
-        try:
-            # Skewness and kurtosis
-            from scipy.stats import skew, kurtosis
-            skewness = skew(relative_error)
-            kurt = kurtosis(relative_error)
-            
-            # Normality test
-            from scipy.stats import shapiro
-            shapiro_stat, shapiro_p = shapiro(relative_error)
-            
-            # Percentile analysis
-            percentiles = [1, 5, 10, 25, 50, 75, 90, 95, 99]
-            percentile_values = [np.percentile(relative_error, p) for p in percentiles]
-            
-            return {
-                'skewness': skewness,
-                'kurtosis': kurt,
-                'is_normal': shapiro_p > 0.05,
-                'normality_p_value': shapiro_p,
-                'percentiles': dict(zip(percentiles, percentile_values)),
-                'is_symmetric': abs(skewness) < 0.5,
-                'is_mesokurtic': abs(kurt) < 0.5
-            }
-        except Exception as e:
-            return {'error': str(e)}
-
-    def _analyze_trend(self, relative_error: np.ndarray, params: dict) -> Dict[str, Any]:
-        """Analyze trend in relative error over time."""
-        try:
-            # Linear trend analysis
-            time_indices = np.arange(len(relative_error))
-            trend_coef = np.polyfit(time_indices, relative_error, 1)[0]
-            
-            # Trend significance test
-            from scipy.stats import pearsonr
-            trend_corr, trend_p = pearsonr(time_indices, relative_error)
-            
-            # Drift analysis (first half vs second half)
-            midpoint = len(relative_error) // 2
-            first_half_mean = np.mean(relative_error[:midpoint])
-            second_half_mean = np.mean(relative_error[midpoint:])
-            drift_magnitude = second_half_mean - first_half_mean
-            
-            return {
-                'trend_slope': trend_coef,
-                'trend_correlation': trend_corr,
-                'trend_p_value': trend_p,
-                'has_significant_trend': trend_p < 0.05,
-                'trend_direction': 'increasing' if trend_coef > 0 else 'decreasing' if trend_coef < 0 else 'stable',
-                'drift_magnitude': drift_magnitude,
-                'first_half_mean': first_half_mean,
-                'second_half_mean': second_half_mean
-            }
-        except Exception as e:
-            return {'error': str(e)}
     
     def generate_plot(self, ax, ref_data: np.ndarray, test_data: np.ndarray, 
                      plot_config: Dict[str, Any] = None, 

@@ -226,12 +226,7 @@ class StackedErrorTimeBandComparison(BaseComparison):
               ref_time: Optional[np.ndarray] = None, 
               test_time: Optional[np.ndarray] = None) -> Dict[str, Any]:
         """
-        Main comparison method - orchestrates the stacked error time band analysis.
-        
-        Streamlined 3-step workflow:
-        1. Validate input data (basic validation + remove NaN/infinite values)
-        2. plot_script (core transformation + data processing)
-        3. stats_script (statistical calculations)
+        Apply stacked error time band analysis to the data.
         
         Args:
             ref_data (np.ndarray): Reference data array
@@ -252,70 +247,11 @@ class StackedErrorTimeBandComparison(BaseComparison):
             RuntimeError: If analysis fails
         """
         try:
-            # === STEP 1: VALIDATE INPUT DATA ===
-            # Basic validation (shape, type, length compatibility)
+            # Validate input data
             ref_data, test_data = self._validate_input_data(ref_data, test_data)
-            # Remove NaN and infinite values
-            ref_clean, test_clean, valid_ratio = self._remove_invalid_data(ref_data, test_data)
             
-            # === STEP 2: PLOT SCRIPT (core transformation + data processing) ===
-            x_data, y_data, plot_metadata = self.plot_script(ref_clean, test_clean, self.kwargs, ref_time)
-            
-            # === STEP 3: STATS SCRIPT (statistical calculations) ===
-            stats_results = self.stats_script(x_data, y_data, ref_clean, test_clean, self.kwargs)
-            
-            # Prepare plot data
-            plot_data = {
-                "segments": x_data,
-                "segment_times": plot_metadata['segment_times'],
-                "labels": plot_metadata['labels'],
-                "percent_matrix": y_data,
-                "n_segments": plot_metadata['n_segments'],
-                "total_samples": plot_metadata['total_samples'],
-                "segment_size": plot_metadata['segment_size'],
-                'ref_data': ref_clean,
-                'test_data': test_clean,
-                'valid_ratio': valid_ratio,
-                'metadata': plot_metadata
-            }
-            
-            # Combine results
-            results = {
-                'method': self.name,
-                'n_samples': len(ref_clean),
-                'valid_ratio': valid_ratio,
-                'statistics': stats_results,
-                'plot_data': plot_data
-            }
-            
-            # Store results
-            self.results = results
-            return results
-            
-        except Exception as e:
-            raise RuntimeError(f"Stacked error time band analysis failed: {str(e)}")
-
-    def plot_script(self, ref_data: np.ndarray, test_data: np.ndarray, params: dict, 
-                   ref_time: Optional[np.ndarray] = None) -> tuple:
-        """
-        Core plotting transformation for stacked error time band analysis
-        
-        This defines what gets plotted - time segments and error tier percentages.
-        
-        Args:
-            ref_data: Reference measurements (already cleaned of NaN/infinite values)
-            test_data: Test measurements (already cleaned of NaN/infinite values)
-            params: Method parameters dictionary
-            ref_time: Optional time array for reference data
-            
-        Returns:
-            tuple: (x_data, y_data, metadata)
-                x_data: Segment indices for X-axis
-                y_data: Percentage matrix for stacked areas
-                metadata: Plot configuration dictionary
-        """
             # Handle zero exclusion
-        if params.get("exclude_zeros", False):
+            if self.kwargs.get("exclude_zeros", False):
                 mask = ref_data != 0
                 ref_data = ref_data[mask]
                 test_data = test_data[mask]
@@ -326,45 +262,141 @@ class StackedErrorTimeBandComparison(BaseComparison):
                 raise ValueError("No valid data points after filtering")
             
             # Calculate error
-        error = self._calculate_error(ref_data, test_data, params)
+            error = self._calculate_error(ref_data, test_data)
             
             # Create time segments
-        segment_size = params.get("segment_size", 100)
-        segments = self._create_time_segments(error, ref_time, segment_size, params)
+            segment_size = self.kwargs.get("segment_size", 100)
+            segments = self._create_time_segments(error, ref_time, segment_size)
             
             # Generate tier labels
-        tier_labels = self._generate_tier_labels(params)
+            tier_labels = self._generate_tier_labels()
             
             # Calculate error tier matrix
             band_matrix = self._calculate_band_matrix(segments, tier_labels)
             
             # Create time axis for segments
-        segment_times = self._create_segment_times(segments, ref_time, params)
+            segment_times = self._create_segment_times(segments, ref_time)
             
-        # Prepare metadata for plotting
-        metadata = {
-            'segment_times': segment_times,
-            'labels': tier_labels,
-            'n_segments': len(segments),
-            'total_samples': len(error),
-            'segment_size': segment_size,
-            'x_label': 'Time' if ref_time is not None else 'Segment',
-            'y_label': 'Percentage (%)',
-            'title': 'Stacked Error Time Band Analysis',
-            'plot_type': 'stacked_area',
-            'error_data': error.tolist()
-        }
+            # Store plot data
+            self.plot_data = {
+                "segments": list(range(len(segments))),
+                "segment_times": segment_times,
+                "labels": tier_labels,
+                "percent_matrix": band_matrix.tolist(),
+                "n_segments": len(segments),
+                "total_samples": len(error),
+                "segment_size": segment_size
+            }
+            
+            # Prepare results
+            self.results = {
+                "method": self.name,
+                "n_samples": len(error),
+                "plot_data": self.plot_data,
+                "error_data": error.tolist(),
+                "thresholds": self.thresholds,
+                "parameters": dict(self.kwargs)
+            }
+            
+            return self.results
+            
+        except Exception as e:
+            raise RuntimeError(f"Stacked error time band analysis failed: {str(e)}")
+            
+    def _calculate_error(self, ref_data: np.ndarray, test_data: np.ndarray) -> np.ndarray:
+        """Calculate error based on configuration."""
+        if self.kwargs.get("use_percentage", True):
+            # Percentage error (absolute)
+            denominator = ref_data if self.kwargs.get("normalize_by_reference", True) else test_data
+            with np.errstate(divide='ignore', invalid='ignore'):
+                error = np.abs(test_data - ref_data) / np.abs(denominator) * 100
+                error = np.nan_to_num(error, nan=0.0, posinf=0.0, neginf=0.0)
+        else:
+            # Absolute error
+            error = np.abs(test_data - ref_data)
+            
+        return error
         
-        return list(range(len(segments))), band_matrix.tolist(), metadata
+    def _create_time_segments(self, error: np.ndarray, ref_time: Optional[np.ndarray], 
+                            segment_size: int) -> List[np.ndarray]:
+        """Create time segments for analysis."""
+        segments = []
+        
+        if self.kwargs.get("overlap_segments", False):
+            # Overlapping segments
+            overlap_ratio = self.kwargs.get("overlap_ratio", 0.5)
+            step_size = int(segment_size * (1 - overlap_ratio))
+            
+            for i in range(0, len(error) - segment_size + 1, step_size):
+                segments.append(error[i:i + segment_size])
+        else:
+            # Non-overlapping segments
+            for i in range(0, len(error), segment_size):
+                segment = error[i:i + segment_size]
+                if len(segment) > 0:  # Include partial segments
+                    segments.append(segment)
+                    
+        return segments
+        
+    def _generate_tier_labels(self) -> List[str]:
+        """Generate tier labels from thresholds."""
+        unit = "%" if self.kwargs.get("use_percentage", True) else ""
+        labels = []
+        
+        for i in range(len(self.thresholds) - 1):
+            if self.thresholds[i+1] == np.inf:
+                labels.append(f">{self.thresholds[i]:.0f}{unit}")
+            else:
+                labels.append(f"≤{self.thresholds[i+1]:.0f}{unit}")
+                
+        return labels
+        
+    def _calculate_band_matrix(self, segments: List[np.ndarray], tier_labels: List[str]) -> np.ndarray:
+        """Calculate the percentage matrix for stacked bands."""
+        n_tiers = len(tier_labels)
+        n_segments = len(segments)
+        band_matrix = np.zeros((n_tiers, n_segments))
+        
+        for i, segment in enumerate(segments):
+            if len(segment) > 0:
+                # Calculate histogram for this segment
+                bin_counts, _ = np.histogram(segment, bins=self.thresholds)
+                total = len(segment)
+                
+                # Convert to percentages
+                if total > 0:
+                    band_matrix[:, i] = (bin_counts / total) * 100
+                    
+        return band_matrix
+        
+    def _create_segment_times(self, segments: List[np.ndarray], ref_time: Optional[np.ndarray]) -> List[float]:
+        """Create time axis for segments."""
+        if ref_time is None:
+            # Use segment indices as time
+            return list(range(len(segments)))
+        else:
+            # Use actual time values
+            segment_times = []
+            segment_size = self.kwargs.get("segment_size", 100)
+            
+            if self.kwargs.get("overlap_segments", False):
+                overlap_ratio = self.kwargs.get("overlap_ratio", 0.5)
+                step_size = int(segment_size * (1 - overlap_ratio))
+                
+                for i in range(0, len(ref_time) - segment_size + 1, step_size):
+                    segment_times.append(np.mean(ref_time[i:i + segment_size]))
+            else:
+                for i in range(0, len(ref_time), segment_size):
+                    end_idx = min(i + segment_size, len(ref_time))
+                    segment_times.append(np.mean(ref_time[i:end_idx]))
+                    
+            return segment_times
 
     def calculate_stats(self, ref_data: np.ndarray, test_data: np.ndarray, 
                        ref_time: Optional[np.ndarray] = None, 
                        test_time: Optional[np.ndarray] = None) -> Dict[str, Any]:
         """
-        BACKWARD COMPATIBILITY + SAFETY WRAPPER: Calculate stacked error time band statistics.
-        
-        This method maintains compatibility with existing code and provides comprehensive
-        validation and error handling around the core statistical calculations.
+        Calculate comprehensive statistics for the stacked error time band analysis.
         
         Args:
             ref_data (np.ndarray): Reference data array
@@ -382,42 +414,18 @@ class StackedErrorTimeBandComparison(BaseComparison):
         Raises:
             RuntimeError: If no results available or calculation fails
         """
-        # Get plot data using the script-based approach
-        x_data, y_data, plot_metadata = self.plot_script(ref_data, test_data, self.kwargs, ref_time)
-        
-        # === INPUT VALIDATION ===
-        if len(x_data) != len(y_data[0]) if y_data else True:
-            raise ValueError("X and Y data arrays must have compatible lengths")
-        
-        if len(y_data) < 1:
-            raise ValueError("Insufficient data for statistical analysis")
-        
-        # === PURE CALCULATIONS (delegated to stats_script) ===
-        stats_results = self.stats_script(x_data, y_data, ref_data, test_data, self.kwargs)
-        
-        return stats_results
-
-    def stats_script(self, x_data: List[int], y_data: List[List[float]], 
-                    ref_data: np.ndarray, test_data: np.ndarray, params: dict) -> Dict[str, Any]:
-        """
-        Statistical calculations for stacked error time band analysis
-        
-        Args:
-            x_data: Segment indices
-            y_data: Percentage matrix for error tiers
-            ref_data: Original reference data
-            test_data: Original test data
-            params: Method parameters dictionary
+        # If no results available, run apply() first
+        if self.results is None:
+            try:
+                self.apply(ref_data, test_data, ref_time, test_time)
+            except Exception as e:
+                raise RuntimeError(f"Failed to apply analysis before calculating stats: {str(e)}")
             
-        Returns:
-            Dictionary containing statistical results
-        """
-        # Get metadata from plot_script
-        _, _, plot_metadata = self.plot_script(ref_data, test_data, params)
-        
-        percent_matrix = np.array(y_data)
-        tier_labels = plot_metadata['labels']
-        n_segments = plot_metadata['n_segments']
+        try:
+            plot_data = self.plot_data
+            percent_matrix = np.array(plot_data["percent_matrix"])
+            tier_labels = plot_data["labels"]
+            n_segments = plot_data["n_segments"]
             
             # Per-tier statistics
             tier_statistics = {}
@@ -503,15 +511,15 @@ class StackedErrorTimeBandComparison(BaseComparison):
             # Overall statistics
             overall_stats = {
                 "total_segments": n_segments,
-            "total_samples": plot_metadata['total_samples'],
-            "segment_size": plot_metadata['segment_size'],
+                "total_samples": plot_data["total_samples"],
+                "segment_size": plot_data["segment_size"],
                 "most_stable_tier": min(temporal_stability.keys(), key=lambda x: temporal_stability[x]["coefficient_of_variation"]),
                 "most_variable_tier": max(temporal_stability.keys(), key=lambda x: temporal_stability[x]["coefficient_of_variation"]),
                 "average_entropy": np.mean([concentration_indices[f"segment_{i}"]["entropy"] for i in range(n_segments)]),
                 "average_concentration": np.mean([concentration_indices[f"segment_{i}"]["concentration_score"] for i in range(n_segments)])
             }
             
-        stats_results = {
+            self.statistics = {
                 "tier_statistics": tier_statistics,
                 "temporal_stability": temporal_stability,
                 "concentration_indices": concentration_indices,
@@ -519,97 +527,10 @@ class StackedErrorTimeBandComparison(BaseComparison):
                 "overall_stats": overall_stats
             }
             
-        return stats_results
-
-    def _calculate_error(self, ref_data: np.ndarray, test_data: np.ndarray, params: dict) -> np.ndarray:
-        """Calculate error based on configuration."""
-        if params.get("use_percentage", True):
-            # Percentage error (absolute)
-            denominator = ref_data if params.get("normalize_by_reference", True) else test_data
-            with np.errstate(divide='ignore', invalid='ignore'):
-                error = np.abs(test_data - ref_data) / np.abs(denominator) * 100
-                error = np.nan_to_num(error, nan=0.0, posinf=0.0, neginf=0.0)
-        else:
-            # Absolute error
-            error = np.abs(test_data - ref_data)
+            return self.statistics
             
-        return error
-        
-    def _create_time_segments(self, error: np.ndarray, ref_time: Optional[np.ndarray], 
-                            segment_size: int, params: dict) -> List[np.ndarray]:
-        """Create time segments for analysis."""
-        segments = []
-        
-        if params.get("overlap_segments", False):
-            # Overlapping segments
-            overlap_ratio = params.get("overlap_ratio", 0.5)
-            step_size = int(segment_size * (1 - overlap_ratio))
-            
-            for i in range(0, len(error) - segment_size + 1, step_size):
-                segments.append(error[i:i + segment_size])
-        else:
-            # Non-overlapping segments
-            for i in range(0, len(error), segment_size):
-                segment = error[i:i + segment_size]
-                if len(segment) > 0:  # Include partial segments
-                    segments.append(segment)
-                    
-        return segments
-        
-    def _generate_tier_labels(self, params: dict) -> List[str]:
-        """Generate tier labels from thresholds."""
-        unit = "%" if params.get("use_percentage", True) else ""
-        labels = []
-        
-        for i in range(len(self.thresholds) - 1):
-            if self.thresholds[i+1] == np.inf:
-                labels.append(f">{self.thresholds[i]:.0f}{unit}")
-            else:
-                labels.append(f"≤{self.thresholds[i+1]:.0f}{unit}")
-                
-        return labels
-        
-    def _calculate_band_matrix(self, segments: List[np.ndarray], tier_labels: List[str]) -> np.ndarray:
-        """Calculate the percentage matrix for stacked bands."""
-        n_tiers = len(tier_labels)
-        n_segments = len(segments)
-        band_matrix = np.zeros((n_tiers, n_segments))
-        
-        for i, segment in enumerate(segments):
-            if len(segment) > 0:
-                # Calculate histogram for this segment
-                bin_counts, _ = np.histogram(segment, bins=self.thresholds)
-                total = len(segment)
-                
-                # Convert to percentages
-                if total > 0:
-                    band_matrix[:, i] = (bin_counts / total) * 100
-                    
-        return band_matrix
-        
-    def _create_segment_times(self, segments: List[np.ndarray], ref_time: Optional[np.ndarray], 
-                             params: dict) -> List[float]:
-        """Create time axis for segments."""
-        if ref_time is None:
-            # Use segment indices as time
-            return list(range(len(segments)))
-        else:
-            # Use actual time values
-            segment_times = []
-            segment_size = params.get("segment_size", 100)
-            
-            if params.get("overlap_segments", False):
-                overlap_ratio = params.get("overlap_ratio", 0.5)
-                step_size = int(segment_size * (1 - overlap_ratio))
-                
-                for i in range(0, len(ref_time) - segment_size + 1, step_size):
-                    segment_times.append(np.mean(ref_time[i:i + segment_size]))
-            else:
-                for i in range(0, len(ref_time), segment_size):
-                    end_idx = min(i + segment_size, len(ref_time))
-                    segment_times.append(np.mean(ref_time[i:end_idx]))
-                    
-            return segment_times
+        except Exception as e:
+            raise RuntimeError(f"Statistics calculation failed: {str(e)}")
 
     def generate_plot(self, ax, ref_data: np.ndarray, test_data: np.ndarray, 
                      plot_config: Dict[str, Any] = None, 
@@ -627,20 +548,15 @@ class StackedErrorTimeBandComparison(BaseComparison):
         Raises:
             RuntimeError: If no results available or plotting fails
         """
-        # Use the plot_script for consistent transformation
-        x_data, y_data, plot_metadata = self.plot_script(ref_data, test_data, self.kwargs)
-        
+        # If no results available, run apply() first
+        if self.results is None:
+            try:
+                self.apply(ref_data, test_data)
+            except Exception as e:
+                raise RuntimeError(f"Failed to apply analysis before plotting: {str(e)}")
+            
         try:
-            # Prepare plot data directly from plot_script results
-            plot_data = {
-                "segments": x_data,
-                "segment_times": plot_metadata['segment_times'],
-                "labels": plot_metadata['labels'],
-                "percent_matrix": y_data,
-                "n_segments": plot_metadata['n_segments'],
-                "total_samples": plot_metadata['total_samples'],
-                "segment_size": plot_metadata['segment_size']
-            }
+            plot_data = self.plot_data
             
             # Merge plot_config with overlay options if provided
             if plot_config is None:

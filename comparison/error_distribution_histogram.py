@@ -54,7 +54,12 @@ class ErrorDistributionHistogramComparison(BaseComparison):
               ref_time: Optional[np.ndarray] = None, 
               test_time: Optional[np.ndarray] = None) -> Dict[str, Any]:
         """
-        Main comparison method - orchestrates the error distribution analysis.
+        Main comparison method - orchestrates the error distribution histogram analysis.
+        
+        Streamlined 3-step workflow:
+        1. Validate input data (basic validation + remove NaN/infinite values)
+        2. plot_script (core transformation + histogram computation)
+        3. stats_script (statistical calculations)
         
         Args:
             ref_data: Reference data array
@@ -63,24 +68,29 @@ class ErrorDistributionHistogramComparison(BaseComparison):
             test_time: Optional time array for test data
             
         Returns:
-            Dictionary containing error distribution results with statistics and plot data
+            Dictionary containing error distribution histogram analysis results
         """
-        # Validate and clean input data
+        try:
+            # === STEP 1: VALIDATE INPUT DATA ===
+            # Basic validation (shape, type, length compatibility)
         ref_data, test_data = self._validate_input_data(ref_data, test_data)
+            # Remove NaN and infinite values
         ref_clean, test_clean, valid_ratio = self._remove_invalid_data(ref_data, test_data)
         
-        # Calculate error values
-        error_data = self._calculate_error_values(ref_clean, test_clean)
+            # === STEP 2: PLOT SCRIPT (core transformation + histogram computation) ===
+            x_data, y_data, plot_metadata = self.plot_script(ref_clean, test_clean, self.kwargs)
         
-        # Calculate statistics
-        stats_results = self.calculate_stats(ref_clean, test_clean, ref_time, test_time)
+            # === STEP 3: STATS SCRIPT (statistical calculations) ===
+            stats_results = self.stats_script(x_data, y_data, ref_clean, test_clean, self.kwargs)
         
         # Prepare plot data
         plot_data = {
-            'error_values': error_data,
+                'bin_edges': x_data,
+                'bin_counts': y_data,
             'ref_data': ref_clean,
             'test_data': test_clean,
-            'valid_ratio': valid_ratio
+                'valid_ratio': valid_ratio,
+                'metadata': plot_metadata
         }
         
         # Combine results
@@ -95,12 +105,121 @@ class ErrorDistributionHistogramComparison(BaseComparison):
         # Store results
         self.results = results
         return results
+            
+        except Exception as e:
+            raise RuntimeError(f"Error distribution histogram analysis failed: {str(e)}")
+
+    def plot_script(self, ref_data: np.ndarray, test_data: np.ndarray, params: dict) -> tuple:
+        """
+        Core plotting transformation for error distribution histogram analysis
+        
+        This defines what gets plotted - error bins and their frequencies.
+        
+        Args:
+            ref_data: Reference measurements (already cleaned of NaN/infinite values)
+            test_data: Test measurements (already cleaned of NaN/infinite values)
+            params: Method parameters dictionary
+            
+        Returns:
+            tuple: (x_data, y_data, metadata)
+                x_data: Bin edges for histogram
+                y_data: Bin counts/frequencies
+                metadata: Plot configuration dictionary
+        """
+        # Calculate errors
+        errors = self._calculate_errors(ref_data, test_data, params)
+        
+        # Create histogram
+        bin_edges, bin_counts = self._create_histogram(errors, params)
+        
+        # Prepare metadata for plotting
+        metadata = {
+            'x_label': self._get_error_label(params),
+            'y_label': 'Frequency' if not params.get("normalize_histogram", False) else 'Density',
+            'title': 'Error Distribution Histogram',
+            'plot_type': 'histogram',
+            'error_type': params.get("error_type", "absolute"),
+            'n_bins': params.get("n_bins", 30),
+            'normalized': params.get("normalize_histogram", False),
+            'total_samples': len(errors)
+        }
+        
+        return bin_edges.tolist(), bin_counts.tolist(), metadata
+
+    def _calculate_errors(self, ref_data: np.ndarray, test_data: np.ndarray, params: dict) -> np.ndarray:
+        """Calculate errors based on configuration."""
+        error_type = params.get("error_type", "absolute")
+        
+        if error_type == "absolute":
+            errors = test_data - ref_data
+        elif error_type == "relative":
+            with np.errstate(divide='ignore', invalid='ignore'):
+                errors = (test_data - ref_data) / ref_data * 100
+                errors = np.nan_to_num(errors, nan=0.0, posinf=0.0, neginf=0.0)
+        elif error_type == "absolute_relative":
+            with np.errstate(divide='ignore', invalid='ignore'):
+                errors = np.abs(test_data - ref_data) / np.abs(ref_data) * 100
+                errors = np.nan_to_num(errors, nan=0.0, posinf=0.0, neginf=0.0)
+        elif error_type == "squared":
+            errors = (test_data - ref_data) ** 2
+        elif error_type == "log":
+            with np.errstate(divide='ignore', invalid='ignore'):
+                errors = np.log(test_data / ref_data)
+                errors = np.nan_to_num(errors, nan=0.0, posinf=0.0, neginf=0.0)
+        else:
+            # Default to absolute
+            errors = test_data - ref_data
+            
+        return errors
+
+    def _create_histogram(self, errors: np.ndarray, params: dict) -> Tuple[np.ndarray, np.ndarray]:
+        """Create histogram of errors."""
+        n_bins = params.get("n_bins", 30)
+        bin_range = params.get("bin_range", None)
+        normalize = params.get("normalize_histogram", False)
+        
+        if bin_range is None:
+            # Auto-determine range
+            if params.get("exclude_outliers", False):
+                # Use IQR-based range
+                q25, q75 = np.percentile(errors, [25, 75])
+                iqr = q75 - q25
+                outlier_factor = params.get("outlier_iqr_factor", 1.5)
+                bin_range = (q25 - outlier_factor * iqr, q75 + outlier_factor * iqr)
+            else:
+                # Use full range
+                bin_range = (np.min(errors), np.max(errors))
+        
+        # Create histogram
+        bin_counts, bin_edges = np.histogram(errors, bins=n_bins, range=bin_range, density=normalize)
+        
+        return bin_edges, bin_counts
+
+    def _get_error_label(self, params: dict) -> str:
+        """Get appropriate label for error type."""
+        error_type = params.get("error_type", "absolute")
+        
+        if error_type == "absolute":
+            return "Absolute Error"
+        elif error_type == "relative":
+            return "Relative Error (%)"
+        elif error_type == "absolute_relative":
+            return "Absolute Relative Error (%)"
+        elif error_type == "squared":
+            return "Squared Error"
+        elif error_type == "log":
+            return "Log Error"
+        else:
+            return "Error"
     
     def calculate_stats(self, ref_data: np.ndarray, test_data: np.ndarray, 
                        ref_time: Optional[np.ndarray] = None, 
                        test_time: Optional[np.ndarray] = None) -> Dict[str, Any]:
         """
-        Calculate error distribution statistics.
+        BACKWARD COMPATIBILITY + SAFETY WRAPPER: Calculate error distribution histogram statistics.
+        
+        This method maintains compatibility with existing code and provides comprehensive
+        validation and error handling around the core statistical calculations.
         
         Args:
             ref_data: Reference data array
@@ -109,32 +228,276 @@ class ErrorDistributionHistogramComparison(BaseComparison):
             test_time: Optional time array for test data
             
         Returns:
-            Dictionary containing distribution statistics
+            Dictionary containing error distribution histogram statistics
         """
-        # Calculate error values
-        error_data = self._calculate_error_values(ref_data, test_data)
+        # Get plot data using the script-based approach
+        x_data, y_data, plot_metadata = self.plot_script(ref_data, test_data, self.kwargs)
         
-        # Initialize results
-        stats_results = {
-            'distribution': {},
-            'normality': {},
-            'outliers': {}
-        }
+        # === INPUT VALIDATION ===
+        if len(x_data) != len(y_data) + 1:  # Bin edges vs bin counts
+            raise ValueError("Bin edges and bin counts must have compatible lengths")
         
-        # Basic distribution statistics
-        stats_results['distribution'] = self._compute_distribution_stats(error_data)
+        if len(y_data) < 1:
+            raise ValueError("Insufficient data for statistical analysis")
         
-        # Normality tests
-        stats_results['normality'] = self._compute_normality_tests(error_data)
-        
-        # Outlier analysis
-        stats_results['outliers'] = self._compute_outlier_analysis(error_data)
-        
-        # Gaussian fit if requested
-        if self.kwargs.get('show_gaussian_fit', True):
-            stats_results['gaussian_fit'] = self._fit_gaussian_distribution(error_data)
+        # === PURE CALCULATIONS (delegated to stats_script) ===
+        stats_results = self.stats_script(x_data, y_data, ref_data, test_data, self.kwargs)
         
         return stats_results
+
+    def stats_script(self, x_data: List[float], y_data: List[float], 
+                    ref_data: np.ndarray, test_data: np.ndarray, params: dict) -> Dict[str, Any]:
+        """
+        Statistical calculations for error distribution histogram analysis
+        
+        Args:
+            x_data: Bin edges
+            y_data: Bin counts/frequencies
+            ref_data: Original reference data
+            test_data: Original test data
+            params: Method parameters dictionary
+            
+        Returns:
+            Dictionary containing statistical results
+        """
+        bin_edges = np.array(x_data)
+        bin_counts = np.array(y_data)
+        
+        # Calculate original errors for detailed statistics
+        errors = self._calculate_errors(ref_data, test_data, params)
+        
+        # Basic distribution statistics
+        distribution_stats = {
+            'mean': np.mean(errors),
+            'std': np.std(errors),
+            'min': np.min(errors),
+            'max': np.max(errors),
+            'median': np.median(errors),
+            'q25': np.percentile(errors, 25),
+            'q75': np.percentile(errors, 75),
+            'iqr': np.percentile(errors, 75) - np.percentile(errors, 25),
+            'range': np.ptp(errors),
+            'total_count': len(errors)
+        }
+        
+        # Histogram-specific statistics
+        histogram_stats = self._analyze_histogram_properties(bin_edges, bin_counts, params)
+        
+        # Shape analysis
+        shape_analysis = self._analyze_distribution_shape(errors, params)
+        
+        # Normality tests
+        normality_tests = self._perform_normality_tests(errors)
+        
+        # Outlier analysis
+        outlier_analysis = self._analyze_outliers(errors, params)
+        
+        # Symmetry analysis
+        symmetry_analysis = self._analyze_symmetry(errors, bin_edges, bin_counts)
+        
+        stats_results = {
+            'distribution_stats': distribution_stats,
+            'histogram_stats': histogram_stats,
+            'shape_analysis': shape_analysis,
+            'normality_tests': normality_tests,
+            'outlier_analysis': outlier_analysis,
+            'symmetry_analysis': symmetry_analysis
+        }
+        
+        return stats_results
+
+    def _analyze_histogram_properties(self, bin_edges: np.ndarray, bin_counts: np.ndarray, params: dict) -> Dict[str, Any]:
+        """Analyze histogram-specific properties."""
+        try:
+            # Bin centers
+            bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+            
+            # Mode (bin with highest count)
+            mode_idx = np.argmax(bin_counts)
+            mode_value = bin_centers[mode_idx]
+            mode_count = bin_counts[mode_idx]
+            
+            # Histogram entropy
+            total_count = np.sum(bin_counts)
+            if total_count > 0:
+                probs = bin_counts / total_count
+                probs = probs[probs > 0]  # Remove zero probabilities
+                entropy = -np.sum(probs * np.log2(probs))
+            else:
+                entropy = 0
+            
+            # Effective number of bins (bins with non-zero counts)
+            effective_bins = np.sum(bin_counts > 0)
+            
+            # Histogram spread
+            weighted_mean = np.average(bin_centers, weights=bin_counts)
+            weighted_std = np.sqrt(np.average((bin_centers - weighted_mean)**2, weights=bin_counts))
+            
+            return {
+                'n_bins': len(bin_counts),
+                'effective_bins': effective_bins,
+                'mode_value': mode_value,
+                'mode_count': mode_count,
+                'entropy': entropy,
+                'weighted_mean': weighted_mean,
+                'weighted_std': weighted_std,
+                'bin_width': bin_edges[1] - bin_edges[0] if len(bin_edges) > 1 else 0
+            }
+        except Exception as e:
+            return {'error': str(e)}
+
+    def _analyze_distribution_shape(self, errors: np.ndarray, params: dict) -> Dict[str, Any]:
+        """Analyze the shape of the error distribution."""
+        try:
+            from scipy.stats import skew, kurtosis
+            
+            # Skewness and kurtosis
+            skewness = skew(errors)
+            kurt = kurtosis(errors)
+            
+            # Tail analysis
+            q01 = np.percentile(errors, 1)
+            q99 = np.percentile(errors, 99)
+            tail_ratio = (q99 - np.median(errors)) / (np.median(errors) - q01)
+            
+            # Peak analysis
+            from scipy.stats import mode
+            mode_result = mode(errors, keepdims=True)
+            modal_value = mode_result.mode[0]
+            modal_count = mode_result.count[0]
+            
+            return {
+                'skewness': skewness,
+                'kurtosis': kurt,
+                'is_symmetric': abs(skewness) < 0.5,
+                'is_mesokurtic': abs(kurt) < 0.5,
+                'tail_ratio': tail_ratio,
+                'modal_value': modal_value,
+                'modal_count': modal_count,
+                'shape_classification': self._classify_distribution_shape(skewness, kurt)
+            }
+        except Exception as e:
+            return {'error': str(e)}
+
+    def _classify_distribution_shape(self, skewness: float, kurtosis: float) -> str:
+        """Classify distribution shape based on skewness and kurtosis."""
+        if abs(skewness) < 0.5 and abs(kurtosis) < 0.5:
+            return "approximately_normal"
+        elif abs(skewness) < 0.5:
+            return "symmetric_non_normal"
+        elif skewness > 0.5:
+            return "right_skewed"
+        elif skewness < -0.5:
+            return "left_skewed"
+        else:
+            return "irregular"
+
+    def _perform_normality_tests(self, errors: np.ndarray) -> Dict[str, Any]:
+        """Perform normality tests on error distribution."""
+        try:
+            from scipy.stats import shapiro, jarque_bera, normaltest, kstest
+            
+            # Shapiro-Wilk test
+            shapiro_stat, shapiro_p = shapiro(errors)
+            
+            # Jarque-Bera test
+            jb_stat, jb_p = jarque_bera(errors)
+            
+            # D'Agostino's normality test
+            da_stat, da_p = normaltest(errors)
+            
+            # Kolmogorov-Smirnov test against normal distribution
+            ks_stat, ks_p = kstest(errors, 'norm', args=(np.mean(errors), np.std(errors)))
+            
+            return {
+                'shapiro_wilk': {'statistic': shapiro_stat, 'p_value': shapiro_p, 'is_normal': shapiro_p > 0.05},
+                'jarque_bera': {'statistic': jb_stat, 'p_value': jb_p, 'is_normal': jb_p > 0.05},
+                'dagostino': {'statistic': da_stat, 'p_value': da_p, 'is_normal': da_p > 0.05},
+                'kolmogorov_smirnov': {'statistic': ks_stat, 'p_value': ks_p, 'is_normal': ks_p > 0.05},
+                'consensus_normal': sum([shapiro_p > 0.05, jb_p > 0.05, da_p > 0.05, ks_p > 0.05]) >= 3
+            }
+        except Exception as e:
+            return {'error': str(e)}
+
+    def _analyze_outliers(self, errors: np.ndarray, params: dict) -> Dict[str, Any]:
+        """Analyze outliers in error distribution."""
+        try:
+            # Z-score method
+            z_threshold = params.get('outlier_z_threshold', 3.0)
+            z_scores = np.abs((errors - np.mean(errors)) / np.std(errors))
+            z_outliers = np.where(z_scores > z_threshold)[0]
+            
+            # IQR method
+            q25, q75 = np.percentile(errors, [25, 75])
+            iqr = q75 - q25
+            iqr_factor = params.get('outlier_iqr_factor', 1.5)
+            iqr_lower = q25 - iqr_factor * iqr
+            iqr_upper = q75 + iqr_factor * iqr
+            iqr_outliers = np.where((errors < iqr_lower) | (errors > iqr_upper))[0]
+            
+            # Modified Z-score method (using median)
+            median_abs_dev = np.median(np.abs(errors - np.median(errors)))
+            modified_z_scores = 0.6745 * (errors - np.median(errors)) / median_abs_dev
+            modified_z_outliers = np.where(np.abs(modified_z_scores) > z_threshold)[0]
+            
+            return {
+                'z_score_outliers': {
+                    'indices': z_outliers.tolist(),
+                    'count': len(z_outliers),
+                    'percentage': len(z_outliers) / len(errors) * 100
+                },
+                'iqr_outliers': {
+                    'indices': iqr_outliers.tolist(),
+                    'count': len(iqr_outliers),
+                    'percentage': len(iqr_outliers) / len(errors) * 100,
+                    'lower_bound': iqr_lower,
+                    'upper_bound': iqr_upper
+                },
+                'modified_z_outliers': {
+                    'indices': modified_z_outliers.tolist(),
+                    'count': len(modified_z_outliers),
+                    'percentage': len(modified_z_outliers) / len(errors) * 100
+                }
+            }
+        except Exception as e:
+            return {'error': str(e)}
+
+    def _analyze_symmetry(self, errors: np.ndarray, bin_edges: np.ndarray, bin_counts: np.ndarray) -> Dict[str, Any]:
+        """Analyze symmetry of error distribution."""
+        try:
+            # Statistical symmetry measures
+            mean_error = np.mean(errors)
+            median_error = np.median(errors)
+            
+            # Histogram-based symmetry
+            bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+            center_bin_idx = np.argmin(np.abs(bin_centers - median_error))
+            
+            # Compare left and right sides of histogram
+            left_counts = bin_counts[:center_bin_idx]
+            right_counts = bin_counts[center_bin_idx+1:]
+            
+            # Pad shorter side with zeros
+            max_len = max(len(left_counts), len(right_counts))
+            left_padded = np.pad(left_counts, (0, max_len - len(left_counts)), 'constant')
+            right_padded = np.pad(right_counts[::-1], (0, max_len - len(right_counts)), 'constant')
+            
+            # Symmetry correlation
+            if len(left_padded) > 0 and len(right_padded) > 0:
+                symmetry_corr = np.corrcoef(left_padded, right_padded)[0, 1]
+            else:
+                symmetry_corr = 0
+            
+            return {
+                'mean_median_diff': mean_error - median_error,
+                'symmetry_correlation': symmetry_corr,
+                'is_symmetric_statistical': abs(mean_error - median_error) < 0.1 * np.std(errors),
+                'is_symmetric_visual': symmetry_corr > 0.8,
+                'left_tail_weight': np.sum(left_counts),
+                'right_tail_weight': np.sum(right_counts)
+            }
+        except Exception as e:
+            return {'error': str(e)}
     
     def generate_plot(self, ax, ref_data: np.ndarray, test_data: np.ndarray, 
                      plot_config: Dict[str, Any] = None, 
@@ -153,10 +516,22 @@ class ErrorDistributionHistogramComparison(BaseComparison):
             plot_config = {}
         
         # Calculate error values
-        error_data = self._calculate_error_values(ref_data, test_data)
+        error_data = self._calculate_errors(ref_data, test_data, self.kwargs)
         
         # Create histogram
-        self._create_histogram(ax, error_data, plot_config)
+        bins = self.kwargs.get('bins', 50)
+        density = self.kwargs.get('density', True)
+        
+        # Create histogram
+        n, bins_edges, patches = ax.hist(
+            error_data, 
+            bins=bins, 
+            density=density, 
+            alpha=0.7, 
+            color='skyblue', 
+            edgecolor='black',
+            label='Error Distribution'
+        )
         
         # Add overlay elements
         self._add_distribution_overlays(ax, error_data, plot_config, stats_results)
@@ -274,25 +649,28 @@ class ErrorDistributionHistogramComparison(BaseComparison):
                 'error': str(e)
             }
     
-    def _create_histogram(self, ax, error_data: np.ndarray, plot_config: Dict[str, Any]) -> None:
-        """Create the main histogram plot."""
-        bins = self.kwargs.get('bins', 50)
-        density = self.kwargs.get('density', True)
+    def _create_histogram(self, errors: np.ndarray, params: dict) -> Tuple[np.ndarray, np.ndarray]:
+        """Create histogram of errors."""
+        n_bins = params.get("n_bins", 30)
+        bin_range = params.get("bin_range", None)
+        normalize = params.get("normalize_histogram", False)
+        
+        if bin_range is None:
+            # Auto-determine range
+            if params.get("exclude_outliers", False):
+                # Use IQR-based range
+                q25, q75 = np.percentile(errors, [25, 75])
+                iqr = q75 - q25
+                outlier_factor = params.get("outlier_iqr_factor", 1.5)
+                bin_range = (q25 - outlier_factor * iqr, q75 + outlier_factor * iqr)
+            else:
+                # Use full range
+                bin_range = (np.min(errors), np.max(errors))
         
         # Create histogram
-        n, bins_edges, patches = ax.hist(
-            error_data, 
-            bins=bins, 
-            density=density, 
-            alpha=0.7, 
-            color='skyblue', 
-            edgecolor='black',
-            label='Error Distribution'
-        )
+        bin_counts, bin_edges = np.histogram(errors, bins=n_bins, range=bin_range, density=normalize)
         
-        # Highlight outlier bins if requested
-        if plot_config.get('highlight_outliers', False):
-            self._highlight_outlier_bins(ax, error_data, bins_edges, patches)
+        return bin_edges, bin_counts
     
     def _add_distribution_overlays(self, ax, error_data: np.ndarray, 
                                  plot_config: Dict[str, Any], 

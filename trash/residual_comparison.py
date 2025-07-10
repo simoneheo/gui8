@@ -58,11 +58,6 @@ class ResidualComparison(BaseComparison):
         """
         Main comparison method - orchestrates the residual analysis.
         
-        Streamlined 3-step workflow:
-        1. Validate input data (basic validation + remove NaN/infinite values)
-        2. plot_script (core transformation + residual computation)
-        3. stats_script (statistical calculations)
-        
         Args:
             ref_data: Reference data array
             test_data: Test data array  
@@ -70,163 +65,44 @@ class ResidualComparison(BaseComparison):
             test_time: Optional time array for test data
             
         Returns:
-            Dictionary containing residual analysis results
+            Dictionary containing residual analysis results with statistics and plot data
         """
-        try:
-            # === STEP 1: VALIDATE INPUT DATA ===
-            # Basic validation (shape, type, length compatibility)
-            ref_data, test_data = self._validate_input_data(ref_data, test_data)
-            # Remove NaN and infinite values
-            ref_clean, test_clean, valid_ratio = self._remove_invalid_data(ref_data, test_data)
-            
-            # === STEP 2: PLOT SCRIPT (core transformation + residual computation) ===
-            x_data, y_data, plot_metadata = self.plot_script(ref_clean, test_clean, self.kwargs)
-            
-            # === STEP 3: STATS SCRIPT (statistical calculations) ===
-            stats_results = self.stats_script(x_data, y_data, ref_clean, test_clean, self.kwargs)
-            
-            # Prepare plot data
-            plot_data = {
-                'fitted_values': x_data,
-                'residuals': y_data,
-                'ref_data': ref_clean,
-                'test_data': test_clean,
-                'valid_ratio': valid_ratio,
-                'metadata': plot_metadata
-            }
-            
-            # Combine results
-            results = {
-                'method': self.name,
-                'n_samples': len(ref_clean),
-                'valid_ratio': valid_ratio,
-                'statistics': stats_results,
-                'plot_data': plot_data
-            }
-            
-            # Store results
-            self.results = results
-            return results
-            
-        except Exception as e:
-            raise RuntimeError(f"Residual analysis failed: {str(e)}")
-
-    def plot_script(self, ref_data: np.ndarray, test_data: np.ndarray, params: dict) -> tuple:
-        """
-        Core plotting transformation for residual analysis
+        # Validate and clean input data
+        ref_data, test_data = self._validate_input_data(ref_data, test_data)
+        ref_clean, test_clean, valid_ratio = self._remove_invalid_data(ref_data, test_data)
         
-        This defines what gets plotted on X and Y axes for residual plots.
+        # Calculate statistics
+        stats_results = self.calculate_stats(ref_clean, test_clean, ref_time, test_time)
         
-        Args:
-            ref_data: Reference measurements (already cleaned of NaN/infinite values)
-            test_data: Test measurements (already cleaned of NaN/infinite values)
-            params: Method parameters dictionary
-            
-        Returns:
-            tuple: (x_data, y_data, metadata)
-                x_data: Fitted values for X-axis
-                y_data: Residuals for Y-axis
-                metadata: Plot configuration dictionary
-        """
-        # Fit regression model
-        fitted_values, residuals, model_info = self._fit_regression_model(ref_data, test_data, params)
+        # Calculate residuals
+        residuals = self._calculate_residuals(ref_clean, test_clean)
         
-        # Apply residual transformation if requested
-        if params.get("standardize_residuals", False):
-            residuals = self._standardize_residuals(residuals, model_info)
-        
-        # Prepare metadata for plotting
-        metadata = {
-            'x_label': 'Fitted Values',
-            'y_label': 'Standardized Residuals' if params.get("standardize_residuals", False) else 'Residuals',
-            'title': 'Residual Analysis',
-            'plot_type': 'scatter',
-            'model_type': params.get("model_type", "linear"),
-            'standardized': params.get("standardize_residuals", False),
-            'model_info': model_info
+        # Prepare plot data
+        plot_data = {
+            'ref_data': ref_clean,
+            'test_data': test_clean,
+            'residuals': residuals,
+            'valid_ratio': valid_ratio
         }
         
-        return fitted_values, residuals, metadata
-
-    def _fit_regression_model(self, ref_data: np.ndarray, test_data: np.ndarray, params: dict) -> Tuple[np.ndarray, np.ndarray, Dict]:
-        """Fit regression model and compute residuals."""
-        model_type = params.get("model_type", "linear")
+        # Combine results
+        results = {
+            'method': self.name,
+            'n_samples': len(ref_clean),
+            'valid_ratio': valid_ratio,
+            'statistics': stats_results,
+            'plot_data': plot_data
+        }
         
-        if model_type == "linear":
-            # Linear regression: test = a * ref + b
-            from scipy.stats import linregress
-            slope, intercept, r_value, p_value, std_err = linregress(ref_data, test_data)
-            
-            fitted_values = slope * ref_data + intercept
-            residuals = test_data - fitted_values
-            
-            model_info = {
-                'slope': slope,
-                'intercept': intercept,
-                'r_value': r_value,
-                'p_value': p_value,
-                'std_err': std_err,
-                'model_type': 'linear'
-            }
-            
-        elif model_type == "quadratic":
-            # Quadratic regression: test = a * ref^2 + b * ref + c
-            coeffs = np.polyfit(ref_data, test_data, 2)
-            fitted_values = np.polyval(coeffs, ref_data)
-            residuals = test_data - fitted_values
-            
-            model_info = {
-                'coefficients': coeffs.tolist(),
-                'model_type': 'quadratic'
-            }
-            
-        elif model_type == "polynomial":
-            # Polynomial regression with specified degree
-            degree = params.get("polynomial_degree", 3)
-            coeffs = np.polyfit(ref_data, test_data, degree)
-            fitted_values = np.polyval(coeffs, ref_data)
-            residuals = test_data - fitted_values
-            
-            model_info = {
-                'coefficients': coeffs.tolist(),
-                'degree': degree,
-                'model_type': 'polynomial'
-            }
-            
-        else:  # Default to linear
-            from scipy.stats import linregress
-            slope, intercept, r_value, p_value, std_err = linregress(ref_data, test_data)
-            
-            fitted_values = slope * ref_data + intercept
-            residuals = test_data - fitted_values
-            
-            model_info = {
-                'slope': slope,
-                'intercept': intercept,
-                'r_value': r_value,
-                'p_value': p_value,
-                'std_err': std_err,
-                'model_type': 'linear'
-            }
-        
-        return fitted_values, residuals, model_info
-
-    def _standardize_residuals(self, residuals: np.ndarray, model_info: Dict) -> np.ndarray:
-        """Standardize residuals by dividing by standard error."""
-        residual_std = np.std(residuals)
-        if residual_std > 0:
-            return residuals / residual_std
-        else:
-            return residuals
-
+        # Store results
+        self.results = results
+        return results
+    
     def calculate_stats(self, ref_data: np.ndarray, test_data: np.ndarray, 
                        ref_time: Optional[np.ndarray] = None, 
                        test_time: Optional[np.ndarray] = None) -> Dict[str, Any]:
         """
-        BACKWARD COMPATIBILITY + SAFETY WRAPPER: Calculate residual analysis statistics.
-        
-        This method maintains compatibility with existing code and provides comprehensive
-        validation and error handling around the core statistical calculations.
+        Calculate residual analysis statistics.
         
         Args:
             ref_data: Reference data array
@@ -237,253 +113,29 @@ class ResidualComparison(BaseComparison):
         Returns:
             Dictionary containing residual analysis statistics
         """
-        # Get plot data using the script-based approach
-        x_data, y_data, plot_metadata = self.plot_script(ref_data, test_data, self.kwargs)
+        # Fit model and calculate residuals
+        model_results = self._fit_model(ref_data, test_data)
+        residuals = model_results['residuals']
         
-        # === INPUT VALIDATION ===
-        if len(x_data) != len(y_data):
-            raise ValueError("X and Y data arrays must have the same length")
-        
-        if len(y_data) < 3:
-            raise ValueError("Insufficient data for statistical analysis (minimum 3 samples required)")
-        
-        # === PURE CALCULATIONS (delegated to stats_script) ===
-        stats_results = self.stats_script(x_data, y_data, ref_data, test_data, self.kwargs)
-        
-        return stats_results
-
-    def stats_script(self, x_data: np.ndarray, y_data: np.ndarray, 
-                    ref_data: np.ndarray, test_data: np.ndarray, params: dict) -> Dict[str, Any]:
-        """
-        Statistical calculations for residual analysis
-        
-        Args:
-            x_data: Fitted values
-            y_data: Residuals
-            ref_data: Original reference data
-            test_data: Original test data
-            params: Method parameters dictionary
-            
-        Returns:
-            Dictionary containing statistical results
-        """
-        fitted_values = x_data
-        residuals = y_data
-        
-        # Get model info from plot_script
-        _, _, plot_metadata = self.plot_script(ref_data, test_data, params)
-        model_info = plot_metadata['model_info']
+        # Initialize results
+        stats_results = {
+            'model_fit': model_results,
+            'residual_stats': {},
+            'pattern_tests': {},
+            'outlier_analysis': {}
+        }
         
         # Basic residual statistics
-        residual_stats = {
-            'mean': np.mean(residuals),
-            'std': np.std(residuals),
-            'min': np.min(residuals),
-            'max': np.max(residuals),
-            'median': np.median(residuals),
-            'q25': np.percentile(residuals, 25),
-            'q75': np.percentile(residuals, 75),
-            'iqr': np.percentile(residuals, 75) - np.percentile(residuals, 25),
-            'skewness': self._calculate_skewness(residuals),
-            'kurtosis': self._calculate_kurtosis(residuals)
-        }
+        stats_results['residual_stats'] = self._calculate_residual_stats(residuals)
         
-        # Normality tests
-        normality_tests = self._perform_normality_tests(residuals)
+        # Test for patterns in residuals
+        stats_results['pattern_tests'] = self._test_residual_patterns(residuals, ref_data)
         
-        # Heteroscedasticity tests
-        heteroscedasticity_tests = self._perform_heteroscedasticity_tests(fitted_values, residuals)
-        
-        # Autocorrelation tests
-        autocorrelation_tests = self._perform_autocorrelation_tests(residuals)
-        
-        # Outlier detection
-        outlier_analysis = self._detect_outliers(residuals, params)
-        
-        # Model fit statistics
-        model_fit_stats = self._calculate_model_fit_statistics(ref_data, test_data, fitted_values, residuals, model_info)
-        
-        stats_results = {
-            'residual_stats': residual_stats,
-            'normality_tests': normality_tests,
-            'heteroscedasticity_tests': heteroscedasticity_tests,
-            'autocorrelation_tests': autocorrelation_tests,
-            'outlier_analysis': outlier_analysis,
-            'model_fit_stats': model_fit_stats,
-            'model_info': model_info
-        }
+        # Outlier analysis
+        if self.kwargs.get('detect_outliers', True):
+            stats_results['outlier_analysis'] = self._analyze_outliers(residuals, ref_data, test_data)
         
         return stats_results
-
-    def _calculate_skewness(self, data: np.ndarray) -> float:
-        """Calculate skewness of data."""
-        try:
-            from scipy.stats import skew
-            return skew(data)
-        except:
-            n = len(data)
-            mean = np.mean(data)
-            std = np.std(data)
-            if std > 0:
-                return np.sum(((data - mean) / std) ** 3) / n
-            else:
-                return 0.0
-
-    def _calculate_kurtosis(self, data: np.ndarray) -> float:
-        """Calculate kurtosis of data."""
-        try:
-            from scipy.stats import kurtosis
-            return kurtosis(data)
-        except:
-            n = len(data)
-            mean = np.mean(data)
-            std = np.std(data)
-            if std > 0:
-                return np.sum(((data - mean) / std) ** 4) / n - 3
-            else:
-                return 0.0
-
-    def _perform_normality_tests(self, residuals: np.ndarray) -> Dict[str, Any]:
-        """Perform normality tests on residuals."""
-        try:
-            from scipy.stats import shapiro, jarque_bera, normaltest
-            
-            # Shapiro-Wilk test (better for small samples)
-            shapiro_stat, shapiro_p = shapiro(residuals)
-            
-            # Jarque-Bera test
-            jb_stat, jb_p = jarque_bera(residuals)
-            
-            # D'Agostino's normality test
-            da_stat, da_p = normaltest(residuals)
-            
-            return {
-                'shapiro_wilk': {'statistic': shapiro_stat, 'p_value': shapiro_p, 'is_normal': shapiro_p > 0.05},
-                'jarque_bera': {'statistic': jb_stat, 'p_value': jb_p, 'is_normal': jb_p > 0.05},
-                'dagostino': {'statistic': da_stat, 'p_value': da_p, 'is_normal': da_p > 0.05}
-            }
-        except Exception as e:
-            return {'error': str(e)}
-
-    def _perform_heteroscedasticity_tests(self, fitted_values: np.ndarray, residuals: np.ndarray) -> Dict[str, Any]:
-        """Perform heteroscedasticity tests."""
-        try:
-            from scipy.stats import pearsonr, spearmanr
-            
-            # Breusch-Pagan test (correlation between fitted values and squared residuals)
-            squared_residuals = residuals ** 2
-            bp_corr, bp_p = pearsonr(fitted_values, squared_residuals)
-            
-            # White test (simplified version using Spearman correlation)
-            white_corr, white_p = spearmanr(fitted_values, np.abs(residuals))
-            
-            return {
-                'breusch_pagan': {'correlation': bp_corr, 'p_value': bp_p, 'is_homoscedastic': bp_p > 0.05},
-                'white_test': {'correlation': white_corr, 'p_value': white_p, 'is_homoscedastic': white_p > 0.05}
-            }
-        except Exception as e:
-            return {'error': str(e)}
-
-    def _perform_autocorrelation_tests(self, residuals: np.ndarray) -> Dict[str, Any]:
-        """Perform autocorrelation tests on residuals."""
-        try:
-            # Durbin-Watson test (simplified calculation)
-            diff_residuals = np.diff(residuals)
-            dw_stat = np.sum(diff_residuals ** 2) / np.sum(residuals ** 2)
-            
-            # Ljung-Box test (simplified version using first-order autocorrelation)
-            n = len(residuals)
-            if n > 1:
-                autocorr_1 = np.corrcoef(residuals[:-1], residuals[1:])[0, 1]
-                lb_stat = n * (n + 2) * (autocorr_1 ** 2) / (n - 1)
-                # Approximate p-value using chi-square distribution
-                from scipy.stats import chi2
-                lb_p = 1 - chi2.cdf(lb_stat, df=1)
-            else:
-                autocorr_1 = 0
-                lb_stat = 0
-                lb_p = 1
-            
-            return {
-                'durbin_watson': {'statistic': dw_stat, 'interpretation': 'no_autocorr' if 1.5 < dw_stat < 2.5 else 'autocorr'},
-                'ljung_box': {'statistic': lb_stat, 'p_value': lb_p, 'no_autocorr': lb_p > 0.05},
-                'first_order_autocorr': autocorr_1
-            }
-        except Exception as e:
-            return {'error': str(e)}
-
-    def _detect_outliers(self, residuals: np.ndarray, params: dict) -> Dict[str, Any]:
-        """Detect outliers in residuals."""
-        try:
-            # Z-score method
-            z_threshold = params.get('outlier_z_threshold', 3.0)
-            z_scores = np.abs(residuals - np.mean(residuals)) / np.std(residuals)
-            z_outliers = np.where(z_scores > z_threshold)[0]
-            
-            # IQR method
-            q25, q75 = np.percentile(residuals, [25, 75])
-            iqr = q75 - q25
-            iqr_threshold = params.get('outlier_iqr_factor', 1.5)
-            iqr_lower = q25 - iqr_threshold * iqr
-            iqr_upper = q75 + iqr_threshold * iqr
-            iqr_outliers = np.where((residuals < iqr_lower) | (residuals > iqr_upper))[0]
-            
-            return {
-                'z_score_outliers': {
-                    'indices': z_outliers.tolist(),
-                    'count': len(z_outliers),
-                    'percentage': len(z_outliers) / len(residuals) * 100,
-                    'threshold': z_threshold
-                },
-                'iqr_outliers': {
-                    'indices': iqr_outliers.tolist(),
-                    'count': len(iqr_outliers),
-                    'percentage': len(iqr_outliers) / len(residuals) * 100,
-                    'lower_bound': iqr_lower,
-                    'upper_bound': iqr_upper
-                }
-            }
-        except Exception as e:
-            return {'error': str(e)}
-
-    def _calculate_model_fit_statistics(self, ref_data: np.ndarray, test_data: np.ndarray, 
-                                      fitted_values: np.ndarray, residuals: np.ndarray, model_info: Dict) -> Dict[str, Any]:
-        """Calculate model fit statistics."""
-        try:
-            # R-squared
-            ss_res = np.sum(residuals ** 2)
-            ss_tot = np.sum((test_data - np.mean(test_data)) ** 2)
-            r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
-            
-            # Adjusted R-squared
-            n = len(test_data)
-            p = 1 if model_info['model_type'] == 'linear' else len(model_info.get('coefficients', [1]))
-            adj_r_squared = 1 - (1 - r_squared) * (n - 1) / (n - p - 1) if n > p + 1 else r_squared
-            
-            # Root Mean Square Error
-            rmse = np.sqrt(np.mean(residuals ** 2))
-            
-            # Mean Absolute Error
-            mae = np.mean(np.abs(residuals))
-            
-            # Akaike Information Criterion (AIC)
-            aic = n * np.log(ss_res / n) + 2 * p
-            
-            # Bayesian Information Criterion (BIC)
-            bic = n * np.log(ss_res / n) + p * np.log(n)
-            
-            return {
-                'r_squared': r_squared,
-                'adj_r_squared': adj_r_squared,
-                'rmse': rmse,
-                'mae': mae,
-                'aic': aic,
-                'bic': bic,
-                'n_parameters': p,
-                'n_observations': n
-            }
-        except Exception as e:
-            return {'error': str(e)}
     
     def generate_plot(self, ax, ref_data: np.ndarray, test_data: np.ndarray, 
                      plot_config: Dict[str, Any] = None, 
@@ -511,7 +163,10 @@ class ResidualComparison(BaseComparison):
         self._create_density_plot(ax, ref_plot, residuals_plot, plot_config)
         
         # Add residual-specific overlay elements
-        self._add_overlay_elements(ax, ref_data, residuals, plot_config, stats_results)
+        self._add_residual_overlays(ax, ref_data, residuals, plot_config, stats_results)
+        
+        # Add general overlay elements
+        self._add_overlay_elements(ax, ref_data, test_data, plot_config, stats_results)
         
         # Set labels and title
         ax.set_xlabel('Reference Data')
@@ -851,9 +506,9 @@ class ResidualComparison(BaseComparison):
         except Exception as e:
             return {'error': str(e)}
     
-    def _add_overlay_elements(self, ax, ref_data: np.ndarray, residuals: np.ndarray, 
-                            plot_config: Dict[str, Any] = None, 
-                            stats_results: Dict[str, Any] = None) -> None:
+    def _add_residual_overlays(self, ax, ref_data: np.ndarray, residuals: np.ndarray, 
+                              plot_config: Dict[str, Any] = None, 
+                              stats_results: Dict[str, Any] = None) -> None:
         """Add residual-specific overlay elements."""
         if plot_config is None:
             plot_config = {}
@@ -901,73 +556,24 @@ class ResidualComparison(BaseComparison):
                 x_line = np.array([np.min(ref_data), np.max(ref_data)])
                 y_line = slope * x_line + intercept
                 ax.plot(x_line, y_line, 'g--', alpha=0.7, label=f'Trend Line (slope={slope:.3f})')
+    
+    def _add_overlay_elements(self, ax, ref_data: np.ndarray, test_data: np.ndarray, 
+                            plot_config: Dict[str, Any] = None, 
+                            stats_results: Dict[str, Any] = None) -> None:
+        """
+        Override base method to prevent inappropriate overlays for residual plots.
         
-        # Add statistical results text
+        For residual analysis, we only want specific overlays that make sense:
+        - NO identity line (residuals vs reference data)
+        - NO regression line (residuals should be random around zero)
+        - Custom statistical text formatting
+        """
+        if plot_config is None:
+            plot_config = {}
+        
+        # Only add statistical results text - other overlays don't make sense for residuals
         if plot_config.get('show_statistical_results', True) and stats_results:
             self._add_statistical_text(ax, stats_results, plot_config)
-            print(f"[ResidualOverlay] Added statistical text")
- 
-    def _add_statistical_text(self, ax, stats_results: Dict[str, Any], plot_config: Dict[str, Any] = None) -> None:
-        """Add statistical results as text on residual plot."""
-        try:
-            text_lines = []
-            
-            # Add model fit information
-            if 'model_fit_stats' in stats_results:
-                model_fit = stats_results['model_fit_stats']
-                r_squared = model_fit.get('r_squared', np.nan)
-                if not np.isnan(r_squared):
-                    text_lines.append(f"R²: {r_squared:.3f}")
-                
-                rmse = model_fit.get('rmse', np.nan)
-                if not np.isnan(rmse):
-                    text_lines.append(f"RMSE: {rmse:.3f}")
-            
-            # Add residual statistics
-            if 'residual_stats' in stats_results:
-                res_stats = stats_results['residual_stats']
-                mean_res = res_stats.get('mean', np.nan)
-                if not np.isnan(mean_res):
-                    text_lines.append(f"Mean Residual: {mean_res:.3f}")
-                
-                std_res = res_stats.get('std', np.nan)
-                if not np.isnan(std_res):
-                    text_lines.append(f"Std Residual: {std_res:.3f}")
-            
-            # Add normality test results
-            if 'normality_tests' in stats_results:
-                norm_tests = stats_results['normality_tests']
-                if 'shapiro_wilk' in norm_tests:
-                    shapiro_test = norm_tests['shapiro_wilk']
-                    is_normal = shapiro_test.get('is_normal', False)
-                    p_value = shapiro_test.get('p_value', np.nan)
-                    if not np.isnan(p_value):
-                        text_lines.append(f"Normality: {'Yes' if is_normal else 'No'} (p={p_value:.3f})")
-            
-            # Add outlier information
-            if 'outlier_analysis' in stats_results:
-                outlier_analysis = stats_results['outlier_analysis']
-                if 'z_score_outliers' in outlier_analysis:
-                    z_outliers = outlier_analysis['z_score_outliers']
-                    n_outliers = z_outliers.get('count', 0)
-                    outlier_pct = z_outliers.get('percentage', 0)
-                    text_lines.append(f"Outliers: {n_outliers} ({outlier_pct:.1f}%)")
-            
-            # Add autocorrelation test results
-            if 'autocorrelation_tests' in stats_results:
-                autocorr_tests = stats_results['autocorrelation_tests']
-                if 'durbin_watson' in autocorr_tests:
-                    dw_test = autocorr_tests['durbin_watson']
-                    interpretation = dw_test.get('interpretation', 'Unknown')
-                    text_lines.append(f"Autocorrelation: {interpretation}")
-            
-            if text_lines:
-                text = '\n'.join(text_lines)
-                ax.text(0.02, 0.98, text, transform=ax.transAxes, fontsize=9,
-                       verticalalignment='top', bbox=dict(boxstyle='round', 
-                       facecolor='white', alpha=0.8))
-        except Exception as e:
-            print(f"[ResidualOverlay] Error adding statistical text: {e}")
     
     def _format_statistical_text(self, stats_results: Dict[str, Any]) -> List[str]:
         """Format statistical results for display on plot."""

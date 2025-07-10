@@ -55,13 +55,19 @@ class BaseComparison(ABC):
         Return all metadata about the comparison method.
         Useful for GUI display or parameter prompting.
         """
-        return {
+        info = {
             "name": self.name,
             "category": self.category,
             "description": self.description,
             "tags": self.tags,
             "params": self.params
         }
+        
+        # Include overlay options if defined
+        if hasattr(self, 'overlay_options'):
+            info["overlay_options"] = self.overlay_options
+            
+        return info
     
     @classmethod
     def parse_input(cls, user_input: dict) -> dict:
@@ -257,13 +263,16 @@ class BaseComparison(ABC):
         
         density_type = plot_config.get('density_display', 'scatter').lower()
         
+        # Check if we have individual pair styling information
+        pair_styling = plot_config.get('pair_styling', [])
+        
         try:
             if density_type == 'hexbin':
                 bin_size = plot_config.get('bin_size', 20)
                 # Check for zero range (would cause ZeroDivisionError)
                 if np.ptp(x_data) == 0 or np.ptp(y_data) == 0:
                     print("[Performance] Zero range detected, falling back to scatter plot")
-                    ax.scatter(x_data, y_data, alpha=0.6, s=20, c='blue')
+                    self._create_individual_pair_scatter(ax, x_data, y_data, pair_styling)
                 else:
                     hb = ax.hexbin(x_data, y_data, gridsize=bin_size, cmap='viridis', mincnt=1)
                     # Add colorbar
@@ -287,17 +296,58 @@ class BaseComparison(ABC):
             
             elif density_type == 'kde':
                 kde_bandwidth = plot_config.get('kde_bandwidth', 0.2)
-                self._create_kde_plot(ax, x_data, y_data, kde_bandwidth)
+                self._create_kde_plot(ax, x_data, y_data, kde_bandwidth, plot_config)
             
             else:  # scatter (default)
-                ax.scatter(x_data, y_data, alpha=0.6, s=20, c='blue')
+                self._create_individual_pair_scatter(ax, x_data, y_data, pair_styling)
                 
         except Exception as e:
             print(f"[Performance] Density plotting failed ({density_type}): {e}, falling back to scatter")
-            ax.scatter(x_data, y_data, alpha=0.6, s=20, c='blue')
+            self._create_individual_pair_scatter(ax, x_data, y_data, pair_styling)
+
+    def _create_individual_pair_scatter(self, ax, x_data: np.ndarray, y_data: np.ndarray, 
+                                       pair_styling: List[Dict[str, Any]]) -> None:
+        """
+        Create scatter plot with individual pair styling.
+        
+        Args:
+            ax: Matplotlib axes object
+            x_data: Combined X-axis data (for fallback)
+            y_data: Combined Y-axis data (for fallback)
+            pair_styling: List of dictionaries containing pair styling information
+        """
+        if not pair_styling:
+            # Fallback to default styling if no pair information
+            ax.scatter(x_data, y_data, alpha=0.6, s=20, c='#1f77b4')
+            return
+        
+        # Plot each pair with its individual styling
+        for pair_info in pair_styling:
+            ref_data = pair_info['ref_data']
+            test_data = pair_info['test_data']
+            marker = pair_info['marker']
+            color = pair_info['color']
+            pair_name = pair_info['pair_name']
+            n_points = pair_info['n_points']
+            
+            # Apply performance downsampling if needed
+            if len(ref_data) > 2000:
+                indices = np.random.choice(len(ref_data), 2000, replace=False)
+                ref_data = ref_data[indices]
+                test_data = test_data[indices]
+            
+            # Create scatter plot for this pair
+            ax.scatter(ref_data, test_data, 
+                      alpha=0.6, s=30, 
+                      color=color, marker=marker,
+                      label=f"{pair_name} (n={n_points})")
+        
+        # Add legend if multiple pairs
+        if len(pair_styling) > 1:
+            ax.legend(loc='best', fontsize=8)
     
     def _create_kde_plot(self, ax, x_data: np.ndarray, y_data: np.ndarray, 
-                        bandwidth: float = 0.2) -> None:
+                        bandwidth: float = 0.2, plot_config: Dict[str, Any] = None) -> None:
         """
         Create KDE density plot.
         
@@ -306,7 +356,10 @@ class BaseComparison(ABC):
             x_data: X-axis data
             y_data: Y-axis data
             bandwidth: KDE bandwidth parameter
+            plot_config: Plot configuration dictionary
         """
+        if plot_config is None:
+            plot_config = {}
         try:
             if len(x_data) < 10:
                 print(f"[Performance] Insufficient data for KDE ({len(x_data)} points), using scatter fallback")
@@ -340,12 +393,22 @@ class BaseComparison(ABC):
             ax.contourf(xx, yy, f, levels=10, cmap='viridis', alpha=0.6)
             ax.contour(xx, yy, f, levels=10, colors='black', alpha=0.3, linewidths=0.5)
             
-            # Overlay scatter points
-            ax.scatter(x_data, y_data, alpha=0.3, s=10, c='red')
+            # Overlay scatter points with individual pair styling if available
+            pair_styling = plot_config.get('pair_styling', [])
+            if pair_styling:
+                for pair_info in pair_styling:
+                    ref_data = pair_info['ref_data']
+                    test_data = pair_info['test_data']
+                    color = pair_info['color']
+                    marker = pair_info['marker']
+                    ax.scatter(ref_data, test_data, alpha=0.3, s=10, c=color, marker=marker)
+            else:
+                ax.scatter(x_data, y_data, alpha=0.3, s=10, c='red')
             
         except Exception as e:
             print(f"[Performance] KDE plotting failed: {e}, falling back to scatter")
-            ax.scatter(x_data, y_data, alpha=0.6, s=20, c='blue')
+            pair_styling = plot_config.get('pair_styling', [])
+            self._create_individual_pair_scatter(ax, x_data, y_data, pair_styling)
     
     def _add_overlay_elements(self, ax, ref_data: np.ndarray, test_data: np.ndarray, 
                             plot_config: Dict[str, Any] = None, 

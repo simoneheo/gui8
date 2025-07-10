@@ -164,7 +164,7 @@ class MainWindowUI(QWidget):
         
         # Add filter toggle
         self.show_all_types_checkbox = QCheckBox("Show all data types")
-        self.show_all_types_checkbox.setToolTip("Show all data types (RAW, PROCESSED, MIXED, etc.)\nBy default, only RAW channels are shown")
+        self.show_all_types_checkbox.setToolTip("Show all data types (RAW, PROCESSED, MIXED, etc.)\nBy default, only RAW channels are shown\nComparison channels are always excluded from main window")
         self.show_all_types_checkbox.setChecked(False)  # Default to RAW only
         self.show_all_types_checkbox.stateChanged.connect(self._on_channel_filter_changed)
         
@@ -582,6 +582,8 @@ class MainWindowUI(QWidget):
     
     def _get_filtered_channels(self, file_id: str = None):
         """Get channels for the selected file with current filter applied"""
+        from channel import SourceType
+        
         if file_id is None:
             file_id = self.selected_file_id
         
@@ -591,14 +593,18 @@ class MainWindowUI(QWidget):
         # Get all channels from the file
         all_channels = self.channel_manager.get_channels_by_file(file_id)
         
+        # ALWAYS exclude comparison channels from main window plot
+        # Comparison channels should only appear in the comparison wizard
+        valid_channels = [ch for ch in all_channels 
+        if not ch.type == SourceType.COMPARISON and not ch.type == SourceType.SPECTROGRAM]
+        
         # Apply filter based on "Show all data types" toggle
         show_all_types = self.show_all_types_checkbox.isChecked()
         if show_all_types:
-            return all_channels
+            return valid_channels
         else:
-            # Show only RAW channels by default
-            from channel import SourceType
-            return [ch for ch in all_channels if ch.type == SourceType.RAW]
+            # Show only RAW channels by default (comparison channels already excluded)
+            return [ch for ch in valid_channels if ch.type == SourceType.RAW]
 
     def _on_channel_filter_changed(self):
         """Handle change in channel type filter"""
@@ -623,19 +629,12 @@ class MainWindowUI(QWidget):
         if any(tag.lower() in spectrogram_tags for tag in channel.tags):
             return True
         
-        # Disable for channels created by comparison wizard
-        # Look for comparison-related tags or descriptions
-        comparison_tags = ['comparison', 'difference', 'residual', 'correlation', 'bland-altman']
-        if any(tag.lower() in comparison_tags for tag in channel.tags):
-            return True
-        
-        # Check if description contains comparison wizard indicators
-        description = channel.description.lower() if channel.description else ""
-        comparison_indicators = ['comparison wizard', 'comparison result', 'residual analysis']
-        if any(indicator in description for indicator in comparison_indicators):
+        # Disable for comparison channels - they should be controlled from comparison wizard
+        if channel.type == SourceType.COMPARISON:
             return True
         
         return False
+
 
     def _toggle_channel_visibility(self, channel_id: str):
         """Toggle visibility of a channel and update UI"""
@@ -645,9 +644,13 @@ class MainWindowUI(QWidget):
             new_state = not channel.show
             self.channel_manager.set_channel_visibility(channel_id, new_state)
 
+            if self.selected_file_id:
+                channels = self._get_filtered_channels()
+                self.plot_manager.update_plot(channels)
             
             # Refresh the channel table to update button appearance
             self.refresh_channel_table()
+    
     
     def _show_channel_info(self, channel_id: str):
         """Show detailed information about a channel using the metadata wizard"""

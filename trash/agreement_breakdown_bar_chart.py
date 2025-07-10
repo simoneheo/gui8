@@ -1,14 +1,17 @@
 """
-Agreement Breakdown Bar Chart Comparison Method
+Agreement Breakdown Bar Chart Comparison Module
 
-This module implements agreement breakdown bar chart analysis for visualizing
-the distribution of agreement between reference and test data across error ranges.
+This module provides a comprehensive bar chart analysis showing the percentage of samples
+in different error ranges, giving insights into agreement patterns between reference and test data.
+
+Author: Auto-generated
+Date: 2024
+Version: 1.0.0
 """
 
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy import stats
-from typing import Dict, Any, Optional, Tuple, List
+from typing import Dict, List, Optional, Tuple, Any, Union
 from comparison.base_comparison import BaseComparison
 from comparison.comparison_registry import register_comparison
 
@@ -212,12 +215,7 @@ class AgreementBreakdownBarChartComparison(BaseComparison):
               ref_time: Optional[np.ndarray] = None, 
               test_time: Optional[np.ndarray] = None) -> Dict[str, Any]:
         """
-        Main comparison method - orchestrates the agreement breakdown analysis.
-        
-        Streamlined 3-step workflow:
-        1. Validate input data (basic validation + remove NaN/infinite values)
-        2. plot_script (core transformation + data processing)
-        3. stats_script (statistical calculations)
+        Apply agreement breakdown bar chart analysis to the data.
         
         Args:
             ref_data (np.ndarray): Reference data array
@@ -238,67 +236,11 @@ class AgreementBreakdownBarChartComparison(BaseComparison):
             RuntimeError: If analysis fails
         """
         try:
-            # === STEP 1: VALIDATE INPUT DATA ===
-            # Basic validation (shape, type, length compatibility)
+            # Validate input data
             ref_data, test_data = self._validate_input_data(ref_data, test_data)
-            # Remove NaN and infinite values
-            ref_clean, test_clean, valid_ratio = self._remove_invalid_data(ref_data, test_data)
             
-            # === STEP 2: PLOT SCRIPT (core transformation + data processing) ===
-            x_data, y_data, plot_metadata = self.plot_script(ref_clean, test_clean, self.kwargs)
-            
-            # === STEP 3: STATS SCRIPT (statistical calculations) ===
-            stats_results = self.stats_script(x_data, y_data, ref_clean, test_clean, self.kwargs)
-            
-            # Prepare plot data
-            plot_data = {
-                'labels': x_data,
-                'counts': y_data,
-                'percentages': plot_metadata['percentages'],
-                'cumulative_percentages': plot_metadata['cumulative_percentages'],
-                'bin_edges': plot_metadata['bin_edges'],
-                'total_samples': plot_metadata['total_samples'],
-                'ref_data': ref_clean,
-                'test_data': test_clean,
-                'valid_ratio': valid_ratio,
-                'metadata': plot_metadata
-            }
-            
-            # Combine results
-            results = {
-                'method': self.name,
-                'n_samples': len(ref_clean),
-                'valid_ratio': valid_ratio,
-                'statistics': stats_results,
-                'plot_data': plot_data
-            }
-            
-            # Store results
-            self.results = results
-            return results
-            
-        except Exception as e:
-            raise RuntimeError(f"Agreement breakdown analysis failed: {str(e)}")
-
-    def plot_script(self, ref_data: np.ndarray, test_data: np.ndarray, params: dict) -> tuple:
-        """
-        Core plotting transformation for agreement breakdown analysis
-        
-        This defines what gets plotted for the bar chart - bin labels and counts.
-        
-        Args:
-            ref_data: Reference measurements (already cleaned of NaN/infinite values)
-            test_data: Test measurements (already cleaned of NaN/infinite values)
-            params: Method parameters dictionary
-            
-        Returns:
-            tuple: (x_data, y_data, metadata)
-                x_data: Bin labels for X-axis
-                y_data: Bin counts for Y-axis
-                metadata: Plot configuration dictionary
-        """
             # Handle zero exclusion
-        if params.get("exclude_zeros", False):
+            if self.kwargs.get("exclude_zeros", False):
                 mask = ref_data != 0
                 ref_data = ref_data[mask]
                 test_data = test_data[mask]
@@ -307,7 +249,7 @@ class AgreementBreakdownBarChartComparison(BaseComparison):
                 raise ValueError("No valid data points after filtering")
             
             # Calculate error
-        error = self._calculate_error(ref_data, test_data, params)
+            error = self._calculate_error(ref_data, test_data)
             
             # Generate bin labels
             bin_labels = self._parse_bin_labels()
@@ -320,27 +262,36 @@ class AgreementBreakdownBarChartComparison(BaseComparison):
             # Calculate cumulative percentages
             cumulative_percentages = np.cumsum(bin_percentages)
             
-        # Prepare metadata for plotting
-        metadata = {
-            'percentages': bin_percentages.tolist(),
-            'cumulative_percentages': cumulative_percentages.tolist(),
-            'bin_edges': self.bin_edges[:-1],  # Exclude infinity
-            'total_samples': total,
-            'x_label': 'Error Range',
-            'y_label': 'Percentage (%)' if params.get('show_percentages', True) else 'Count',
-            'title': 'Agreement Breakdown Analysis',
-            'plot_type': 'bar',
-            'is_percentage': params.get('use_percentage', True),
-            'error_data': error.tolist()
+            # Store plot data
+            self.plot_data = {
+                "labels": bin_labels,
+                "counts": bin_counts.tolist(),
+                "percentages": bin_percentages.tolist(),
+                "cumulative_percentages": cumulative_percentages.tolist(),
+                "bin_edges": self.bin_edges[:-1],  # Exclude infinity
+                "total_samples": total
             }
             
-        return bin_labels, bin_counts.tolist(), metadata
+            # Prepare results
+            self.results = {
+                "method": self.name,
+                "n_samples": total,
+                "plot_data": self.plot_data,
+                "bin_edges": self.bin_edges,
+                "error_data": error.tolist(),
+                "parameters": dict(self.kwargs)
+            }
             
-    def _calculate_error(self, ref_data: np.ndarray, test_data: np.ndarray, params: dict) -> np.ndarray:
+            return self.results
+            
+        except Exception as e:
+            raise RuntimeError(f"Agreement breakdown analysis failed: {str(e)}")
+            
+    def _calculate_error(self, ref_data: np.ndarray, test_data: np.ndarray) -> np.ndarray:
         """Calculate error based on configuration."""
-        if params.get("use_percentage", True):
+        if self.kwargs.get("use_percentage", True):
             # Percentage error
-            denominator = ref_data if params.get("normalize_by_reference", True) else test_data
+            denominator = ref_data if self.kwargs.get("normalize_by_reference", True) else test_data
             with np.errstate(divide='ignore', invalid='ignore'):
                 error = np.abs(test_data - ref_data) / np.abs(denominator) * 100
                 error = np.nan_to_num(error, nan=0.0, posinf=0.0, neginf=0.0)
@@ -354,10 +305,7 @@ class AgreementBreakdownBarChartComparison(BaseComparison):
                        ref_time: Optional[np.ndarray] = None, 
                        test_time: Optional[np.ndarray] = None) -> Dict[str, Any]:
         """
-        BACKWARD COMPATIBILITY + SAFETY WRAPPER: Calculate agreement breakdown statistics.
-        
-        This method maintains compatibility with existing code and provides comprehensive
-        validation and error handling around the core statistical calculations.
+        Calculate comprehensive statistics for the agreement breakdown.
         
         Args:
             ref_data (np.ndarray): Reference data array
@@ -375,91 +323,68 @@ class AgreementBreakdownBarChartComparison(BaseComparison):
         Raises:
             RuntimeError: If no results available or calculation fails
         """
-        # Get plot data using the script-based approach
-        x_data, y_data, plot_metadata = self.plot_script(ref_data, test_data, self.kwargs)
-        
-        # === INPUT VALIDATION ===
-        if len(x_data) != len(y_data):
-            raise ValueError("X and Y data arrays must have the same length")
-        
-        if len(y_data) < 1:
-            raise ValueError("Insufficient data for statistical analysis")
-        
-        # === PURE CALCULATIONS (delegated to stats_script) ===
-        stats_results = self.stats_script(x_data, y_data, ref_data, test_data, self.kwargs)
-        
-        return stats_results
-
-    def stats_script(self, x_data: List[str], y_data: List[int], 
-                    ref_data: np.ndarray, test_data: np.ndarray, params: dict) -> Dict[str, Any]:
-        """
-        Statistical calculations for agreement breakdown analysis
-        
-        Args:
-            x_data: Bin labels
-            y_data: Bin counts
-            ref_data: Original reference data
-            test_data: Original test data
-            params: Method parameters dictionary
+        # If no results available, run apply() first
+        if self.results is None:
+            try:
+                self.apply(ref_data, test_data, ref_time, test_time)
+            except Exception as e:
+                raise RuntimeError(f"Failed to apply analysis before calculating stats: {str(e)}")
             
-        Returns:
-            Dictionary containing statistical results
-        """
-        # Get metadata from plot_script
-        _, _, plot_metadata = self.plot_script(ref_data, test_data, params)
-        
-        bin_percentages = plot_metadata['percentages']
-        cumulative_percentages = plot_metadata['cumulative_percentages']
-        total_samples = plot_metadata['total_samples']
+        try:
+            plot_data = self.plot_data
             
             # Per-bin statistics
             bin_stats = {}
-        for i, label in enumerate(x_data):
+            for i, label in enumerate(plot_data["labels"]):
                 bin_stats[label] = {
-                "count": y_data[i],
-                "percentage": bin_percentages[i],
-                "cumulative_percentage": cumulative_percentages[i]
+                    "count": plot_data["counts"][i],
+                    "percentage": plot_data["percentages"][i],
+                    "cumulative_percentage": plot_data["cumulative_percentages"][i]
                 }
             
             # Agreement metrics
             excellent_threshold = 0  # First bin (lowest errors)
-        good_threshold = min(1, len(bin_percentages) - 1)  # Second bin
+            good_threshold = min(1, len(plot_data["percentages"]) - 1)  # Second bin
             
-        excellent_agreement = bin_percentages[excellent_threshold]
-        good_agreement = sum(bin_percentages[:good_threshold + 1])
+            excellent_agreement = plot_data["percentages"][excellent_threshold]
+            good_agreement = sum(plot_data["percentages"][:good_threshold + 1])
             poor_agreement = 100 - good_agreement
             
             # Distribution characteristics
-        most_common_bin = np.argmax(bin_percentages)
-        most_common_label = x_data[most_common_bin]
+            total_samples = plot_data["total_samples"]
+            most_common_bin = np.argmax(plot_data["percentages"])
+            most_common_label = plot_data["labels"][most_common_bin]
             
             # Quality metrics
             data_coverage = (total_samples / total_samples) * 100  # Always 100% after filtering
             
-        stats_results = {
+            self.statistics = {
                 "bin_statistics": bin_stats,
                 "agreement_metrics": {
                     "excellent_agreement_pct": excellent_agreement,
                     "good_agreement_pct": good_agreement,
                     "poor_agreement_pct": poor_agreement,
                     "most_common_error_range": most_common_label,
-                "most_common_percentage": bin_percentages[most_common_bin]
+                    "most_common_percentage": plot_data["percentages"][most_common_bin]
                 },
                 "distribution_stats": {
                     "total_samples": total_samples,
-                "number_of_bins": len(x_data),
-                "non_zero_bins": sum(1 for x in y_data if x > 0),
-                "max_bin_count": max(y_data),
-                "min_bin_count": min(y_data)
+                    "number_of_bins": len(plot_data["labels"]),
+                    "non_zero_bins": sum(1 for x in plot_data["counts"] if x > 0),
+                    "max_bin_count": max(plot_data["counts"]),
+                    "min_bin_count": min(plot_data["counts"])
                 },
                 "quality_metrics": {
                     "data_coverage_pct": data_coverage,
-                "analysis_method": "percentage" if params.get("use_percentage", True) else "absolute",
-                "zero_exclusion": params.get("exclude_zeros", False)
+                    "analysis_method": "percentage" if self.kwargs.get("use_percentage", True) else "absolute",
+                    "zero_exclusion": self.kwargs.get("exclude_zeros", False)
                 }
             }
             
-        return stats_results
+            return self.statistics
+            
+        except Exception as e:
+            raise RuntimeError(f"Statistics calculation failed: {str(e)}")
 
     def generate_plot(self, ax, ref_data: np.ndarray, test_data: np.ndarray, 
                      plot_config: Dict[str, Any] = None, 
@@ -485,7 +410,7 @@ class AgreementBreakdownBarChartComparison(BaseComparison):
                 raise RuntimeError(f"Failed to apply analysis before plotting: {str(e)}")
             
         try:
-            plot_data = self.results['plot_data']
+            plot_data = self.plot_data
             
             # Merge plot_config with overlay options if provided
             if plot_config is None:

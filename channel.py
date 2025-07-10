@@ -16,7 +16,7 @@ class SourceType(Enum):
     PROCESSED = "processed"
     MIXED = "mixed"
     SPECTROGRAM = "spectrogram"
-    STATISTICAL = "statistical"
+    COMPARISON = "comparison"
 
 
 @dataclass
@@ -525,6 +525,91 @@ class Channel:
             metadata={'stat_names': stat_names},
             params=params or {}
         ).with_lineage(parent.lineage_id).with_parent(parent.channel_id)
+
+    @classmethod
+    def from_comparison(cls,
+                       parent_channels: List["Channel"],
+                       comparison_method: str,
+                       xdata: np.ndarray,
+                       ydata: np.ndarray,
+                       xlabel: str,
+                       ylabel: str,
+                       legend_label: str,
+                       pairs_metadata: List[dict],
+                       statistical_results: dict,
+                       method_parameters: dict,
+                       overlay_config: dict = None,
+                       tags: Optional[List[str]] = None) -> "Channel":
+        """
+        Create a channel from comparison wizard results
+        
+        Args:
+            parent_channels: List of channels used in the comparison
+            comparison_method: Name of the comparison method used
+            xdata: Transformed x-data for plotting (e.g., means for Bland-Altman)
+            ydata: Transformed y-data for plotting (e.g., differences for Bland-Altman)
+            xlabel: X-axis label
+            ylabel: Y-axis label
+            legend_label: Display label for the comparison
+            pairs_metadata: List of dictionaries containing pair information
+            statistical_results: Combined statistical results
+            method_parameters: Parameters used for the comparison method
+            overlay_config: Configuration for plot overlays
+            tags: Optional tags for categorization
+            
+        Returns:
+            Channel object representing the comparison results
+        """
+        # Create a combined lineage ID from all parent channels
+        parent_lineage_ids = [ch.lineage_id for ch in parent_channels if ch.lineage_id]
+        combined_lineage = f"comparison_{comparison_method}_{hash(tuple(parent_lineage_ids)) % 10000}"
+        
+        # Get the highest step from parent channels
+        max_step = max([ch.step for ch in parent_channels], default=0)
+        
+        # Create comprehensive metadata
+        comparison_metadata = {
+            'comparison_method': comparison_method,
+            'pairs': pairs_metadata,
+            'statistical_results': statistical_results,
+            'method_parameters': method_parameters,
+            'overlay_config': overlay_config or {},
+            'parent_channel_ids': [ch.channel_id for ch in parent_channels],
+            'parent_lineage_ids': parent_lineage_ids,
+            'creation_timestamp': datetime.now().isoformat(),
+            'data_points': len(xdata),
+            'comparison_type': 'multi_pair' if len(pairs_metadata) > 1 else 'single_pair'
+        }
+        
+        # Determine primary file info from the first parent channel
+        primary_parent = parent_channels[0] if parent_channels else None
+        file_id = primary_parent.file_id if primary_parent else "comparison"
+        filename = primary_parent.filename if primary_parent else "comparison_result"
+        
+        # Create the channel
+        comparison_channel = cls(
+            channel_id=None,
+            file_id=file_id,
+            filename=filename,
+            xdata=xdata,
+            ydata=ydata,
+            xlabel=xlabel,
+            ylabel=ylabel,
+            legend_label=legend_label,
+            type=SourceType.COMPARISON,
+            step=max_step + 1,
+            tags=tags or ["comparison", "statistical", comparison_method],
+            description=f"Comparison analysis using {comparison_method} method",
+            metadata=comparison_metadata,
+            lazy_init=True
+        )
+        
+        # Set lineage and parent relationships
+        comparison_channel.lineage_id = combined_lineage
+        comparison_channel.parent_ids = [ch.channel_id for ch in parent_channels]
+        comparison_channel.params = method_parameters
+        
+        return comparison_channel
 
     def with_lineage(self, lineage_id: str) -> "Channel":
         """Set the lineage ID and return self for method chaining"""

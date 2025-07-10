@@ -109,6 +109,52 @@ class StylePreviewWidget(QLabel):
                                x_center + marker_size//2, y_center + marker_size//2)
                 painter.drawLine(x_center - marker_size//2, y_center + marker_size//2, 
                                x_center + marker_size//2, y_center - marker_size//2)
+            elif self.line_marker == 'v':  # Inverted Triangle
+                points = [
+                    (x_center, y_center + marker_size//2),
+                    (x_center - marker_size//2, y_center - marker_size//2),
+                    (x_center + marker_size//2, y_center - marker_size//2)
+                ]
+                triangle = QPolygon([QPoint(x, y) for x, y in points])
+                painter.drawPolygon(triangle)
+            elif self.line_marker == '<':  # Left Triangle
+                points = [
+                    (x_center - marker_size//2, y_center),
+                    (x_center + marker_size//2, y_center - marker_size//2),
+                    (x_center + marker_size//2, y_center + marker_size//2)
+                ]
+                triangle = QPolygon([QPoint(x, y) for x, y in points])
+                painter.drawPolygon(triangle)
+            elif self.line_marker == '>':  # Right Triangle
+                points = [
+                    (x_center + marker_size//2, y_center),
+                    (x_center - marker_size//2, y_center - marker_size//2),
+                    (x_center - marker_size//2, y_center + marker_size//2)
+                ]
+                triangle = QPolygon([QPoint(x, y) for x, y in points])
+                painter.drawPolygon(triangle)
+            elif self.line_marker == 'p':  # Pentagon
+                # Draw a simple pentagon approximation (5-sided polygon)
+                import math
+                points = []
+                for i in range(5):
+                    angle = 2 * math.pi * i / 5 - math.pi / 2  # Start from top
+                    x = x_center + marker_size//2 * math.cos(angle)
+                    y = y_center + marker_size//2 * math.sin(angle)
+                    points.append((int(x), int(y)))
+                pentagon = QPolygon([QPoint(x, y) for x, y in points])
+                painter.drawPolygon(pentagon)
+            elif self.line_marker == 'h':  # Hexagon
+                # Draw a simple hexagon (6-sided polygon)
+                import math
+                points = []
+                for i in range(6):
+                    angle = 2 * math.pi * i / 6
+                    x = x_center + marker_size//2 * math.cos(angle)
+                    y = y_center + marker_size//2 * math.sin(angle)
+                    points.append((int(x), int(y)))
+                hexagon = QPolygon([QPoint(x, y) for x, y in points])
+                painter.drawPolygon(hexagon)
 
 
 class PlotCanvas(FigureCanvas):

@@ -1,16 +1,20 @@
 """
-Difference Waterfall Comparison Method
+Difference Waterfall Comparison Module
 
-This module implements waterfall-style visualization of signed errors over time,
-with bars colored by positive/negative deviation for temporal pattern analysis.
+This module provides a comprehensive waterfall chart analysis showing signed errors
+over time, helping visualize positive and negative deviations in a cumulative format.
+
+Author: Auto-generated
+Date: 2024
+Version: 1.0.0
 """
 
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy import stats
-from typing import Dict, Any, Optional, Tuple, List
+from typing import Dict, List, Optional, Tuple, Any, Union
 from comparison.base_comparison import BaseComparison
 from comparison.comparison_registry import register_comparison
+
 
 @register_comparison
 class DifferenceWaterfallComparison(BaseComparison):
@@ -194,12 +198,7 @@ class DifferenceWaterfallComparison(BaseComparison):
               ref_time: Optional[np.ndarray] = None, 
               test_time: Optional[np.ndarray] = None) -> Dict[str, Any]:
         """
-        Main comparison method - orchestrates the difference waterfall analysis.
-        
-        Streamlined 3-step workflow:
-        1. Validate input data (basic validation + remove NaN/infinite values)
-        2. plot_script (core transformation + outlier removal)
-        3. stats_script (statistical calculations)
+        Apply difference waterfall analysis to the data.
         
         Args:
             ref_data (np.ndarray): Reference data array
@@ -220,70 +219,11 @@ class DifferenceWaterfallComparison(BaseComparison):
             RuntimeError: If analysis fails
         """
         try:
-            # === STEP 1: VALIDATE INPUT DATA ===
-            # Basic validation (shape, type, length compatibility)
+            # Validate input data
             ref_data, test_data = self._validate_input_data(ref_data, test_data)
-            # Remove NaN and infinite values
-            ref_clean, test_clean, valid_ratio = self._remove_invalid_data(ref_data, test_data)
             
-            # === STEP 2: PLOT SCRIPT (core transformation + outlier removal) ===
-            x_data, y_data, plot_metadata = self.plot_script(ref_clean, test_clean, self.kwargs, ref_time)
-            
-            # === STEP 3: STATS SCRIPT (statistical calculations) ===
-            stats_results = self.stats_script(x_data, y_data, ref_clean, test_clean, self.kwargs)
-            
-            # Prepare plot data
-            plot_data = {
-                'time': x_data,
-                'error': y_data,
-                'segments': plot_metadata['segments'],
-                'cumulative_error': plot_metadata['cumulative_error'],
-                'total_samples': plot_metadata['total_samples'],
-                'segment_size': plot_metadata['segment_size'],
-                'ref_data': ref_clean,
-                'test_data': test_clean,
-                'valid_ratio': valid_ratio,
-                'metadata': plot_metadata
-            }
-            
-            # Combine results
-            results = {
-                'method': self.name,
-                'n_samples': len(ref_clean),
-                'valid_ratio': valid_ratio,
-                'statistics': stats_results,
-                'plot_data': plot_data
-            }
-            
-            # Store results
-            self.results = results
-            return results
-            
-        except Exception as e:
-            raise RuntimeError(f"Difference waterfall analysis failed: {str(e)}")
-
-    def plot_script(self, ref_data: np.ndarray, test_data: np.ndarray, params: dict, 
-                   ref_time: Optional[np.ndarray] = None) -> tuple:
-        """
-        Core plotting transformation for difference waterfall analysis
-        
-        This defines what gets plotted on X and Y axes for waterfall visualization.
-        Includes outlier removal if requested in parameters.
-        
-        Args:
-            ref_data: Reference measurements (already cleaned of NaN/infinite values)
-            test_data: Test measurements (already cleaned of NaN/infinite values)
-            params: Method parameters dictionary
-            ref_time: Optional time array for reference data
-            
-        Returns:
-            tuple: (x_data, y_data, metadata)
-                x_data: Time values for X-axis
-                y_data: Error values for Y-axis
-                metadata: Plot configuration dictionary
-        """
-        # Calculate signed error
-        error = self._calculate_error(ref_data, test_data, params)
+            # Calculate signed error
+            error = self._calculate_error(ref_data, test_data)
             
             # Create time axis if not provided
             if ref_time is None:
@@ -292,38 +232,47 @@ class DifferenceWaterfallComparison(BaseComparison):
                 time_axis = ref_time
                 
             # Handle outlier exclusion
-        if params.get("exclude_outliers", False):
-            error, time_axis = self._remove_outliers(error, time_axis, params)
+            if self.kwargs.get("exclude_outliers", False):
+                error, time_axis = self._remove_outliers(error, time_axis)
                 
             if len(error) == 0:
                 raise ValueError("No valid data points after outlier removal")
             
             # Segment data for aggregation
-        segment_size = params.get("segment_size", 50)
-        segments = self._create_segments(error, time_axis, segment_size, params)
+            segment_size = self.kwargs.get("segment_size", 50)
+            segments = self._create_segments(error, time_axis, segment_size)
             
             # Calculate cumulative error if requested
-        cumulative_error = np.cumsum(error) if params.get("show_cumulative", False) else None
+            cumulative_error = np.cumsum(error) if self.kwargs.get("show_cumulative", False) else None
             
-        # Prepare metadata for plotting
-        metadata = {
-            'segments': segments,
-            'cumulative_error': cumulative_error.tolist() if cumulative_error is not None else None,
-            'total_samples': len(error),
-            'segment_size': segment_size,
-            'x_label': 'Time' if ref_time is not None and ref_time[0] != 0 else 'Sample Index',
-            'y_label': 'Error %' if params.get("normalize_by_reference", False) else 'Error',
-            'title': 'Difference Waterfall Analysis',
-            'plot_type': 'waterfall',
-            'outliers_removed': params.get("exclude_outliers", False),
-            'error_data': error.tolist()
-        }
-        
-        return time_axis.tolist(), error.tolist(), metadata
+            # Store plot data
+            self.plot_data = {
+                "time": time_axis.tolist(),
+                "error": error.tolist(),
+                "segments": segments,
+                "cumulative_error": cumulative_error.tolist() if cumulative_error is not None else None,
+                "total_samples": len(error),
+                "segment_size": segment_size
+            }
             
-    def _calculate_error(self, ref_data: np.ndarray, test_data: np.ndarray, params: dict) -> np.ndarray:
+            # Prepare results
+            self.results = {
+                "method": self.name,
+                "n_samples": len(error),
+                "plot_data": self.plot_data,
+                "error_data": error.tolist(),
+                "time_data": time_axis.tolist(),
+                "parameters": dict(self.kwargs)
+            }
+            
+            return self.results
+            
+        except Exception as e:
+            raise RuntimeError(f"Difference waterfall analysis failed: {str(e)}")
+            
+    def _calculate_error(self, ref_data: np.ndarray, test_data: np.ndarray) -> np.ndarray:
         """Calculate signed error based on configuration."""
-        if params.get("normalize_by_reference", False):
+        if self.kwargs.get("normalize_by_reference", False):
             # Percentage error (signed)
             with np.errstate(divide='ignore', invalid='ignore'):
                 error = (test_data - ref_data) / np.abs(ref_data) * 100
@@ -334,9 +283,9 @@ class DifferenceWaterfallComparison(BaseComparison):
             
         return error
         
-    def _remove_outliers(self, error: np.ndarray, time_axis: np.ndarray, params: dict) -> Tuple[np.ndarray, np.ndarray]:
+    def _remove_outliers(self, error: np.ndarray, time_axis: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """Remove outlier errors based on Z-score threshold."""
-        threshold = params.get("outlier_threshold", 3.0)
+        threshold = self.kwargs.get("outlier_threshold", 3.0)
         
         # Calculate Z-scores
         mean_error = np.mean(error)
@@ -349,10 +298,10 @@ class DifferenceWaterfallComparison(BaseComparison):
         else:
             return error, time_axis
             
-    def _create_segments(self, error: np.ndarray, time_axis: np.ndarray, segment_size: int, params: dict) -> Dict[str, List]:
+    def _create_segments(self, error: np.ndarray, time_axis: np.ndarray, segment_size: int) -> Dict[str, List]:
         """Create segments for aggregated visualization."""
         n_segments = int(np.ceil(len(error) / segment_size))
-        aggregation_method = params.get("aggregation_method", "mean")
+        aggregation_method = self.kwargs.get("aggregation_method", "mean")
         
         segments = {
             "segment_times": [],
@@ -395,10 +344,7 @@ class DifferenceWaterfallComparison(BaseComparison):
                        ref_time: Optional[np.ndarray] = None, 
                        test_time: Optional[np.ndarray] = None) -> Dict[str, Any]:
         """
-        BACKWARD COMPATIBILITY + SAFETY WRAPPER: Calculate waterfall analysis statistics.
-        
-        This method maintains compatibility with existing code and provides comprehensive
-        validation and error handling around the core statistical calculations.
+        Calculate comprehensive statistics for the waterfall analysis.
         
         Args:
             ref_data (np.ndarray): Reference data array
@@ -416,37 +362,16 @@ class DifferenceWaterfallComparison(BaseComparison):
         Raises:
             RuntimeError: If no results available or calculation fails
         """
-        # Get plot data using the script-based approach
-        x_data, y_data, plot_metadata = self.plot_script(ref_data, test_data, self.kwargs, ref_time)
-        
-        # === INPUT VALIDATION ===
-        if len(x_data) != len(y_data):
-            raise ValueError("X and Y data arrays must have the same length")
-        
-        if len(y_data) < 3:
-            raise ValueError("Insufficient data for statistical analysis (minimum 3 samples required)")
-        
-        # === PURE CALCULATIONS (delegated to stats_script) ===
-        stats_results = self.stats_script(x_data, y_data, ref_data, test_data, self.kwargs)
-        
-        return stats_results
-
-    def stats_script(self, x_data: List[float], y_data: List[float], 
-                    ref_data: np.ndarray, test_data: np.ndarray, params: dict) -> Dict[str, Any]:
-        """
-        Statistical calculations for difference waterfall analysis
-        
-        Args:
-            x_data: Time values
-            y_data: Error values
-            ref_data: Original reference data
-            test_data: Original test data
-            params: Method parameters dictionary
+        # If no results available, run apply() first
+        if self.results is None:
+            try:
+                self.apply(ref_data, test_data, ref_time, test_time)
+            except Exception as e:
+                raise RuntimeError(f"Failed to apply analysis before calculating stats: {str(e)}")
             
-        Returns:
-            Dictionary containing statistical results
-        """
-        error_data = np.array(y_data)
+        try:
+            plot_data = self.plot_data
+            error_data = np.array(plot_data["error"])
             
             # Error distribution statistics
             positive_errors = error_data[error_data > 0]
@@ -502,9 +427,8 @@ class DifferenceWaterfallComparison(BaseComparison):
                 }
                 
             # Segment analysis
-        _, _, plot_metadata = self.plot_script(ref_data, test_data, params)
-        if plot_metadata["segments"]:
-            segment_errors = np.array(plot_metadata["segments"]["segment_errors"])
+            if plot_data["segments"]:
+                segment_errors = np.array(plot_data["segments"]["segment_errors"])
                 segment_analysis = {
                     "n_segments": len(segment_errors),
                     "segment_mean_error": np.mean(segment_errors),
@@ -518,14 +442,17 @@ class DifferenceWaterfallComparison(BaseComparison):
             else:
                 segment_analysis = {"n_segments": 0}
             
-        stats_results = {
+            self.statistics = {
                 "error_distribution": error_distribution,
                 "bias_analysis": bias_analysis,
                 "temporal_stats": temporal_stats,
                 "segment_analysis": segment_analysis
             }
             
-        return stats_results
+            return self.statistics
+            
+        except Exception as e:
+            raise RuntimeError(f"Statistics calculation failed: {str(e)}")
 
     def generate_plot(self, ax, ref_data: np.ndarray, test_data: np.ndarray, 
                      plot_config: Dict[str, Any] = None, 
@@ -551,7 +478,7 @@ class DifferenceWaterfallComparison(BaseComparison):
                 raise RuntimeError(f"Failed to apply analysis before plotting: {str(e)}")
             
         try:
-            plot_data = self.results['plot_data']
+            plot_data = self.plot_data
             
             # Merge plot_config with overlay options if provided
             if plot_config is None:

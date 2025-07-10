@@ -10,7 +10,9 @@ from scipy.stats import gaussian_kde
 import warnings
 import pandas as pd
 import time
-from typing import Dict, List, Optional
+import hashlib
+from typing import Dict, List, Optional, Any, Tuple
+from collections import OrderedDict
 
 # Import comparison methods from the new comparison folder
 try:
@@ -20,48 +22,217 @@ try:
     COMPARISON_AVAILABLE = True
     print("[ComparisonWizardManager] Comparison registry imported successfully")
 except ImportError as e:
-    print(f"[ComparisonWizardManager] Warning: Could not import comparison registry: {e}")
+    print(f"[ComparisonWizardManager] Comparison registry not available: {e}")
     COMPARISON_AVAILABLE = False
     
-    # Create dummy classes if comparison module is not available
+    # Fallback registry for when comparison module is not available
     class ComparisonRegistry:
         @staticmethod
         def get_all_methods():
-            return ["Correlation Analysis", "Bland-Altman Analysis", "Residual Analysis"]
+            return []
         
         @staticmethod
         def get_all_categories():
-            return ["Statistical", "Agreement", "Error Analysis"]
+            return []
         
         @staticmethod
         def get_methods_by_category(category):
-            if category == "Statistical":
-                return ["Correlation Analysis"]
-            elif category == "Agreement":
-                return ["Bland-Altman Analysis"]
-            elif category == "Error Analysis":
-                return ["Residual Analysis"]
             return []
         
         @staticmethod
         def get_method_info(method_name):
-            return {
-                'name': method_name,
-                'description': f'Description for {method_name}',
-                'parameters': {},
-                'category': 'Statistical'
-            }
+            return None
         
         @staticmethod
         def create_method(method_name, **kwargs):
             return None
     
     def load_all_comparisons(directory=None):
-        print(f"[ComparisonWizardManager] Warning: Comparison module not available")
-        return False
+        pass
     
     class BaseComparison:
         pass
+
+
+class PairResult:
+    """
+    Stores computation and visualization results for a comparison pair
+    """
+    def __init__(self, pair_id: str, computation_result: Dict[str, Any], 
+                 plot_data: Dict[str, Any], method_hash: str, computation_time: float):
+        self.pair_id = pair_id
+        self.computation_result = computation_result  # Statistics, processed data
+        self.plot_data = plot_data  # Plot coordinates, styling info
+        self.method_hash = method_hash  # Parameters fingerprint for invalidation
+        self.computation_time = computation_time
+        self.timestamp = time.time()
+        self.access_count = 0
+        self.memory_estimate = self._estimate_memory()
+        
+    def _estimate_memory(self) -> int:
+        """Estimate memory usage in bytes"""
+        # Basic estimation based on data sizes
+        memory = 0
+        
+        # Computation result (statistics dict)
+        if self.computation_result:
+            memory += len(str(self.computation_result).encode('utf-8'))
+            
+        # Plot data (arrays and coordinates)
+        if self.plot_data:
+            for key, value in self.plot_data.items():
+                if isinstance(value, np.ndarray):
+                    memory += value.nbytes
+                elif isinstance(value, (list, tuple)):
+                    memory += len(value) * 8  # Estimate 8 bytes per element
+                else:
+                    memory += len(str(value).encode('utf-8'))
+                    
+        return memory
+        
+    def touch(self):
+        """Update access statistics"""
+        self.access_count += 1
+        self.timestamp = time.time()
+
+
+class ComparisonPairCache:
+    """
+    Manages caching of comparison pair computation results with LRU eviction
+    """
+    def __init__(self, max_pairs: int = 50, max_memory_mb: int = 100):
+        self.max_pairs = max_pairs
+        self.max_memory_mb = max_memory_mb
+        self.cache = OrderedDict()  # LRU cache
+        self.matplotlib_artists = {}  # pair_id -> list of matplotlib artists
+        
+    def get_pair_result(self, pair_id: str) -> Optional[PairResult]:
+        """Get cached result for a pair"""
+        if pair_id in self.cache:
+            result = self.cache[pair_id]
+            result.touch()
+            # Move to end (most recently used)
+            self.cache.move_to_end(pair_id)
+            return result
+        return None
+        
+    def store_pair_result(self, pair_result: PairResult):
+        """Store computation result for a pair"""
+        pair_id = pair_result.pair_id
+        
+        # Remove existing entry if present
+        if pair_id in self.cache:
+            del self.cache[pair_id]
+            
+        # Check memory and pair limits
+        self._enforce_limits()
+        
+        # Store new result
+        self.cache[pair_id] = pair_result
+        
+        print(f"[ComparisonCache] Stored result for pair '{pair_id}' "
+              f"(memory: {pair_result.memory_estimate//1024}KB, "
+              f"compute time: {pair_result.computation_time:.3f}s)")
+        
+    def invalidate_pair(self, pair_id: str):
+        """Invalidate cached result for a specific pair"""
+        if pair_id in self.cache:
+            del self.cache[pair_id]
+            print(f"[ComparisonCache] Invalidated cache for pair '{pair_id}'")
+            
+        # Also remove matplotlib artists
+        if pair_id in self.matplotlib_artists:
+            self._remove_matplotlib_artists(pair_id)
+            
+    def invalidate_all(self):
+        """Invalidate all cached results (method parameter change)"""
+        print(f"[ComparisonCache] Invalidating all cached results ({len(self.cache)} pairs)")
+        self.cache.clear()
+        
+        # Remove all matplotlib artists
+        for pair_id in list(self.matplotlib_artists.keys()):
+            self._remove_matplotlib_artists(pair_id)
+            
+    def invalidate_by_method_hash(self, old_hash: str):
+        """Invalidate results with specific method hash"""
+        to_remove = []
+        for pair_id, result in self.cache.items():
+            if result.method_hash == old_hash:
+                to_remove.append(pair_id)
+                
+        for pair_id in to_remove:
+            self.invalidate_pair(pair_id)
+            
+        print(f"[ComparisonCache] Invalidated {len(to_remove)} pairs with old method hash")
+        
+    def store_matplotlib_artists(self, pair_id: str, artists: List[Any]):
+        """Store matplotlib artists for a pair"""
+        self.matplotlib_artists[pair_id] = artists
+        
+    def get_matplotlib_artists(self, pair_id: str) -> List[Any]:
+        """Get matplotlib artists for a pair"""
+        return self.matplotlib_artists.get(pair_id, [])
+        
+    def set_pair_visibility(self, pair_id: str, visible: bool):
+        """Show/hide matplotlib artists for a pair"""
+        artists = self.matplotlib_artists.get(pair_id, [])
+        for artist in artists:
+            try:
+                artist.set_visible(visible)
+            except:
+                pass  # Artist might have been removed
+                
+    def _remove_matplotlib_artists(self, pair_id: str):
+        """Remove matplotlib artists for a pair"""
+        artists = self.matplotlib_artists.get(pair_id, [])
+        for artist in artists:
+            try:
+                artist.remove()
+            except:
+                pass  # Artist might have been removed already
+                
+        if pair_id in self.matplotlib_artists:
+            del self.matplotlib_artists[pair_id]
+            
+    def _enforce_limits(self):
+        """Enforce memory and pair count limits"""
+        # Enforce pair count limit
+        while len(self.cache) >= self.max_pairs:
+            oldest_pair = next(iter(self.cache))
+            print(f"[ComparisonCache] Evicting oldest pair: {oldest_pair}")
+            self.invalidate_pair(oldest_pair)
+            
+        # Enforce memory limit
+        total_memory = sum(result.memory_estimate for result in self.cache.values())
+        max_memory_bytes = self.max_memory_mb * 1024 * 1024
+        
+        while total_memory > max_memory_bytes and self.cache:
+            # Remove largest memory consumers first
+            largest_pair = max(self.cache.keys(), 
+                             key=lambda k: self.cache[k].memory_estimate)
+            print(f"[ComparisonCache] Evicting largest pair: {largest_pair} "
+                  f"({self.cache[largest_pair].memory_estimate//1024}KB)")
+            self.invalidate_pair(largest_pair)
+            total_memory = sum(result.memory_estimate for result in self.cache.values())
+            
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """Get cache statistics"""
+        total_memory = sum(result.memory_estimate for result in self.cache.values())
+        return {
+            'pairs_cached': len(self.cache),
+            'max_pairs': self.max_pairs,
+            'memory_used_mb': total_memory / (1024 * 1024),
+            'max_memory_mb': self.max_memory_mb,
+            'memory_utilization': (total_memory / (1024 * 1024)) / self.max_memory_mb * 100,
+            'matplotlib_artists': len(self.matplotlib_artists)
+        }
+
+
+def create_method_hash(method_name: str, method_params: Dict[str, Any]) -> str:
+    """Create a hash for method + parameters to detect changes"""
+    data = f"{method_name}|{sorted(method_params.items())}"
+    return hashlib.md5(data.encode()).hexdigest()
+
 
 class ComparisonWizardManager(QObject):
     """
@@ -97,6 +268,10 @@ class ComparisonWizardManager(QObject):
         self.pair_aligned_data = {}  # pair_name -> aligned_data
         self.pair_statistics = {}    # pair_name -> statistics
         self._access_counts = {}     # pair_name -> access_count
+        
+        # Initialize new caching system
+        self.pair_cache = ComparisonPairCache(max_pairs=50, max_memory_mb=100)
+        self.current_method_hash = ""  # Track current method parameters
         
         # Initialize comparison methods
         self._initialize_comparison_methods()
@@ -367,7 +542,7 @@ class ComparisonWizardManager(QObject):
             self.window.close()
             
     def _on_pair_added(self, pair_config):
-        """Handle when a new pair is added"""
+        """Handle when a new pair is added - now with immediate plotting"""
         print(f"[ComparisonWizard] Pair added: {pair_config['name']}")
         
         # Get the channels for this pair
@@ -378,61 +553,168 @@ class ComparisonWizardManager(QObject):
             pair_name = pair_config['name']
             
             try:
-                # STEP 1: Perform alignment for this specific pair
-                print(f"[ComparisonWizard] Step 1: Aligning data for pair '{pair_name}'...")
-                aligned_data = self._align_channels(ref_channel, test_channel, pair_config)
+                # Get current method and parameters
+                current_method = self.window.method_list.currentItem().text() if self.window.method_list.currentItem() else "Correlation Analysis"
+                method_params = self.window._get_method_parameters_from_controls() if hasattr(self.window, '_get_method_parameters_from_controls') else {}
                 
-                # STEP 2: Calculate individual pair statistics
-                print(f"[ComparisonWizard] Step 2: Calculating statistics for pair '{pair_name}'...")
+                # Create method hash for cache invalidation
+                method_hash = create_method_hash(current_method, method_params)
+                
+                # Check if we need to invalidate cache due to method change
+                if self.current_method_hash != method_hash:
+                    print(f"[ComparisonWizard] Method parameters changed, invalidating cache")
+                    self.pair_cache.invalidate_all()
+                    self.current_method_hash = method_hash
+                
+                # Check cache first
+                cached_result = self.pair_cache.get_pair_result(pair_name)
+                if cached_result and cached_result.method_hash == method_hash:
+                    print(f"[ComparisonWizard] Using cached result for pair '{pair_name}'")
+                    
+                    # Use cached data
+                    aligned_data = cached_result.computation_result['aligned_data']
+                    stats = cached_result.computation_result['statistics']
+                    computation_time = cached_result.computation_time
+                    
+                    # Store in legacy format for compatibility
+                    self.pair_aligned_data[pair_name] = aligned_data
+                    self.pair_statistics[pair_name] = stats
+                    
+                else:
+                    print(f"[ComparisonWizard] Computing new result for pair '{pair_name}'")
+                    
+                    # STEP 1: Perform alignment and computation
+                    start_time = time.time()
+                    
+                    aligned_data = self._align_channels(ref_channel, test_channel, pair_config)
                 stats = self._calculate_statistics(aligned_data)
                 
-                # STEP 3: Store the aligned data and statistics
-                print(f"[ComparisonWizard] Step 3: Storing data for pair '{pair_name}'...")
+                # Store in legacy format for compatibility
                 self.pair_aligned_data[pair_name] = aligned_data
                 self.pair_statistics[pair_name] = stats
                 
-                # STEP 4: Update individual pair statistics in the table FIRST
-                print(f"[ComparisonWizard] Step 4: Updating table row for pair '{pair_name}'...")
-                self._update_pair_statistics(pair_name, stats)
+                computation_time = time.time() - start_time
                 
-                # Force table refresh to ensure individual stats are visible
+                # STEP 2: Prepare plot data
+                plot_data = self._prepare_plot_data(aligned_data, pair_config)
+                
+                # STEP 3: Cache the results
+                computation_result = {
+                    'aligned_data': aligned_data,
+                    'statistics': stats,
+                    'pair_config': pair_config
+                }
+                
+                pair_result = PairResult(
+                    pair_id=pair_name,
+                    computation_result=computation_result,
+                    plot_data=plot_data,
+                    method_hash=method_hash,
+                    computation_time=computation_time
+                )
+                
+                self.pair_cache.store_pair_result(pair_result)
+                
+                # STEP 4: Update table immediately
+                self._update_pair_statistics(pair_name, stats)
                 self._force_table_refresh()
                 
-                # Log the individual pair results
+                # STEP 5: Plot immediately with cumulative plotting
+                self._plot_pair_immediately(pair_name, pair_config)
+                
+                # STEP 6: Log results
                 self._log_individual_pair_stats(pair_name, stats)
                 
-                # STEP 5: Show alignment summary if there are warnings
+                # STEP 7: Show alignment warnings if needed
                 if self._has_alignment_warnings(aligned_data, stats):
-                    print(f"[ComparisonWizard] Step 5: Showing alignment summary for pair '{pair_name}'...")
                     self._show_alignment_summary(pair_name, aligned_data, stats)
                 
-            except Exception as e:
-                print(f"[ComparisonWizard] ERROR processing pair '{pair_name}': {str(e)}")
-                # Store error information
-                error_stats = {'r': np.nan, 'rms': np.nan, 'n': 0, 'error': str(e)}
-                self.pair_statistics[pair_name] = error_stats
-                self._update_pair_statistics(pair_name, error_stats)
+                # Update overall statistics
+                self._stats['total_comparisons'] += 1
+                self._stats['successful_alignments'] += 1
                 
-                # Show error to user
-                if hasattr(self, 'window'):
-                    QMessageBox.warning(
+                print(f"[ComparisonWizard] Pair '{pair_name}' added and plotted successfully")
+                
+            except Exception as e:
+                print(f"[ComparisonWizard] Error processing pair '{pair_name}': {str(e)}")
+                import traceback
+                traceback.print_exc()
+                
+                # Update failure statistics
+                self._stats['failed_alignments'] += 1
+                
+                # Show error in console instead of blocking dialog for same-channel issues
+                error_msg = str(e)
+                if "Standard deviation calculation invalid" in error_msg or "zero variance" in error_msg.lower():
+                    # Handle same-channel comparison gracefully
+                    if hasattr(self, 'window') and hasattr(self.window, 'info_output'):
+                        self.window.info_output.append(f"⚠️ Same-channel comparison detected for '{pair_name}' - results may not be meaningful")
+                        self.window.info_output.append(f"💡 Consider comparing different channels for better analysis")
+                    print(f"[ComparisonWizard] Same-channel comparison handled gracefully for '{pair_name}'")
+                else:
+                    # Show error message for other types of errors
+                    QMessageBox.critical(
                         self.window,
-                        "Pair Processing Error",
-                        f"Error processing pair '{pair_name}':\n\n{str(e)}\n\n"
-                        f"The pair will be shown but statistics may not be available."
+                        "Pair Addition Error",
+                        f"Failed to add pair '{pair_name}':\n{str(e)}"
                     )
-            
-            # STEP 6: Ensure ALL pairs have valid statistics (fix any missing ones)
-            print(f"[ComparisonWizard] Step 6: Verifying all pair statistics...")
-            self._verify_and_fix_missing_statistics()
-            
-            # STEP 7: Finally, update cumulative display (includes preview plot)
-            print(f"[ComparisonWizard] Step 7: Updating cumulative statistics and plot...")
-            self._update_cumulative_display()
-            
-            print(f"[ComparisonWizard] Pair '{pair_name}' processing complete!")
         else:
-            print(f"[ComparisonWizard] Error: Could not find channels for pair '{pair_config['name']}'")
+            print(f"[ComparisonWizard] Could not find channels for pair '{pair_config['name']}'")
+            
+    def _prepare_plot_data(self, aligned_data: Dict[str, Any], pair_config: Dict[str, Any]) -> Dict[str, Any]:
+        """Prepare plot data from aligned data"""
+        ref_data = aligned_data.get('ref_data', [])
+        test_data = aligned_data.get('test_data', [])
+        
+        # Filter valid data for plotting
+        if len(ref_data) > 0 and len(test_data) > 0:
+            ref_data = np.array(ref_data)
+            test_data = np.array(test_data)
+            valid_mask = np.isfinite(ref_data) & np.isfinite(test_data)
+            ref_plot = ref_data[valid_mask]
+            test_plot = test_data[valid_mask]
+        else:
+            ref_plot = np.array([])
+            test_plot = np.array([])
+            
+        return {
+            'ref_data': ref_plot,
+            'test_data': test_plot,
+            'pair_config': pair_config,
+            'n_points': len(ref_plot)
+        }
+        
+    def _plot_pair_immediately(self, pair_name: str, pair_config: Dict[str, Any]):
+        """Plot a single pair immediately on the main canvas"""
+        if not hasattr(self.window, 'canvas') or not self.window.canvas:
+            return
+            
+        # Get current plot configuration
+        plot_config = self.window._get_plot_config() if hasattr(self.window, '_get_plot_config') else {}
+        
+        # Get all checked pairs for cumulative plotting
+        checked_pairs = self.window.get_checked_pairs() if hasattr(self.window, 'get_checked_pairs') else []
+        
+        # Add current pair to checked pairs if not already there
+        pair_in_checked = any(pair['name'] == pair_name for pair in checked_pairs)
+        if not pair_in_checked:
+            # Add pair with default visualization settings
+            pair_config_extended = dict(pair_config)
+            pair_config_extended.update({
+                'marker_type': '○ Circle',
+                'marker_color': '🔵 Blue',
+                'show': True
+            })
+            checked_pairs.append(pair_config_extended)
+        
+        # Determine plot type
+        plot_type = self._determine_plot_type_from_pairs(checked_pairs)
+        plot_config['plot_type'] = plot_type
+        plot_config['checked_pairs'] = checked_pairs
+        
+        # Generate cumulative plot
+        print(f"[ComparisonWizard] Plotting pair '{pair_name}' with {len(checked_pairs)} total pairs")
+        self._generate_scatter_plot(checked_pairs, plot_config)
             
     def _verify_and_fix_missing_statistics(self):
         """Verify all pairs have statistics and fix any missing ones"""
@@ -541,21 +823,201 @@ class ComparisonWizardManager(QObject):
             return False
         
     def _on_pair_deleted(self):
-        """Handle when a pair is deleted"""
-        print("[ComparisonWizard] Pair deleted")
+        """Handle when a pair is deleted - now with cache cleanup"""
+        print("[ComparisonWizard] Pair deleted signal received")
         
-        # Remove data for deleted pairs
-        active_pair_names = {pair['name'] for pair in self.window.get_active_pairs()}
+        # Get currently selected pairs to identify what was deleted
+        checked_pairs = self.window.get_checked_pairs() if hasattr(self.window, 'get_checked_pairs') else []
+        current_pair_names = {pair['name'] for pair in checked_pairs}
         
-        # Remove data for pairs that no longer exist
-        pairs_to_remove = []
-        for pair_name in self.pair_aligned_data.keys():
-            if pair_name not in active_pair_names:
-                pairs_to_remove.append(pair_name)
+        # Find pairs that were deleted (in cache but not in current pairs)
+        cached_pair_names = set(self.pair_cache.cache.keys())
+        deleted_pairs = cached_pair_names - current_pair_names
         
-        for pair_name in pairs_to_remove:
-            self.pair_aligned_data.pop(pair_name, None)
-            self.pair_statistics.pop(pair_name, None)
+        # Also check legacy data structures
+        legacy_pair_names = set(self.pair_aligned_data.keys())
+        deleted_pairs.update(legacy_pair_names - current_pair_names)
+        
+        # Clean up cache and data for deleted pairs
+        for pair_name in deleted_pairs:
+            print(f"[ComparisonWizard] Cleaning up deleted pair: {pair_name}")
+            
+            # Remove from cache
+            self.pair_cache.invalidate_pair(pair_name)
+            
+            # Remove from legacy data structures
+            if pair_name in self.pair_aligned_data:
+                del self.pair_aligned_data[pair_name]
+            if pair_name in self.pair_statistics:
+                del self.pair_statistics[pair_name]
+            if pair_name in self._access_counts:
+                del self._access_counts[pair_name]
+        
+        # Regenerate plot with remaining pairs
+        if checked_pairs:
+            print(f"[ComparisonWizard] Regenerating plot with {len(checked_pairs)} remaining pairs")
+            plot_config = self.window._get_plot_config() if hasattr(self.window, '_get_plot_config') else {}
+            plot_type = self._determine_plot_type_from_pairs(checked_pairs)
+            plot_config['plot_type'] = plot_type
+            plot_config['checked_pairs'] = checked_pairs
+            self._generate_scatter_plot(checked_pairs, plot_config)
+        else:
+            print("[ComparisonWizard] No pairs remaining, clearing plot")
+            self._clear_all_plots()
+        
+        # Update cumulative display
+        self._update_cumulative_display()
+        
+        print(f"[ComparisonWizard] Pair deletion complete. Cache contains {len(self.pair_cache.cache)} pairs")
+        
+    def _clear_all_plots(self):
+        """Clear all plots when no pairs remain"""
+        if hasattr(self.window, 'canvas') and self.window.canvas:
+            fig = self.window.canvas.figure
+            self._clear_figure_completely(fig)
+            self.window.canvas.draw()
+            
+        # Clear other plot tabs if they exist
+        for attr_name in ['histogram_canvas', 'heatmap_canvas']:
+            if hasattr(self.window, attr_name):
+                canvas = getattr(self.window, attr_name)
+                if canvas:
+                    fig = canvas.figure
+                    self._clear_figure_completely(fig)
+                    canvas.draw()
+                    
+    def on_method_parameters_changed(self, method_name: str, method_params: Dict[str, Any]):
+        """Handle when method or parameters change - invalidate cache if needed"""
+        new_method_hash = create_method_hash(method_name, method_params)
+        
+        if self.current_method_hash != new_method_hash:
+            print(f"[ComparisonWizard] Method parameters changed, invalidating cache")
+            print(f"[ComparisonWizard] Old hash: {self.current_method_hash}")
+            print(f"[ComparisonWizard] New hash: {new_method_hash}")
+            
+            # Invalidate all cached results
+            self.pair_cache.invalidate_all()
+            self.current_method_hash = new_method_hash
+            
+            # Trigger recomputation for all visible pairs
+            self._recompute_all_visible_pairs()
+            
+    def _recompute_all_visible_pairs(self):
+        """Recompute all visible pairs after parameter change"""
+        checked_pairs = self.window.get_checked_pairs() if hasattr(self.window, 'get_checked_pairs') else []
+        
+        if not checked_pairs:
+            return
+            
+        print(f"[ComparisonWizard] Recomputing {len(checked_pairs)} visible pairs")
+        
+        # Process each pair
+        for pair_info in checked_pairs:
+            pair_name = pair_info['name']
+            
+            # Get the channels for this pair
+            ref_channel = self._get_channel(pair_info['ref_file'], pair_info['ref_channel'])
+            test_channel = self._get_channel(pair_info['test_file'], pair_info['test_channel'])
+            
+            if ref_channel and test_channel:
+                try:
+                    # Recompute the pair
+                    start_time = time.time()
+                    aligned_data = self._align_channels(ref_channel, test_channel, pair_info)
+                    stats = self._calculate_statistics(aligned_data)
+                    computation_time = time.time() - start_time
+                    
+                    # Update legacy data structures
+                    self.pair_aligned_data[pair_name] = aligned_data
+                    self.pair_statistics[pair_name] = stats
+                    
+                    # Prepare and cache new results
+                    plot_data = self._prepare_plot_data(aligned_data, pair_info)
+                    
+                    computation_result = {
+                        'aligned_data': aligned_data,
+                        'statistics': stats,
+                        'pair_config': pair_info
+                    }
+                    
+                    pair_result = PairResult(
+                        pair_id=pair_name,
+                        computation_result=computation_result,
+                        plot_data=plot_data,
+                        method_hash=self.current_method_hash,
+                        computation_time=computation_time
+                    )
+                    
+                    self.pair_cache.store_pair_result(pair_result)
+                    
+                    # Update table
+                    self._update_pair_statistics(pair_name, stats)
+                    
+                except Exception as e:
+                    print(f"[ComparisonWizard] Error recomputing pair '{pair_name}': {str(e)}")
+                    
+        # Force table refresh
+        self._force_table_refresh()
+        
+        # Regenerate plot with all pairs
+        plot_config = self.window._get_plot_config() if hasattr(self.window, '_get_plot_config') else {}
+        plot_type = self._determine_plot_type_from_pairs(checked_pairs)
+        plot_config['plot_type'] = plot_type
+        plot_config['checked_pairs'] = checked_pairs
+        self._generate_scatter_plot(checked_pairs, plot_config)
+        
+        # Update cumulative display
+        self._update_cumulative_display()
+        
+        print(f"[ComparisonWizard] Recomputation complete")
+        
+    def refresh_all_plots(self):
+        """Refresh all plots and tables with current settings - used by refresh button"""
+        try:
+            print("[ComparisonWizardManager] Refreshing all plots and tables")
+            
+            if not self.window:
+                print("[ComparisonWizardManager] No window available for refresh")
+                return
+            
+            # Get current checked pairs
+            checked_pairs = self.window.get_checked_pairs()
+            if not checked_pairs:
+                print("[ComparisonWizardManager] No checked pairs to refresh")
+                return
+            
+            # Clear all existing plots
+            self._clear_all_plots()
+            
+            # Invalidate entire cache to force fresh computation
+            self.pair_cache.invalidate_all()
+            
+            # Get current plot configuration
+            plot_config = self.window._get_plot_config()
+            
+            # Regenerate plots with current settings
+            self._on_plot_generated(plot_config)
+            
+            # Update cumulative display
+            self._update_cumulative_display()
+            
+            print(f"[ComparisonWizardManager] Successfully refreshed plots for {len(checked_pairs)} pairs")
+            
+        except Exception as e:
+            print(f"[ComparisonWizardManager] Error refreshing plots: {e}")
+            import traceback
+            traceback.print_exc()
+        
+    def on_visibility_changed(self, pair_name: str, visible: bool):
+        """Handle when pair visibility is toggled - visual only"""
+        print(f"[ComparisonWizard] Toggling visibility for pair '{pair_name}': {visible}")
+        
+        # Update matplotlib artists visibility
+        self.pair_cache.set_pair_visibility(pair_name, visible)
+        
+        # Redraw canvas
+        if hasattr(self.window, 'canvas') and self.window.canvas:
+            self.window.canvas.draw()
         
         # Update cumulative display
         self._update_cumulative_display()
@@ -573,6 +1035,9 @@ class ComparisonWizardManager(QObject):
         # Determine plot type from comparison method of first pair
         plot_type = self._determine_plot_type_from_pairs(checked_pairs)
         plot_config['plot_type'] = plot_type
+        
+        # Include overlay configurations in plot config
+        self._enhance_plot_config_with_overlays(plot_config)
         
         print(f"[ComparisonWizard] Generating {plot_type} plot for {len(checked_pairs)} pairs")
         
@@ -762,9 +1227,12 @@ class ComparisonWizardManager(QObject):
             
         except Exception as e:
             print(f"[ComparisonWizard] Error creating heatmap: {e}")
-            ax.text(0.5, 0.5, f'Error creating heatmap: {str(e)}', 
-                   ha='center', va='center', transform=ax.transAxes)
-            ax.set_title('Heatmap Error')
+            # Show error in console, not on plot canvas
+            if hasattr(self, 'window') and hasattr(self.window, 'info_output'):
+                self.window.info_output.append(f"⚠️ Error creating heatmap: {str(e)}")
+            ax.text(0.5, 0.5, 'Heatmap generation failed - check console for details', 
+                   ha='center', va='center', transform=ax.transAxes, color='gray', fontsize=10)
+            ax.set_title('Heatmap')
         
         ax.grid(True, alpha=0.3)
         
@@ -775,373 +1243,449 @@ class ComparisonWizardManager(QObject):
         self.window.heatmap_canvas.draw()
         
     def _generate_multi_pair_plot(self, checked_pairs, plot_config):
-        """Generate plot with multiple pairs using different markers"""
-        if not hasattr(self.window, 'canvas') or not self.window.canvas:
+        """Generate plot for multiple pairs with enhanced styling and performance"""
+        if not checked_pairs:
             return
             
-        fig = self.window.canvas.figure
-        
-        # Comprehensive figure clearing to prevent overlapping plots
-        self._clear_figure_completely(fig)
-        
-        ax = fig.add_subplot(111)
-        
-        plot_type = plot_config['plot_type']
-        
-        # Marker mapping
-        marker_map = {
-            '○ Circle': 'o',
-            '□ Square': 's', 
-            '△ Triangle': '^',
-            '◇ Diamond': 'D',
-            '▽ Inverted Triangle': 'v',
-            '◁ Left Triangle': '<',
-            '▷ Right Triangle': '>',
-            '⬟ Pentagon': 'p',
-            '✦ Star': '*',
-            '⬢ Hexagon': 'h'
-        }
-        
-        # Color mapping
-        color_map = {
-            '🔵 Blue': 'blue',
-            '🔴 Red': 'red',
-            '🟢 Green': 'green',
-            '🟣 Purple': 'purple',
-            '🟠 Orange': 'orange',
-            '🟤 Brown': 'brown',
-            '🩷 Pink': 'pink',
-            '⚫ Gray': 'gray',
-            '🟡 Yellow': 'gold',
-            '🔶 Cyan': 'cyan'
-        }
-        
-        all_ref_data = []
-        all_test_data = []
-        
-        # Collect data for all pairs first
-        pair_data = []
-        for i, pair in enumerate(checked_pairs):
-            pair_name = pair['name']
-            marker_text = pair.get('marker_type', '○ Circle')
-            color_text = pair.get('marker_color', '🔵 Blue')
-            
-            if pair_name not in self.pair_aligned_data:
-                print(f"[ComparisonWizard] No aligned data for pair '{pair_name}'")
-                continue
-                
-            aligned_data = self.pair_aligned_data[pair_name]
-            ref_data = aligned_data['ref_data']
-            test_data = aligned_data['test_data']
-            
-            if ref_data is None or test_data is None or len(ref_data) == 0:
-                continue
-            
-            # Filter valid data for plotting
-            valid_mask = np.isfinite(ref_data) & np.isfinite(test_data)
-            ref_plot = ref_data[valid_mask]
-            test_plot = test_data[valid_mask]
-            
-            if len(ref_plot) == 0:
-                continue
-            
-            # Downsample for performance if too many points
-            if len(ref_plot) > 2000:
-                indices = np.random.choice(len(ref_plot), 2000, replace=False)
-                ref_plot = ref_plot[indices]
-                test_plot = test_plot[indices]
-            
-            # Apply downsampling if requested in config
-            downsample_limit = plot_config.get('downsample')
-            if downsample_limit and len(ref_plot) > downsample_limit:
-                indices = np.random.choice(len(ref_plot), downsample_limit, replace=False)
-                ref_plot = ref_plot[indices]
-                test_plot = test_plot[indices]
-            
-            # Store pair data
-            pair_data.append({
-                'name': pair_name,
-                'ref_data': ref_plot,
-                'test_data': test_plot,
-                'marker': marker_map.get(marker_text, 'o'),
-                'color': color_map.get(color_text, 'blue')
-            })
-            
-            # Collect for overall statistics
-            all_ref_data.extend(ref_plot)
-            all_test_data.extend(test_plot)
-        
-        if not all_ref_data:
-            ax.text(0.5, 0.5, 'No valid data for plotting', 
-                   ha='center', va='center', transform=ax.transAxes)
-            ax.set_title('No Data Available')
-            try:
-                fig.tight_layout()
-            except (np.linalg.LinAlgError, ValueError) as e:
-                print(f"[ComparisonWizard] tight_layout failed: {e}, using subplots_adjust fallback")
-                try:
-                    fig.subplots_adjust(left=0.1, bottom=0.1, right=0.85, top=0.9)
-                except Exception:
-                    pass  # If both fail, continue without layout adjustment
-            self.window.canvas.draw()
-            return
-        
-        # Convert to arrays for overall statistics
-        all_ref_data = np.array(all_ref_data)
-        all_test_data = np.array(all_test_data)
-        
-        # Try to generate plot using proper comparison methods first
         try:
-            dynamic_success = self._generate_dynamic_plot_content(ax, all_ref_data, all_test_data, plot_config, checked_pairs)
-            if dynamic_success:
-                # If dynamic plot generation succeeded, we're done
+            # Clear the figure first
+            fig = self.window.canvas.figure
+            fig.clear()
+            ax = fig.add_subplot(111)
+            
+            # Get plot type from config or determine from pairs
+            plot_type = plot_config.get('plot_type', self._determine_plot_type_from_pairs(checked_pairs))
+            
+            print(f"[ComparisonWizard] Generating {plot_type} plot for {len(checked_pairs)} pairs")
+            
+            # Generate plot content
+            success = self._generate_plot_content(ax, checked_pairs, plot_config)
+            
+            if success:
+                # Create channel from comparison results after successful plot generation
+                self._create_comparison_channel(checked_pairs, plot_config, ax)
+                
+                # Apply common styling and finalization
                 self._apply_common_plot_config(ax, fig, plot_config, checked_pairs)
-                print(f"[ComparisonWizard] Plot generated successfully using comparison methods with {len(checked_pairs)} pairs")
-                return
+                
+                print(f"[ComparisonWizard] Plot generated successfully with {len(checked_pairs)} pairs")
+            else:
+                print(f"[ComparisonWizard] Plot generation failed")
+                
         except Exception as e:
-            print(f"[ComparisonWizard] Dynamic plot generation failed: {e}, falling back to hardcoded logic")
-        
-        # Fallback to hardcoded logic only if dynamic generation fails
-        print(f"[ComparisonWizard] Using fallback hardcoded plot generation")
-        
-        # Generate plots based on density type and plot type
-        density_type = plot_config.get('density_display', 'scatter')
-        bin_size = plot_config.get('bin_size', 20)
-        kde_bandwidth = plot_config.get('kde_bandwidth', 0.2)
-        
-        if density_type == 'hexbin':
-            # For hexbin, combine all data into single density plot
-            try:
-                if plot_type == 'bland_altman':
-                    all_means = (all_ref_data + all_test_data) / 2
-                    all_diffs = all_test_data - all_ref_data
-                    
-                    # Check for zero range (would cause ZeroDivisionError in hexbin)
-                    if np.ptp(all_means) == 0 or np.ptp(all_diffs) == 0:
-                        # Fallback to scatter plot
-                        ax.scatter(all_means, all_diffs, alpha=0.6, s=20, c='blue')
-                    else:
-                        hb = ax.hexbin(all_means, all_diffs, gridsize=bin_size, cmap='viridis', mincnt=1)
-                        
-                elif plot_type == 'scatter' or plot_type == 'pearson':
-                    # Check for zero range
-                    if np.ptp(all_ref_data) == 0 or np.ptp(all_test_data) == 0:
-                        # Fallback to scatter plot
-                        ax.scatter(all_ref_data, all_test_data, alpha=0.6, s=20, c='blue')
-                    else:
-                        hb = ax.hexbin(all_ref_data, all_test_data, gridsize=bin_size, cmap='viridis', mincnt=1)
-                        
-                elif plot_type == 'residual':
-                    all_residuals = all_test_data - all_ref_data
-                    # Check for zero range
-                    if np.ptp(all_ref_data) == 0 or np.ptp(all_residuals) == 0:
-                        # Fallback to scatter plot
-                        ax.scatter(all_ref_data, all_residuals, alpha=0.6, s=20, c='blue')
-                    else:
-                        hb = ax.hexbin(all_ref_data, all_residuals, gridsize=bin_size, cmap='viridis', mincnt=1)
-                        
-                elif plot_type == 'ccc' or plot_type == 'rmse' or plot_type == 'icc':
-                    # CCC, RMSE, and ICC all use hexbin plot of test vs reference
-                    # Check for zero range
-                    if np.ptp(all_ref_data) == 0 or np.ptp(all_test_data) == 0:
-                        # Fallback to scatter plot
-                        ax.scatter(all_ref_data, all_test_data, alpha=0.6, s=20, c='blue')
-                    else:
-                        hb = ax.hexbin(all_ref_data, all_test_data, gridsize=bin_size, cmap='viridis', mincnt=1)
-                
-                # Add colorbar only if hexbin was successful
-                if 'hb' in locals():
-                    try:
-                        # Remove any existing colorbars to prevent duplication
-                        if hasattr(fig, '_colorbar_list'):
-                            for cb in fig._colorbar_list:
-                                try:
-                                    cb.remove()
-                                except:
-                                    pass
-                            fig._colorbar_list = []
-                        
-                        cbar = plt.colorbar(hb, ax=ax)
-                        cbar.set_label('Point Density', rotation=270, labelpad=15)
-                        
-                        # Keep track of colorbars for future cleanup
-                        if not hasattr(fig, '_colorbar_list'):
-                            fig._colorbar_list = []
-                        fig._colorbar_list.append(cbar)
-                    except:
-                        pass
-                        
-            except Exception as e:
-                print(f"[ComparisonWizard] Hexbin plotting failed: {e}, falling back to scatter")
-                # Fallback to scatter plotting
-                if plot_type == 'bland_altman':
-                    all_means = (all_ref_data + all_test_data) / 2
-                    all_diffs = all_test_data - all_ref_data
-                    ax.scatter(all_means, all_diffs, alpha=0.6, s=20, c='blue')
-                elif plot_type == 'scatter' or plot_type == 'pearson':
-                    ax.scatter(all_ref_data, all_test_data, alpha=0.6, s=20, c='blue')
-                elif plot_type == 'residual':
-                    all_residuals = all_test_data - all_ref_data
-                    ax.scatter(all_ref_data, all_residuals, alpha=0.6, s=20, c='blue')
-                elif plot_type == 'ccc' or plot_type == 'rmse' or plot_type == 'icc':
-                    # CCC, RMSE, and ICC all use scatter plot of test vs reference
-                    ax.scatter(all_ref_data, all_test_data, alpha=0.6, s=20, c='blue')
+            print(f"[ComparisonWizard] Error generating multi-pair plot: {e}")
+            import traceback
+            traceback.print_exc()
             
-        elif density_type == 'kde':
-            # For KDE, combine all data into density visualization
-            try:
-                if plot_type == 'bland_altman':
-                    all_means = (all_ref_data + all_test_data) / 2
-                    all_diffs = all_test_data - all_ref_data
-                    self._create_kde_plot(ax, all_means, all_diffs, kde_bandwidth)
-                    
-                elif plot_type == 'scatter' or plot_type == 'pearson':
-                    self._create_kde_plot(ax, all_ref_data, all_test_data, kde_bandwidth)
-                    
-                elif plot_type == 'residual':
-                    all_residuals = all_test_data - all_ref_data
-                    self._create_kde_plot(ax, all_ref_data, all_residuals, kde_bandwidth)
-                    
-                elif plot_type == 'ccc' or plot_type == 'rmse' or plot_type == 'icc':
-                    # CCC, RMSE, and ICC all use scatter plot of test vs reference
-                    self._create_kde_plot(ax, all_ref_data, all_test_data, kde_bandwidth)
-                    
-            except Exception as e:
-                print(f"[ComparisonWizard] KDE plotting failed: {e}, falling back to scatter")
-                # Fallback to scatter plotting
-                if plot_type == 'bland_altman':
-                    all_means = (all_ref_data + all_test_data) / 2
-                    all_diffs = all_test_data - all_ref_data
-                    ax.scatter(all_means, all_diffs, alpha=0.6, s=20, c='blue')
-                elif plot_type == 'scatter' or plot_type == 'pearson':
-                    ax.scatter(all_ref_data, all_test_data, alpha=0.6, s=20, c='blue')
-                elif plot_type == 'residual':
-                    all_residuals = all_test_data - all_ref_data
-                    ax.scatter(all_ref_data, all_residuals, alpha=0.6, s=20, c='blue')
-                elif plot_type == 'ccc' or plot_type == 'rmse' or plot_type == 'icc':
-                    # CCC, RMSE, and ICC all use scatter plot of test vs reference
-                    ax.scatter(all_ref_data, all_test_data, alpha=0.6, s=20, c='blue')
-            
-        else:
-            # For scatter plots, plot each pair separately
-            for pair_info in pair_data:
-                ref_plot = pair_info['ref_data']
-                test_plot = pair_info['test_data']
-                marker = pair_info['marker']
-                color = pair_info['color']
-                pair_name = pair_info['name']
-                
-                # Generate plot based on type
-                if plot_type == 'bland_altman':
-                    means = (ref_plot + test_plot) / 2
-                    diffs = test_plot - ref_plot
-                    ax.scatter(means, diffs, alpha=0.6, s=30, 
-                              color=color, marker=marker,
-                              label=f"{pair_name} (n={len(ref_plot)})")
-                    
-                elif plot_type == 'scatter' or plot_type == 'pearson':
-                    ax.scatter(ref_plot, test_plot, alpha=0.6, s=30,
-                              color=color, marker=marker,
-                              label=f"{pair_name} (n={len(ref_plot)})")
-                    
-                elif plot_type == 'residual':
-                    residuals = test_plot - ref_plot
-                    ax.scatter(ref_plot, residuals, alpha=0.6, s=30,
-                              color=color, marker=marker,
-                              label=f"{pair_name} (n={len(ref_plot)})")
-                
-                elif plot_type == 'ccc':
-                    # CCC uses scatter plot of test vs reference
-                    ax.scatter(ref_plot, test_plot, alpha=0.6, s=30,
-                              color=color, marker=marker,
-                              label=f"{pair_name} (n={len(ref_plot)})")
-                
-                elif plot_type == 'rmse':
-                    # RMSE uses scatter plot of test vs reference
-                    ax.scatter(ref_plot, test_plot, alpha=0.6, s=30,
-                              color=color, marker=marker,
-                              label=f"{pair_name} (n={len(ref_plot)})")
-                
-                elif plot_type == 'icc':
-                    # ICC uses scatter plot of test vs reference
-                    ax.scatter(ref_plot, test_plot, alpha=0.6, s=30,
-                              color=color, marker=marker,
-                              label=f"{pair_name} (n={len(ref_plot)})")
+            # Show error message on plot
+            ax.text(0.5, 0.5, f'Plot generation failed: {str(e)}', 
+                   ha='center', va='center', transform=ax.transAxes, color='red')
+            ax.set_xlim(0, 1)
+            ax.set_ylim(0, 1)
+            ax.axis('off')
         
-        # Apply common plot configuration (for fallback plots)
-        self._apply_common_plot_config(ax, fig, plot_config, checked_pairs)
-        
-        print(f"[ComparisonWizard] Fallback plot generated successfully with {len(checked_pairs)} pairs")
-    
-    def _clear_figure_completely(self, fig):
-        """
-        Comprehensively clear the figure to prevent overlapping plots when switching methods.
-        
-        Args:
-            fig: Matplotlib figure object
-        """
+        # Always draw the canvas
+        self.window.canvas.draw()
+
+    def _create_comparison_channel(self, checked_pairs, plot_config, ax):
+        """Create individual channels from comparison results (one per pair) and add to channel manager"""
         try:
-            # Remove any existing colorbars to prevent duplication
-            if hasattr(fig, '_colorbar_list'):
-                for cb in fig._colorbar_list:
-                    try:
-                        cb.remove()
-                    except:
-                        pass
-                fig._colorbar_list = []
+            # Skip channel creation if no channel manager available
+            if not self.channel_manager:
+                print("[ComparisonWizard] No channel manager available - skipping channel creation")
+                return
             
-            # Clear all axes and their artists
-            for ax in fig.get_axes():
+            # Get comparison method info
+            method_name = plot_config.get('comparison_method', 'Unknown')
+            method_params = plot_config.get('method_parameters', {})
+            
+            # Create a unique group ID for this comparison session
+            from datetime import datetime
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            method_clean = method_name.lower().replace(' ', '_')
+            group_id = f"comparison_{method_clean}_{timestamp}_{hash(tuple([p['name'] for p in checked_pairs])) % 10000}"
+            
+            created_channels = []
+            
+            # Create one channel per pair
+            for pair in checked_pairs:
                 try:
-                    ax.clear()
-                    # Remove all artists (lines, patches, text, etc.)
-                    for artist in ax.get_children():
-                        try:
-                            artist.remove()
-                        except:
-                            pass
-                except:
-                    pass
+                    # Get parent channels for this pair
+                    ref_channel = self._get_channel(pair['ref_file'], pair['ref_channel'])
+                    test_channel = self._get_channel(pair['test_file'], pair['test_channel'])
+                    
+                    if not (ref_channel and test_channel):
+                        print(f"[ComparisonWizard] Could not find parent channels for pair: {pair['name']}")
+                        continue
+                    
+                    # Get aligned data for this pair
+                    aligned_data = self.pair_aligned_data.get(pair['name'])
+                    if not aligned_data:
+                        print(f"[ComparisonWizard] No aligned data for pair: {pair['name']}")
+                        continue
+                    
+                    ref_data = aligned_data.get('ref_data')
+                    test_data = aligned_data.get('test_data')
+                    
+                    if ref_data is None or test_data is None:
+                        print(f"[ComparisonWizard] Invalid data for pair: {pair['name']}")
+                        continue
+                    
+                    # Filter valid data for this pair
+                    valid_mask = np.isfinite(ref_data) & np.isfinite(test_data)
+                    ref_clean = ref_data[valid_mask]
+                    test_clean = test_data[valid_mask]
+                    
+                    if len(ref_clean) == 0:
+                        print(f"[ComparisonWizard] No valid data points for pair: {pair['name']}")
+                        continue
+                    
+                    # For correlation/scatter plots: x=ref_data, y=test_data
+                    # For other plot types, this might need adjustment
+                    xdata = ref_clean
+                    ydata = test_clean
+                    
+                    # Calculate individual pair statistics
+                    pair_stats = self._calculate_pair_statistics(ref_clean, test_clean, method_name, method_params)
+                    
+                    # Create comprehensive metadata for this pair
+                    pair_metadata = {
+                        'comparison_group_id': group_id,
+                        'comparison_method': method_name,
+                        'method_parameters': method_params,
+                        'group_timestamp': datetime.now().isoformat(),
+                        'total_pairs_in_group': len(checked_pairs),
+                        'pair_info': {
+                            'name': pair['name'],
+                            'ref_channel_id': ref_channel.channel_id,
+                            'test_channel_id': test_channel.channel_id,
+                            'ref_file': pair['ref_file'],
+                            'test_file': pair['test_file'],
+                            'ref_channel_name': pair['ref_channel'],
+                            'test_channel_name': pair['test_channel'],
+                            'alignment_config': pair.get('alignment_config', {}),
+                            'data_points': len(ref_clean),
+                            'r_squared': pair.get('r_squared'),
+                            'marker_type': pair.get('marker_type', '○ Circle'),
+                            'marker_color': pair.get('marker_color', '🔵 Blue')
+                        },
+                        'statistical_results': pair_stats,
+                        'overlay_config': plot_config.get('overlay_config', {}),
+                        'creation_timestamp': datetime.now().isoformat(),
+                        'comparison_type': 'individual_pair'
+                    }
+                    
+                    # Create the comparison channel for this pair
+                    from channel import Channel
+                    comparison_channel = Channel.from_comparison(
+                        parent_channels=[ref_channel, test_channel],
+                        comparison_method=method_name,
+                        xdata=xdata,
+                        ydata=ydata,
+                        xlabel=plot_config.get('xlabel', 'Reference Data'),
+                        ylabel=plot_config.get('ylabel', 'Test Data'),
+                        legend_label=pair['name'],  # Use pair name as channel name
+                        pairs_metadata=[pair_metadata['pair_info']],  # Single pair info
+                        statistical_results=pair_stats,
+                        method_parameters=method_params,
+                        overlay_config=plot_config.get('overlay_config', {}),
+                        tags=["comparison", method_clean, f"group_{group_id}"]
+                    )
+                    
+                    # Override metadata with our comprehensive version
+                    comparison_channel.metadata = pair_metadata
+                    
+                    # Set marker and color from pair styling
+                    marker_map = {
+                        '○ Circle': 'o', '□ Square': 's', '△ Triangle': '^', '◇ Diamond': 'D',
+                        '▽ Inverted Triangle': 'v', '◁ Left Triangle': '<', '▷ Right Triangle': '>',
+                        '⬟ Pentagon': 'p', '✦ Star': '*', '⬢ Hexagon': 'h'
+                    }
+                    color_map = {
+                        '🔵 Blue': '#1f77b4', '🔴 Red': '#d62728', '🟢 Green': '#2ca02c',
+                        '🟣 Purple': '#9467bd', '🟠 Orange': '#ff7f0e', '🟤 Brown': '#8c564b',
+                        '🩷 Pink': '#e377c2', '⚫ Gray': '#7f7f7f', '🟡 Yellow': '#bcbd22',
+                        '🔶 Cyan': '#17becf'
+                    }
+                    
+                    comparison_channel.marker = marker_map.get(pair.get('marker_type', '○ Circle'), 'o')
+                    comparison_channel.color = color_map.get(pair.get('marker_color', '🔵 Blue'), '#1f77b4')
+                    comparison_channel.style = 'None'  # Comparison channels show only markers, no connecting lines
+                    
+                    # Debug output for marker assignment
+                    print(f"[ComparisonWizard] Pair '{pair['name']}' marker assignment:")
+                    print(f"  - marker_type: {pair.get('marker_type', 'NOT SET')} -> {comparison_channel.marker}")
+                    print(f"  - marker_color: {pair.get('marker_color', 'NOT SET')} -> {comparison_channel.color}")
+                    print(f"  - style: {comparison_channel.style}")
+                    
+                    # Add to channel manager
+                    self.channel_manager.add_channel(comparison_channel)
+                    created_channels.append(comparison_channel)
+                    
+                    print(f"[ComparisonWizard] Created channel for pair: {pair['name']} (ID: {comparison_channel.channel_id})")
+                    
+                except Exception as e:
+                    print(f"[ComparisonWizard] Error creating channel for pair {pair['name']}: {e}")
+                    continue
             
-            # Clear the figure itself
-            fig.clear()
-            
-            # Force a redraw to ensure clean state
-            try:
-                fig.canvas.draw_idle()
-            except:
-                pass
-            
-            print("[ComparisonWizard] Figure cleared completely to prevent overlapping plots")
+            if created_channels:
+                print(f"[ComparisonWizard] Successfully created {len(created_channels)} channels for comparison group: {group_id}")
+                print(f"[ComparisonWizard] Channels can be grouped by metadata['comparison_group_id'] = '{group_id}'")
+            else:
+                print("[ComparisonWizard] No channels were created - check pair data and alignment")
             
         except Exception as e:
-            print(f"[ComparisonWizard] Error during figure clearing: {e}")
-            # Fallback to basic clear
-            fig.clear()
+            print(f"[ComparisonWizard] Error creating comparison channels: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _calculate_pair_statistics(self, ref_data, test_data, method_name, method_params):
+        """Calculate statistics for an individual pair"""
+        try:
+            # Basic statistics
+            stats = {
+                'n_points': len(ref_data),
+                'ref_mean': float(np.mean(ref_data)),
+                'test_mean': float(np.mean(test_data)),
+                'ref_std': float(np.std(ref_data)),
+                'test_std': float(np.std(test_data)),
+                'method': method_name
+            }
+            
+            # Calculate correlation if we have enough data
+            if len(ref_data) > 2:
+                from scipy.stats import pearsonr, spearmanr
+                try:
+                    pearson_r, pearson_p = pearsonr(ref_data, test_data)
+                    stats['pearson_r'] = float(pearson_r)
+                    stats['pearson_p'] = float(pearson_p)
+                    stats['r_squared'] = float(pearson_r ** 2)
+                except:
+                    stats['pearson_r'] = np.nan
+                    stats['pearson_p'] = np.nan
+                    stats['r_squared'] = np.nan
+                
+                try:
+                    spearman_r, spearman_p = spearmanr(ref_data, test_data)
+                    stats['spearman_r'] = float(spearman_r)
+                    stats['spearman_p'] = float(spearman_p)
+                except Exception:
+                    stats['spearman_r'] = np.nan
+                    stats['spearman_p'] = np.nan
+            
+            # Calculate RMSE and MAE
+            try:
+                differences = test_data - ref_data
+                stats['rmse'] = float(np.sqrt(np.mean(differences ** 2)))
+                stats['mae'] = float(np.mean(np.abs(differences)))
+                stats['mean_bias'] = float(np.mean(differences))
+            except Exception:
+                stats['rmse'] = np.nan
+                stats['mae'] = np.nan
+                stats['mean_bias'] = np.nan
+            
+            return stats
+                        
+        except Exception as e:
+            print(f"[ComparisonWizard] Error calculating pair statistics: {e}")
+            return {
+                'n_points': len(ref_data) if ref_data is not None else 0,
+                'method': method_name,
+                'error': str(e)
+            }
+
+    def _extract_plot_data_from_axes(self, ax, method_name):
+        """Extract plot data from matplotlib axes"""
+        try:
+            # Get the first scatter plot or line plot from the axes
+            for child in ax.get_children():
+                if hasattr(child, 'get_offsets'):  # Scatter plot
+                    offsets = child.get_offsets()
+                    if len(offsets) > 0:
+                        xdata = offsets[:, 0]
+                        ydata = offsets[:, 1]
+                        return {
+                            'xdata': xdata,
+                            'ydata': ydata,
+                            'xlabel': ax.get_xlabel(),
+                            'ylabel': ax.get_ylabel()
+                        }
+                elif hasattr(child, 'get_xdata'):  # Line plot
+                    xdata = child.get_xdata()
+                    ydata = child.get_ydata()
+                    if len(xdata) > 0 and len(ydata) > 0:
+                        return {
+                            'xdata': xdata,
+                            'ydata': ydata,
+                            'xlabel': ax.get_xlabel(),
+                            'ylabel': ax.get_ylabel()
+                        }
+            
+            print(f"[ComparisonWizard] Could not find plot data in axes children")
+            return None
+                    
+        except Exception as e:
+            print(f"[ComparisonWizard] Error extracting plot data: {e}")
+            return None
+
+    def _get_combined_statistical_results(self, checked_pairs, method_name):
+        """Get combined statistical results from all pairs"""
+        try:
+            combined_results = {
+                'method': method_name,
+                'n_pairs': len(checked_pairs),
+                'total_data_points': 0,
+                'pair_results': []
+            }
+            
+            for pair in checked_pairs:
+                pair_name = pair['name']
+                if pair_name in self.pair_aligned_data:
+                    aligned_data = self.pair_aligned_data[pair_name]
+                    ref_data = aligned_data.get('ref_data')
+                    test_data = aligned_data.get('test_data')
+                    
+                    if ref_data is not None and test_data is not None:
+                        combined_results['total_data_points'] += len(ref_data)
+                        
+                        # Calculate basic statistics for this pair
+                        pair_stats = {
+                            'pair_name': pair_name,
+                            'n_points': len(ref_data),
+                            'r_squared': pair.get('r_squared'),
+                            'ref_mean': float(np.mean(ref_data)) if len(ref_data) > 0 else 0,
+                            'test_mean': float(np.mean(test_data)) if len(test_data) > 0 else 0,
+                            'ref_std': float(np.std(ref_data)) if len(ref_data) > 0 else 0,
+                            'test_std': float(np.std(test_data)) if len(test_data) > 0 else 0
+                        }
+                        combined_results['pair_results'].append(pair_stats)
+            
+            return combined_results
+            
+        except Exception as e:
+            print(f"[ComparisonWizard] Error getting combined statistical results: {e}")
+            return {'method': method_name, 'error': str(e)}
+
+    def _get_pair_styling_info(self, checked_pairs):
+        """Get styling information for individual pairs"""
+        try:
+            # Marker mapping
+            marker_map = {
+                '○ Circle': 'o',
+                '□ Square': 's', 
+                '△ Triangle': '^',
+                '◇ Diamond': 'D',
+                '▽ Inverted Triangle': 'v',
+                '◁ Left Triangle': '<',
+                '▷ Right Triangle': '>',
+                '⬟ Pentagon': 'p',
+                '✦ Star': '*',
+                '⬢ Hexagon': 'h'
+            }
+            
+            # Color mapping
+            color_map = {
+                '🔵 Blue': '#1f77b4',
+                '🔴 Red': '#d62728',
+                '🟢 Green': '#2ca02c',
+                '🟣 Purple': '#9467bd',
+                '🟠 Orange': '#ff7f0e',
+                '🟤 Brown': '#8c564b',
+                '🩷 Pink': '#e377c2',
+                '⚫ Gray': '#7f7f7f',
+                '🟡 Yellow': '#bcbd22',
+                '🔶 Cyan': '#17becf'
+            }
+            
+            pair_styling = []
+            for pair in checked_pairs:
+                pair_name = pair['name']
+                if pair_name in self.pair_aligned_data:
+                    aligned_data = self.pair_aligned_data[pair_name]
+                    ref_data = aligned_data.get('ref_data')
+                    test_data = aligned_data.get('test_data')
+                    
+                    if ref_data is not None and test_data is not None:
+                        # Get marker and color info
+                        marker_text = pair.get('marker_type', '○ Circle')
+                        color_text = pair.get('marker_color', '🔵 Blue')
+                        
+                        # Filter valid data for this pair
+                        valid_mask = np.isfinite(ref_data) & np.isfinite(test_data)
+                        ref_clean = ref_data[valid_mask]
+                        test_clean = test_data[valid_mask]
+                        
+                        if len(ref_clean) > 0:
+                            pair_styling.append({
+                                'pair_name': pair_name,
+                                'ref_data': ref_clean,
+                                'test_data': test_clean,
+                                'marker': marker_map.get(marker_text, 'o'),
+                                'color': color_map.get(color_text, '#1f77b4'),
+                                'marker_text': marker_text,
+                                'color_text': color_text,
+                                'n_points': len(ref_clean)
+                            })
+            
+            return pair_styling
+            
+        except Exception as e:
+            print(f"[ComparisonWizard] Error getting pair styling info: {e}")
+            return []
     
-    def _generate_dynamic_plot_content(self, ax, all_ref_data, all_test_data, plot_config, checked_pairs):
+    def _generate_plot_content(self, ax, checked_pairs, plot_config):
         """Generate plot content using plot generators from comparison folder"""
         try:
-            plot_type = plot_config.get('plot_type', 'scatter')
+            # Collect all data from checked pairs
+            all_ref_data = []
+            all_test_data = []
             
-            # Use comparison methods for plot generation
+            for pair in checked_pairs:
+                pair_name = pair['name']
+                if pair_name in self.pair_aligned_data:
+                    aligned_data = self.pair_aligned_data[pair_name]
+                    ref_data = aligned_data.get('ref_data')
+                    test_data = aligned_data.get('test_data')
+                    
+                    if ref_data is not None and test_data is not None:
+                        # Filter valid data
+                        valid_mask = np.isfinite(ref_data) & np.isfinite(test_data)
+                        ref_clean = ref_data[valid_mask]
+                        test_clean = test_data[valid_mask]
+                        
+                        if len(ref_clean) > 0:
+                            all_ref_data.extend(ref_clean)
+                            all_test_data.extend(test_clean)
             
-            # Fallback to comparison method dynamic generation
-            method_name = None
+            if not all_ref_data:
+                ax.text(0.5, 0.5, 'No valid data for plotting', 
+                       ha='center', va='center', transform=ax.transAxes)
+                return False
+            
+            # Convert to numpy arrays
+            all_ref_data = np.array(all_ref_data)
+            all_test_data = np.array(all_test_data)
+            
+            # Get method info
+            method_name = plot_config.get('comparison_method', 'Correlation Analysis')
             if checked_pairs:
-                method_name = checked_pairs[0].get('comparison_method')
-            
-            if not method_name:
-                method_name = plot_config.get('comparison_method', 'Correlation Analysis')
+                method_name = checked_pairs[0].get('comparison_method', method_name)
             
             # Try to create the comparison method instance
             method_instance = None
             if COMPARISON_AVAILABLE and method_name:
-                # Get method parameters from plot config
+                # Get method parameters from plot config first
                 method_params = plot_config.get('method_parameters', {})
+                
+                # If no method parameters in plot config, try to get from checked pairs
+                if not method_params and checked_pairs:
+                    method_params = checked_pairs[0].get('method_parameters', {})
+                
                 # Also include overlay parameters
                 overlay_params = {k: v for k, v in plot_config.items() if k.startswith('show_') or k in ['confidence_interval', 'custom_line']}
                 method_params.update(overlay_params)
+                
+                print(f"[ComparisonWizard] Using method parameters: {method_params}")
                 
                 # Use dynamic display name to registry name conversion
                 registry_name = self.get_registry_name_from_display(method_name)
@@ -1159,28 +1703,177 @@ class ComparisonWizardManager(QObject):
             
             if method_instance and hasattr(method_instance, 'generate_plot'):
                 print(f"[ComparisonWizard] Using comparison method plot generation for {method_name}")
-                # Calculate statistics first
-                stats_results = method_instance.calculate_stats(all_ref_data, all_test_data)
-                method_instance.generate_plot(ax, all_ref_data, all_test_data, plot_config, stats_results)
-                return True
+                
+                try:
+                    # Check if we should use custom scripts
+                    use_custom_plot = False
+                    use_custom_stat = False
+                    
+                    if self.window:
+                        use_custom_plot = self.window._should_use_custom_plot_script()
+                        use_custom_stat = self.window._should_use_custom_stat_script()
+                        print(f"[ComparisonWizard] Custom script flags: plot={use_custom_plot}, stat={use_custom_stat}")
+                    
+                    # Calculate statistics first (with custom script support)
+                    if use_custom_stat:
+                        print(f"[ComparisonWizard] Attempting to use custom stat script for {method_name}")
+                        try:
+                            # First get plot data using the method's plot_script
+                            x_data, y_data, plot_metadata = method_instance.plot_script(all_ref_data, all_test_data, method_params)
+                            
+                            # Execute custom stat script
+                            stats_results = self.window._execute_custom_stat_script(x_data, y_data, all_ref_data, all_test_data, method_params)
+                            
+                            if stats_results:
+                                print(f"[ComparisonWizard] Successfully used custom stat script for {method_name}")
+                            else:
+                                print(f"[ComparisonWizard] DEBUG: Custom stat script failed, falling back to original method")
+                                stats_results = method_instance.calculate_stats(all_ref_data, all_test_data)
+                        except Exception as e:
+                            print(f"[ComparisonWizard] DEBUG: Custom stat script error: {e}, falling back to original method")
+                            stats_results = method_instance.calculate_stats(all_ref_data, all_test_data)
+                    else:
+                        print(f"[ComparisonWizard] DEBUG: Using original stat method (no custom script)")
+                        stats_results = method_instance.calculate_stats(all_ref_data, all_test_data)
+                    
+                    print(f"[ComparisonWizard] Successfully calculated stats for {method_name}")
+                    
+                    # Add pair styling information to plot config
+                    plot_config_with_pairs = plot_config.copy()
+                    plot_config_with_pairs['pair_styling'] = self._get_pair_styling_info(checked_pairs)
+                    
+                    # Enhanced plot config with overlay options
+                    enhanced_config = self._enhance_plot_config_with_overlay_options(plot_config_with_pairs, checked_pairs)
+                    
+                    print(f"[ComparisonWizard] Plot config keys: {list(enhanced_config.keys())}")
+                    
+                    # Generate plot (with custom script support)
+                    if use_custom_plot:
+                        print(f"[ComparisonWizard] Attempting to use custom plot script for {method_name}")
+                        try:
+                            # Clear axes before custom script execution to prevent overlapping
+                            ax.clear()
+                            print(f"[ComparisonWizard] DEBUG: Axes cleared before custom script execution")
+                            
+                            # Execute custom plot script
+                            x_data, y_data, plot_metadata = self.window._execute_custom_plot_script(all_ref_data, all_test_data, method_params)
+                            
+                            if x_data is not None and y_data is not None:
+                                print(f"[ComparisonWizard] Successfully used custom plot script for {method_name}")
+                                
+                                # Create plot using custom script results with pair styling
+                                pair_styling = enhanced_config.get('pair_styling', [])
+                                if pair_styling:
+                                    # Plot each pair with its own styling
+                                    for pair_info in pair_styling:
+                                        # Get the data for this pair from the custom script results
+                                        pair_ref = pair_info['ref_data']
+                                        pair_test = pair_info['test_data']
+                                        
+                                        # Apply the custom transformation to this pair's data
+                                        pair_x_data, pair_y_data, _ = self.window._execute_custom_plot_script(pair_ref, pair_test, method_params)
+                                        
+                                        if pair_x_data is not None and pair_y_data is not None:
+                                            ax.scatter(pair_x_data, pair_y_data, 
+                                                     alpha=0.6, s=50, 
+                                                     color=pair_info['color'], 
+                                                     marker=pair_info['marker'],
+                                                     label=pair_info['pair_name'])
+                                else:
+                                    # Plot all data with default styling
+                                    ax.scatter(x_data, y_data, alpha=0.6, s=50)
+                                
+                                # Set labels and title from custom script metadata
+                                ax.set_xlabel(plot_metadata.get('x_label', 'X Data'))
+                                ax.set_ylabel(plot_metadata.get('y_label', 'Y Data'))
+                                ax.set_title(plot_metadata.get('title', method_name))
+                                
+                                # Add grid if requested
+                                if enhanced_config.get('show_grid', True):
+                                    ax.grid(True, alpha=0.3)
+                                
+                                # IMPORTANT: Add overlay generation after custom plot script execution
+                                # This ensures that overlay options (show toggles) work with custom scripts
+                                try:
+                                    # After plotting the custom script results, add overlays using the original method
+                                    # We need to call the method's overlay generation methods if they exist
+                                    print(f"[ComparisonWizard] DEBUG: Adding overlays to custom plot for {method_name}")
+                                    
+                                    # Call the method's overlay generation methods if they exist
+                                    if hasattr(method_instance, '_add_bland_altman_overlays'):
+                                        # For Bland-Altman, we need means and differences
+                                        method_instance._add_bland_altman_overlays(ax, x_data, y_data, enhanced_config, stats_results)
+                                        print(f"[ComparisonWizard] DEBUG: Added Bland-Altman overlays to custom plot")
+                                    elif hasattr(method_instance, '_add_overlay_elements'):
+                                        # For generic overlay elements
+                                        method_instance._add_overlay_elements(ax, x_data, y_data, enhanced_config, stats_results)
+                                        print(f"[ComparisonWizard] DEBUG: Added generic overlay elements to custom plot")
+                                    else:
+                                        print(f"[ComparisonWizard] DEBUG: No specific overlay methods found for {method_name}")
+                                        
+                                except Exception as overlay_e:
+                                    print(f"[ComparisonWizard] DEBUG: Error adding overlays to custom plot: {overlay_e}")
+                                    # Don't fail the entire plot generation if overlay generation fails
+                                    import traceback
+                                    traceback.print_exc()
+                                
+                                print(f"[ComparisonWizard] Successfully generated plot using custom script for {method_name}")
+                                return True
+                            else:
+                                print(f"[ComparisonWizard] DEBUG: Custom plot script failed, falling back to original method")
+                                # Clear axes again before fallback to prevent overlapping
+                                ax.clear()
+                                method_instance.generate_plot(ax, all_ref_data, all_test_data, enhanced_config, stats_results)
+                        except Exception as e:
+                            print(f"[ComparisonWizard] DEBUG: Custom plot script error: {e}, falling back to original method")
+                            import traceback
+                            traceback.print_exc()
+                            # Clear axes again before fallback to prevent overlapping
+                            ax.clear()
+                            method_instance.generate_plot(ax, all_ref_data, all_test_data, enhanced_config, stats_results)
+                    else:
+                        print(f"[ComparisonWizard] DEBUG: Using original plot method (no custom script)")
+                        method_instance.generate_plot(ax, all_ref_data, all_test_data, enhanced_config, stats_results)
+                    
+                    print(f"[ComparisonWizard] Successfully generated plot for {method_name}")
+                    return True
+                    
+                except Exception as e:
+                    print(f"[ComparisonWizard] Error in {method_name} plot generation: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    
+                    # Show error message on plot instead of falling back
+                    ax.text(0.5, 0.5, f'{method_name} plot generation failed:\n{str(e)}', 
+                           ha='center', va='center', transform=ax.transAxes, color='red', fontsize=10)
+                    ax.set_xlim(0, 1)
+                    ax.set_ylim(0, 1)
+                    ax.axis('off')
+                    return False
             else:
                 # Ultimate fallback to hardcoded methods for compatibility
-                print(f"[ComparisonWizard] No plot generator or method found for {plot_type}, using fallback")
+                print(f"[ComparisonWizard] No plot generator or method found, using fallback")
+                plot_type = plot_config.get('plot_type', 'scatter')
                 self._generate_fallback_plot_content(ax, all_ref_data, all_test_data, plot_config, plot_type, checked_pairs)
                 return False
                 
         except Exception as e:
-            print(f"[ComparisonWizard] Error in dynamic plot generation: {e}")
+            print(f"[ComparisonWizard] Error in plot generation: {e}")
             import traceback
             traceback.print_exc()
-            # Ultimate fallback
-            plot_type = plot_config.get('plot_type', 'scatter')
-            ax.text(0.5, 0.5, f'Error generating {plot_type} plot: {str(e)}', 
-                   ha='center', va='center', transform=ax.transAxes)
+            # Show error in console, not on plot canvas
+            if hasattr(self, 'window') and hasattr(self.window, 'info_output'):
+                self.window.info_output.append(f"⚠️ Error generating plot: {str(e)}")
+            # Generate empty plot instead of error message on canvas
+            ax.text(0.5, 0.5, 'Plot generation failed - check console for details', 
+                   ha='center', va='center', transform=ax.transAxes, color='gray', fontsize=10)
+            ax.set_xlim(0, 1)
+            ax.set_ylim(0, 1)
+            ax.axis('off')
             return False
     
     def _enhance_plot_config_with_overlay_options(self, plot_config, checked_pairs):
-        """Enhance plot config with overlay options from comparison methods"""
+        """Enhance plot config with overlay options from comparison methods and window overlay table"""
         enhanced_config = plot_config.copy()
         
         if not checked_pairs:
@@ -1197,13 +1890,24 @@ class ComparisonWizardManager(QObject):
                 comparison_cls = self.comparison_registry.get(registry_name)
                 if comparison_cls:
                     method_info = comparison_cls().get_info()
-                    if method_info and 'overlay' in method_info:
-                        overlay_options = method_info['overlay']
+                    if method_info and 'overlay_options' in method_info:
+                        overlay_options = method_info['overlay_options']
                         
-                        # Merge overlay options with existing plot config
-                        for key, value in overlay_options.items():
+                        # First, set default values from the overlay options
+                        for key, overlay_option in overlay_options.items():
                             if key not in enhanced_config:
-                                enhanced_config[key] = value
+                                # Use the default value from the overlay option
+                                enhanced_config[key] = overlay_option.get('default', True)
+                        
+                        # Then, override with actual values from the window's overlay table
+                        if self.window and hasattr(self.window, '_get_overlay_parameters'):
+                            try:
+                                overlay_params = self.window._get_overlay_parameters()
+                                if overlay_params:
+                                    enhanced_config.update(overlay_params)
+                                    print(f"[ComparisonWizard] Updated plot config with overlay parameters from window: {overlay_params}")
+                            except Exception as e:
+                                print(f"[ComparisonWizard] Error getting overlay parameters from window: {e}")
                         
                         print(f"[ComparisonWizard] Enhanced plot config with {len(overlay_options)} overlay options from {method_name}")
                     
@@ -1278,10 +1982,11 @@ class ComparisonWizardManager(QObject):
             ax.set_ylabel('Test Data')
             ax.set_title(f'{plot_type.title()} Plot')
         
-        # Add legend if there are labeled elements
-        handles, labels = ax.get_legend_handles_labels()
-        if handles:
-            ax.legend()
+                # Add legend only if explicitly requested and there are labeled elements
+        if plot_config.get('show_legend', False):
+            handles, labels = ax.get_legend_handles_labels()
+            if handles:
+                ax.legend()
         
     def _create_kde_plot(self, ax, x_data, y_data, bandwidth):
         """Create KDE density plot for multi-pair visualization"""
@@ -2886,4 +3591,124 @@ class ComparisonWizardManager(QObject):
         rms_str = f"{stats['rms']:.3f}" if not np.isnan(stats['rms']) else "N/A"
         
         return f"Cumulative Stats: r = {r_str}, RMS = {rms_str}, N = {stats['n']:,} points ({n_pairs} pairs shown)"
+    
+    def _enhance_plot_config_with_overlays(self, plot_config):
+        """Enhance plot config with overlay configurations from window - direct passthrough"""
+        try:
+            if hasattr(self.window, '_get_overlay_parameters'):
+                # Get overlay parameters from window (direct passthrough from method definitions)
+                overlay_params = self.window._get_overlay_parameters()
+                
+                # Add overlay parameters to plot config
+                plot_config.update(overlay_params)
+                
+                print(f"[ComparisonWizard] Enhanced plot config with overlay parameters: {overlay_params}")
+            
+        except Exception as e:
+            print(f"[ComparisonWizard] Error enhancing plot config with overlays: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def update_overlay_matplotlib_artists(self, overlay_id, config):
+        """Update matplotlib artists for overlay changes"""
+        try:
+            # This method is called from the overlay wizard to update existing plots
+            if not hasattr(self.window, 'canvas') or not self.window.canvas:
+                return
+                
+            # Get overlay artists if they exist
+            overlay_artists = getattr(self.window, 'overlay_artists', {})
+            
+            if overlay_id in overlay_artists:
+                artist = overlay_artists[overlay_id]
+                
+                # Update artist properties based on overlay type
+                if isinstance(artist, list):
+                    for a in artist:
+                        self._update_single_artist(a, config)
+                else:
+                    self._update_single_artist(artist, config)
+                
+                # Redraw canvas
+                self.window.canvas.draw()
+                
+                print(f"[ComparisonWizard] Updated matplotlib artists for overlay: {overlay_id}")
+                
+        except Exception as e:
+            print(f"[ComparisonWizard] Error updating overlay artists: {e}")
+    
+    def _update_single_artist(self, artist, config):
+        """Update a single matplotlib artist with overlay config"""
+        try:
+            # Update common properties
+            if hasattr(artist, 'set_color') and 'color' in config:
+                artist.set_color(config['color'])
+            
+            if hasattr(artist, 'set_alpha') and 'alpha' in config:
+                artist.set_alpha(config['alpha'])
+            
+            if hasattr(artist, 'set_linewidth') and 'linewidth' in config:
+                artist.set_linewidth(config['linewidth'])
+            
+            if hasattr(artist, 'set_linestyle') and 'linestyle' in config:
+                artist.set_linestyle(config['linestyle'])
+            
+            if hasattr(artist, 'set_markersize') and 'markersize' in config:
+                artist.set_markersize(config['markersize'])
+            
+            if hasattr(artist, 'set_marker') and 'marker' in config:
+                artist.set_marker(config['marker'])
+            
+            # Update text properties
+            if hasattr(artist, 'set_fontsize') and 'fontsize' in config:
+                artist.set_fontsize(config['fontsize'])
+            
+            if hasattr(artist, 'set_fontweight') and 'fontweight' in config:
+                artist.set_fontweight(config['fontweight'])
+            
+            if hasattr(artist, 'set_bbox') and 'bbox' in config:
+                artist.set_bbox(config['bbox'])
+                
+        except Exception as e:
+            print(f"[ComparisonWizard] Error updating single artist: {e}")
+    
+    def on_overlay_visibility_changed(self, overlay_id, visible):
+        """Handle overlay visibility changes"""
+        try:
+            # Update overlay artists visibility
+            overlay_artists = getattr(self.window, 'overlay_artists', {})
+            
+            if overlay_id in overlay_artists:
+                artist = overlay_artists[overlay_id]
+                
+                if isinstance(artist, list):
+                    for a in artist:
+                        a.set_visible(visible)
+                else:
+                    artist.set_visible(visible)
+                
+                # Redraw canvas
+                if hasattr(self.window, 'canvas') and self.window.canvas:
+                    self.window.canvas.draw()
+                
+                print(f"[ComparisonWizard] {'Showed' if visible else 'Hidden'} overlay: {overlay_id}")
+                
+        except Exception as e:
+            print(f"[ComparisonWizard] Error changing overlay visibility: {e}")
+
+    def _clear_figure_completely(self, fig):
+        """Completely clear a matplotlib figure and reset its state"""
+        try:
+            # Clear all axes and their contents
+            fig.clear()
+            
+            # Reset figure properties
+            fig.patch.set_facecolor('white')
+            fig.patch.set_alpha(1.0)
+            
+            # Ensure proper cleanup
+            fig.canvas.draw_idle()
+            
+        except Exception as e:
+            print(f"[ComparisonWizard] Error clearing figure: {e}")
 

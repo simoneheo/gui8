@@ -56,11 +56,6 @@ class TimeLagCrossCorrelationComparison(BaseComparison):
         """
         Main comparison method - orchestrates the cross-correlation analysis.
         
-        Streamlined 3-step workflow:
-        1. Validate input data (basic validation + remove NaN/infinite values)
-        2. plot_script (core transformation + correlation computation)
-        3. stats_script (statistical calculations)
-        
         Args:
             ref_data: Reference data array
             test_data: Test data array  
@@ -70,26 +65,23 @@ class TimeLagCrossCorrelationComparison(BaseComparison):
         Returns:
             Dictionary containing cross-correlation results with statistics and plot data
         """
-        # === STEP 1: VALIDATE INPUT DATA ===
-        # Basic validation (shape, type, length compatibility)
+        # Validate and clean input data
         ref_data, test_data = self._validate_input_data(ref_data, test_data)
-        # Remove NaN and infinite values
         ref_clean, test_clean, valid_ratio = self._remove_invalid_data(ref_data, test_data)
         
-        # === STEP 2: PLOT SCRIPT (core transformation + correlation computation) ===
-        x_data, y_data, plot_metadata = self.plot_script(ref_clean, test_clean, self.kwargs)
+        # Compute cross-correlation
+        lags_seconds, xcorr_values = self._compute_cross_correlation(ref_clean, test_clean)
         
-        # === STEP 3: STATS SCRIPT (statistical calculations) ===
-        stats_results = self.stats_script(x_data, y_data, ref_clean, test_clean, self.kwargs)
+        # Calculate statistics
+        stats_results = self.calculate_stats(ref_clean, test_clean, ref_time, test_time)
         
         # Prepare plot data
         plot_data = {
-            'lags': x_data,
-            'xcorr': y_data,
+            'lags': lags_seconds,
+            'xcorr': xcorr_values,
             'ref_data': ref_clean,
             'test_data': test_clean,
-            'valid_ratio': valid_ratio,
-            'metadata': plot_metadata
+            'valid_ratio': valid_ratio
         }
         
         # Combine results
@@ -105,89 +97,11 @@ class TimeLagCrossCorrelationComparison(BaseComparison):
         self.results = results
         return results
     
-    def plot_script(self, ref_data: np.ndarray, test_data: np.ndarray, params: dict) -> tuple:
-        """
-        Core plotting transformation for cross-correlation analysis
-        
-        This defines what gets plotted on X and Y axes for cross-correlation.
-        
-        Args:
-            ref_data: Reference measurements (already cleaned of NaN/infinite values)
-            test_data: Test measurements (already cleaned of NaN/infinite values)
-            params: Method parameters dictionary
-            
-        Returns:
-            tuple: (x_data, y_data, metadata)
-                x_data: Lag values in seconds for X-axis
-                y_data: Cross-correlation values for Y-axis
-                metadata: Plot configuration dictionary
-        """
-        # Compute cross-correlation
-        lags_seconds, xcorr_values = self._compute_cross_correlation(ref_data, test_data, params)
-        
-        # Prepare metadata for plotting
-        metadata = {
-            'x_label': 'Time Lag (seconds)',
-            'y_label': 'Cross-Correlation',
-            'title': 'Time Lag Cross-Correlation Analysis',
-            'plot_type': 'line',
-            'max_lag_seconds': params.get("max_lag_seconds", 5.0),
-            'sampling_rate': params.get("sampling_rate", 100.0),
-            'normalize': params.get("normalize", True),
-            'detrend': params.get("detrend", True)
-        }
-        
-        return lags_seconds, xcorr_values, metadata
-
-    def _compute_cross_correlation(self, ref_data: np.ndarray, test_data: np.ndarray, params: dict) -> Tuple[np.ndarray, np.ndarray]:
-        """Compute cross-correlation between reference and test data."""
-        # Get parameters
-        max_lag_s = params.get("max_lag_seconds", 5.0)
-        fs = params.get("sampling_rate", 100.0)
-        normalize = params.get("normalize", True)
-        detrend = params.get("detrend", True)
-        
-        # Prepare signals
-        ref_signal = ref_data.copy()
-        test_signal = test_data.copy()
-        
-        if detrend:
-            ref_signal = ref_signal - np.mean(ref_signal)
-            test_signal = test_signal - np.mean(test_signal)
-        
-        # Compute cross-correlation
-        n = len(ref_signal)
-        max_lag_samples = int(max_lag_s * fs)
-        
-        # Use scipy's correlate function
-        from scipy.signal import correlate
-        xcorr_full = correlate(test_signal, ref_signal, mode="full")
-        
-        # Create lag array
-        lags = np.arange(-n + 1, n)
-        
-        # Limit to specified lag range
-        valid_mask = (lags >= -max_lag_samples) & (lags <= max_lag_samples)
-        lags = lags[valid_mask]
-        xcorr = xcorr_full[valid_mask]
-        
-        # Convert lags to seconds
-        lags_seconds = lags / fs
-        
-        # Normalize if requested
-        if normalize:
-            xcorr = xcorr / (np.std(ref_signal) * np.std(test_signal) * len(ref_signal))
-        
-        return lags_seconds, xcorr
-
     def calculate_stats(self, ref_data: np.ndarray, test_data: np.ndarray, 
                        ref_time: Optional[np.ndarray] = None, 
                        test_time: Optional[np.ndarray] = None) -> Dict[str, Any]:
         """
-        BACKWARD COMPATIBILITY + SAFETY WRAPPER: Calculate cross-correlation statistics.
-        
-        This method maintains compatibility with existing code and provides comprehensive
-        validation and error handling around the core statistical calculations.
+        Calculate cross-correlation statistics.
         
         Args:
             ref_data: Reference data array
@@ -198,45 +112,14 @@ class TimeLagCrossCorrelationComparison(BaseComparison):
         Returns:
             Dictionary containing cross-correlation statistics
         """
-        # Get plot data using the script-based approach
-        x_data, y_data, plot_metadata = self.plot_script(ref_data, test_data, self.kwargs)
-        
-        # === INPUT VALIDATION ===
-        if len(x_data) != len(y_data):
-            raise ValueError("X and Y data arrays must have the same length")
-        
-        if len(y_data) < 3:
-            raise ValueError("Insufficient data for statistical analysis (minimum 3 samples required)")
-        
-        # === PURE CALCULATIONS (delegated to stats_script) ===
-        stats_results = self.stats_script(x_data, y_data, ref_data, test_data, self.kwargs)
-        
-        return stats_results
-
-    def stats_script(self, x_data: np.ndarray, y_data: np.ndarray, 
-                    ref_data: np.ndarray, test_data: np.ndarray, params: dict) -> Dict[str, Any]:
-        """
-        Statistical calculations for cross-correlation analysis
-        
-        Args:
-            x_data: Lag values in seconds
-            y_data: Cross-correlation values
-            ref_data: Original reference data
-            test_data: Original test data
-            params: Method parameters dictionary
-            
-        Returns:
-            Dictionary containing statistical results
-        """
-        lags_seconds = x_data
-        xcorr_values = y_data
+        # Compute cross-correlation
+        lags_seconds, xcorr_values = self._compute_cross_correlation(ref_data, test_data)
         
         # Initialize results
         stats_results = {
             'peak_analysis': {},
             'correlation_stats': {},
-            'significance': {},
-            'lag_distribution': {}
+            'significance': {}
         }
         
         # Peak analysis
@@ -247,7 +130,7 @@ class TimeLagCrossCorrelationComparison(BaseComparison):
         
         # Statistical significance
         stats_results['significance'] = self._compute_significance_analysis(
-            ref_data, test_data, lags_seconds, xcorr_values, params)
+            ref_data, test_data, lags_seconds, xcorr_values)
         
         # Lag distribution analysis
         stats_results['lag_distribution'] = self._analyze_lag_distribution(lags_seconds, xcorr_values)
@@ -271,7 +154,7 @@ class TimeLagCrossCorrelationComparison(BaseComparison):
             plot_config = {}
         
         # Compute cross-correlation
-        lags_seconds, xcorr_values = self._compute_cross_correlation(ref_data, test_data, self.kwargs)
+        lags_seconds, xcorr_values = self._compute_cross_correlation(ref_data, test_data)
         
         # Create main cross-correlation plot
         self._create_cross_correlation_plot(ax, lags_seconds, xcorr_values, plot_config)
@@ -292,6 +175,46 @@ class TimeLagCrossCorrelationComparison(BaseComparison):
         handles, labels = ax.get_legend_handles_labels()
         if handles:
             ax.legend(loc='best')
+    
+    def _compute_cross_correlation(self, ref_data: np.ndarray, test_data: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Compute cross-correlation between reference and test data."""
+        # Get parameters
+        max_lag_s = self.kwargs.get("max_lag_seconds", 5.0)
+        fs = self.kwargs.get("sampling_rate", 100.0)
+        normalize = self.kwargs.get("normalize", True)
+        detrend = self.kwargs.get("detrend", True)
+        
+        # Prepare signals
+        ref_signal = ref_data.copy()
+        test_signal = test_data.copy()
+        
+        if detrend:
+            ref_signal = ref_signal - np.mean(ref_signal)
+            test_signal = test_signal - np.mean(test_signal)
+        
+        # Compute cross-correlation
+        n = len(ref_signal)
+        max_lag_samples = int(max_lag_s * fs)
+        
+        # Use scipy's correlate function
+        xcorr_full = correlate(test_signal, ref_signal, mode="full")
+        
+        # Create lag array
+        lags = np.arange(-n + 1, n)
+        
+        # Limit to specified lag range
+        valid_mask = (lags >= -max_lag_samples) & (lags <= max_lag_samples)
+        lags = lags[valid_mask]
+        xcorr = xcorr_full[valid_mask]
+        
+        # Convert lags to seconds
+        lags_seconds = lags / fs
+        
+        # Normalize if requested
+        if normalize:
+            xcorr = xcorr / (np.std(ref_signal) * np.std(test_signal) * len(ref_signal))
+        
+        return lags_seconds, xcorr
     
     def _analyze_correlation_peaks(self, lags_seconds: np.ndarray, xcorr_values: np.ndarray) -> Dict[str, Any]:
         """Analyze correlation peaks and find optimal lag."""
@@ -353,15 +276,14 @@ class TimeLagCrossCorrelationComparison(BaseComparison):
             }
     
     def _compute_significance_analysis(self, ref_data: np.ndarray, test_data: np.ndarray,
-                                     lags_seconds: np.ndarray, xcorr_values: np.ndarray, params: dict) -> Dict[str, Any]:
+                                     lags_seconds: np.ndarray, xcorr_values: np.ndarray) -> Dict[str, Any]:
         """Compute statistical significance of correlation values."""
         try:
             n_samples = len(ref_data)
-            confidence_level = params.get('confidence_level', 0.95)
+            confidence_level = self.kwargs.get('confidence_level', 0.95)
             
             # Theoretical significance threshold for white noise
             # Based on the assumption that under null hypothesis, correlation follows normal distribution
-            from scipy import stats
             alpha = 1 - confidence_level
             z_score = stats.norm.ppf(1 - alpha/2)
             significance_threshold = z_score / np.sqrt(n_samples)
