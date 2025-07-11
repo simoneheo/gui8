@@ -32,6 +32,12 @@ Useful for:
     tags = ["spectrogram", "time-frequency", "stft", "scipy", "frequency", "window", "fft"]
     params = [
         {
+            "name": "fs", 
+            "type": "float", 
+            "default": "auto", 
+            "help": "Sampling rate (Hz) - auto-calculated from channel time data"
+        },
+        {
             "name": "window", 
             "type": "str", 
             "default": "hann", 
@@ -140,6 +146,9 @@ Useful for:
             try:
                 if val == "":
                     parsed[name] = None
+                elif name == "fs" and val == "auto":
+                    # Keep "auto" as string for fs parameter
+                    parsed[name] = val
                 elif param["type"] == "float":
                     parsed[name] = float(val)
                 elif param["type"] == "int":
@@ -158,7 +167,20 @@ Useful for:
         try:
             x = channel.xdata
             y = channel.ydata
-            fs = getattr(channel, 'fs', 1.0)
+            
+            # Auto-calculate sampling rate from channel data if needed
+            fs_param = params.get("fs", "auto")
+            if fs_param == "auto" or fs_param is None:
+                if x is not None and len(x) > 1:
+                    # Calculate sampling rate from time data
+                    time_diffs = np.diff(x)
+                    avg_time_step = np.mean(time_diffs)
+                    fs = 1.0 / avg_time_step if avg_time_step > 0 else 1.0
+                else:
+                    # Fallback to channel attribute or default
+                    fs = getattr(channel, 'fs', 1.0)
+            else:
+                fs = float(fs_param)
             
             # Validate input data and parameters
             cls._validate_input_data(y)

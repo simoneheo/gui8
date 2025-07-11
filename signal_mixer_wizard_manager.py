@@ -871,9 +871,41 @@ class SignalMixerWizardManager:
             
             if len_a != len_b or (alignment_params and alignment_params.get('alignment_method')):
                 if alignment_params:
-                    aligned_result = self._align_channels(channel_a, channel_b, alignment_params)
-                    if aligned_result is None:
-                        return None, "Failed to align channels"
+                    # Use DataAligner instead of legacy alignment method
+                    from data_aligner import DataAligner
+                    from pair import AlignmentConfig, AlignmentMethod
+                    
+                    data_aligner = DataAligner()
+                    
+                    # Convert alignment_params to AlignmentConfig
+                    alignment_method = alignment_params.get('alignment_method', 'index')
+                    if alignment_method == 'index':
+                        alignment_config = AlignmentConfig(
+                            method=AlignmentMethod.INDEX,
+                            start_index=alignment_params.get('start_index', 0),
+                            end_index=alignment_params.get('end_index', 500),
+                            offset=alignment_params.get('offset', 0)
+                        )
+                    else:
+                        alignment_config = AlignmentConfig(
+                            method=AlignmentMethod.TIME,
+                            start_time=alignment_params.get('start_time', 0.0),
+                            end_time=alignment_params.get('end_time', 10.0),
+                            offset=alignment_params.get('offset', 0.0)
+                        )
+                    
+                    alignment_result = data_aligner.align_channels(channel_a, channel_b, alignment_config)
+                    
+                    if not alignment_result.success:
+                        return None, f"Failed to align channels: {alignment_result.error_message}"
+                    
+                    # Convert DataAligner result to legacy format
+                    aligned_result = {
+                        'ref_data': alignment_result.ref_data,
+                        'test_data': alignment_result.test_data,
+                        'alignment_method': alignment_config.method.value,
+                        'n_points': len(alignment_result.ref_data)
+                    }
                     
                     # Create new channel objects with aligned data
                     aligned_a = self._create_aligned_channel(channel_a, aligned_result.get('ref_data'), aligned_result.get('time_data'))

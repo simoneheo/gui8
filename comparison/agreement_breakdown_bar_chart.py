@@ -41,11 +41,11 @@ class AgreementBreakdownBarChartComparison(BaseComparison):
         tags (List[str]): Descriptive tags for search/filtering
         plot_type (str): Type of plot generated ('bar')
         
-    Example:
+        Example:
         >>> comparison = AgreementBreakdownBarChartComparison(
-        ...     use_percentage=True,
-        ...     error_bins="5,10,20"
-        ... )
+    ...     error_unit="percentage",
+    ...     error_bins="5,10,20"
+    ... )
         >>> results = comparison.apply(ref_data, test_data)
         >>> stats = comparison.calculate_stats()
         >>> fig, ax = comparison.generate_plot()
@@ -60,50 +60,8 @@ class AgreementBreakdownBarChartComparison(BaseComparison):
 
     # Rich parameter definitions following mixer/steps pattern
     params = [
-        {
-            "name": "use_percentage",
-            "type": "bool",
-            "default": True,
-            "help": "Use percentage error instead of absolute error",
-            "tooltip": "When enabled, error is calculated as percentage of reference value",
-            "advanced": False
-        },
-        {
-            "name": "error_bins", 
-            "type": "str",
-            "default": "5,10,20",
-            "help": "Comma-separated thresholds for error bins (% or absolute)",
-            "tooltip": "Define error ranges: '5,10,20' creates bins [0-5], (5-10], (10-20], >20",
-            "advanced": False,
-            "validation": {
-                "pattern": r"^[\d\.,\s]+$",
-                "message": "Must be comma-separated numbers"
-            }
-        },
-        {
-            "name": "normalize_by_reference",
-            "type": "bool", 
-            "default": True,
-            "help": "Normalize error by reference value (for percentage mode)",
-            "tooltip": "Controls whether percentage error uses reference or test value as denominator",
-            "advanced": True
-        },
-        {
-            "name": "exclude_zeros",
-            "type": "bool",
-            "default": False,
-            "help": "Exclude zero reference values from analysis",
-            "tooltip": "Prevents division by zero and infinite percentage errors",
-            "advanced": True
-        },
-        {
-            "name": "bin_labels",
-            "type": "str",
-            "default": "auto",
-            "help": "Custom bin labels (comma-separated) or 'auto'",
-            "tooltip": "Override automatic bin labels with custom names",
-            "advanced": True
-        }
+        {"name": "num_bands", "type": "int", "default": 5, "min": 2, "max": 20, "help": "Number of agreement bands."},
+        {"name": "band_width", "type": "float", "default": 1.0, "min": 0.1, "max": 10.0, "decimals": 2, "help": "Width of each band."}
     ]
 
     # Rich overlay options for wizard controls
@@ -138,6 +96,12 @@ class AgreementBreakdownBarChartComparison(BaseComparison):
             'label': 'Horizontal Bars',
             'tooltip': 'Use horizontal bar chart layout',
             'type': 'bool'
+        },
+        'show_legend': {
+            'default': False,
+            'label': 'Show Legend',
+            'tooltip': 'Show legend with plot elements',
+            'type': 'legend'
         }
     }
 
@@ -147,7 +111,7 @@ class AgreementBreakdownBarChartComparison(BaseComparison):
         
         Args:
             **kwargs: Keyword arguments for parameter configuration
-                - use_percentage (bool): Use percentage error calculation
+                - error_unit (str): Error unit type ('percentage' or 'absolute')
                 - error_bins (str): Comma-separated error bin thresholds
                 - normalize_by_reference (bool): Normalize by reference values
                 - exclude_zeros (bool): Exclude zero reference values
@@ -193,7 +157,7 @@ class AgreementBreakdownBarChartComparison(BaseComparison):
         
         if bin_labels_str == "auto":
             # Generate automatic labels
-            unit = "%" if self.kwargs.get("use_percentage", True) else ""
+            unit = "%" if self.kwargs.get("error_unit", "percentage") == "percentage" else ""
             labels = []
             for i in range(len(self.bin_edges) - 1):
                 if self.bin_edges[i+1] == np.inf:
@@ -297,29 +261,29 @@ class AgreementBreakdownBarChartComparison(BaseComparison):
                 y_data: Bin counts for Y-axis
                 metadata: Plot configuration dictionary
         """
-            # Handle zero exclusion
+        # Handle zero exclusion
         if params.get("exclude_zeros", False):
-                mask = ref_data != 0
-                ref_data = ref_data[mask]
-                test_data = test_data[mask]
-                
-            if len(ref_data) == 0:
-                raise ValueError("No valid data points after filtering")
+            mask = ref_data != 0
+            ref_data = ref_data[mask]
+            test_data = test_data[mask]
             
-            # Calculate error
+        if len(ref_data) == 0:
+            raise ValueError("No valid data points after filtering")
+        
+        # Calculate error
         error = self._calculate_error(ref_data, test_data, params)
-            
-            # Generate bin labels
-            bin_labels = self._parse_bin_labels()
-            
-            # Count samples in each bin
-            bin_counts, _ = np.histogram(error, bins=self.bin_edges)
-            total = len(error)
-            bin_percentages = (bin_counts / total * 100) if total > 0 else np.zeros_like(bin_counts)
-            
-            # Calculate cumulative percentages
-            cumulative_percentages = np.cumsum(bin_percentages)
-            
+        
+        # Generate bin labels
+        bin_labels = self._parse_bin_labels()
+        
+        # Count samples in each bin
+        bin_counts, _ = np.histogram(error, bins=self.bin_edges)
+        total = len(error)
+        bin_percentages = (bin_counts / total * 100) if total > 0 else np.zeros_like(bin_counts)
+        
+        # Calculate cumulative percentages
+        cumulative_percentages = np.cumsum(bin_percentages)
+        
         # Prepare metadata for plotting
         metadata = {
             'percentages': bin_percentages.tolist(),
@@ -330,15 +294,15 @@ class AgreementBreakdownBarChartComparison(BaseComparison):
             'y_label': 'Percentage (%)' if params.get('show_percentages', True) else 'Count',
             'title': 'Agreement Breakdown Analysis',
             'plot_type': 'bar',
-            'is_percentage': params.get('use_percentage', True),
+            'is_percentage': params.get('error_unit', 'percentage') == 'percentage',
             'error_data': error.tolist()
-            }
-            
+        }
+        
         return bin_labels, bin_counts.tolist(), metadata
-            
+
     def _calculate_error(self, ref_data: np.ndarray, test_data: np.ndarray, params: dict) -> np.ndarray:
         """Calculate error based on configuration."""
-        if params.get("use_percentage", True):
+        if params.get("error_unit", "percentage") == "percentage":
             # Percentage error
             denominator = ref_data if params.get("normalize_by_reference", True) else test_data
             with np.errstate(divide='ignore', invalid='ignore'):
@@ -411,54 +375,54 @@ class AgreementBreakdownBarChartComparison(BaseComparison):
         bin_percentages = plot_metadata['percentages']
         cumulative_percentages = plot_metadata['cumulative_percentages']
         total_samples = plot_metadata['total_samples']
-            
-            # Per-bin statistics
-            bin_stats = {}
+        
+        # Per-bin statistics
+        bin_stats = {}
         for i, label in enumerate(x_data):
-                bin_stats[label] = {
+            bin_stats[label] = {
                 "count": y_data[i],
                 "percentage": bin_percentages[i],
                 "cumulative_percentage": cumulative_percentages[i]
-                }
-            
-            # Agreement metrics
-            excellent_threshold = 0  # First bin (lowest errors)
+            }
+        
+        # Agreement metrics
+        excellent_threshold = 0  # First bin (lowest errors)
         good_threshold = min(1, len(bin_percentages) - 1)  # Second bin
-            
+        
         excellent_agreement = bin_percentages[excellent_threshold]
         good_agreement = sum(bin_percentages[:good_threshold + 1])
-            poor_agreement = 100 - good_agreement
-            
-            # Distribution characteristics
+        poor_agreement = 100 - good_agreement
+        
+        # Distribution characteristics
         most_common_bin = np.argmax(bin_percentages)
         most_common_label = x_data[most_common_bin]
-            
-            # Quality metrics
-            data_coverage = (total_samples / total_samples) * 100  # Always 100% after filtering
-            
+        
+        # Quality metrics
+        data_coverage = (total_samples / total_samples) * 100  # Always 100% after filtering
+        
         stats_results = {
-                "bin_statistics": bin_stats,
-                "agreement_metrics": {
-                    "excellent_agreement_pct": excellent_agreement,
-                    "good_agreement_pct": good_agreement,
-                    "poor_agreement_pct": poor_agreement,
-                    "most_common_error_range": most_common_label,
+            "bin_statistics": bin_stats,
+            "agreement_metrics": {
+                "excellent_agreement_pct": excellent_agreement,
+                "good_agreement_pct": good_agreement,
+                "poor_agreement_pct": poor_agreement,
+                "most_common_error_range": most_common_label,
                 "most_common_percentage": bin_percentages[most_common_bin]
-                },
-                "distribution_stats": {
-                    "total_samples": total_samples,
+            },
+            "distribution_stats": {
+                "total_samples": total_samples,
                 "number_of_bins": len(x_data),
                 "non_zero_bins": sum(1 for x in y_data if x > 0),
                 "max_bin_count": max(y_data),
                 "min_bin_count": min(y_data)
-                },
-                "quality_metrics": {
-                    "data_coverage_pct": data_coverage,
-                "analysis_method": "percentage" if params.get("use_percentage", True) else "absolute",
+            },
+            "quality_metrics": {
+                "data_coverage_pct": data_coverage,
+                "analysis_method": "percentage" if params.get("error_unit", "percentage") == "percentage" else "absolute",
                 "zero_exclusion": params.get("exclude_zeros", False)
-                }
             }
-            
+        }
+        
         return stats_results
 
     def generate_plot(self, ax, ref_data: np.ndarray, test_data: np.ndarray, 
@@ -591,3 +555,39 @@ class AgreementBreakdownBarChartComparison(BaseComparison):
             },
             "output_types": ["bar_chart", "statistics", "distribution_metrics"]
         }
+
+    def _format_statistical_text(self, stats_results: Dict[str, Any]) -> List[str]:
+        """Format statistical results for text overlay."""
+        lines = []
+        
+        total_samples = stats_results.get('total_samples', 0)
+        if total_samples > 0:
+            lines.append(f"Total Samples: {total_samples}")
+        
+        excellent_pct = stats_results.get('excellent_agreement_percentage', 0)
+        if excellent_pct > 0:
+            lines.append(f"Excellent: {excellent_pct:.1f}%")
+        
+        return lines
+    
+    def _get_overlay_functional_properties(self, overlay_id: str, overlay_type: str, 
+                                         stats_results: Dict[str, Any]) -> Dict[str, Any]:
+        """Get functional properties for bar chart overlays (no arbitrary styling)."""
+        properties = {}
+        
+        if overlay_id == 'show_values' and overlay_type == 'text':
+            properties.update({
+                'show_bar_values': True,
+                'label': 'Bar Values'
+            })
+        elif overlay_id == 'show_percentages' and overlay_type == 'text':
+            properties.update({
+                'show_percentages': True,
+                'label': 'Percentages'
+            })
+        elif overlay_id == 'show_legend' and overlay_type == 'legend':
+            properties.update({
+                'label': 'Legend'
+            })
+        
+        return properties

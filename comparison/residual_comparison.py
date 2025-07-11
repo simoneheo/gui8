@@ -31,25 +31,18 @@ class ResidualComparison(BaseComparison):
     
     # Parameters following mixer/steps pattern
     params = [
-        {"name": "fit_method", "type": "str", "default": "linear", "help": "Fitting method: linear, polynomial, robust"},
-        {"name": "polynomial_degree", "type": "int", "default": 2, "help": "Polynomial degree for polynomial fitting"},
-        {"name": "detect_outliers", "type": "bool", "default": True, "help": "Detect outliers in residuals"},
-        {"name": "outlier_threshold", "type": "float", "default": 2.5, "help": "Z-score threshold for outlier detection"},
-        {"name": "test_autocorrelation", "type": "bool", "default": True, "help": "Test for autocorrelation in residuals"},
-        {"name": "test_normality", "type": "bool", "default": True, "help": "Test normality of residuals"},
-        {"name": "confidence_level", "type": "float", "default": 0.95, "help": "Confidence level for statistical tests"},
-        {"name": "bootstrap_samples", "type": "int", "default": 1000, "help": "Number of bootstrap samples for confidence intervals"}
+        {"name": "fit_method", "type": "str", "default": "linear", "options": ["linear", "polynomial", "robust"], "help": "Linear (straight line), Polynomial (curved line), or Robust (outlier-resistant)"},
+        {"name": "detect_outliers", "type": "bool", "default": True, "help": "Detect and highlight outliers in residuals"},
+        {"name": "outlier_threshold", "type": "float", "default": 2.5, "min_value": 0.5, "max_value": 10.0, "help": "Z-score threshold for outlier detection (higher = less sensitive)"}
     ]
     
     # Plot configuration  
-    plot_type = "residual"
+    plot_type = "scatter"
     
     # Overlay options - defines which overlay controls should be shown in the wizard
     overlay_options = {
-        'highlight_outliers': {'default': True, 'label': 'Highlight Outliers', 'tooltip': 'Highlight outlier points in residuals'},
-        'show_trend_line': {'default': False, 'label': 'Show Trend Line', 'tooltip': 'Show trend line in residuals'},
-        'show_confidence_bands': {'default': False, 'label': 'Show Confidence Bands', 'tooltip': 'Show ±2σ confidence bands for residuals'},
-        'show_statistical_results': {'default': True, 'label': 'Show Statistical Results', 'tooltip': 'Display residual statistics on the plot'}
+        'show_zero_line': {'default': True, 'label': 'Show y=0 Line', 'tooltip': 'Show horizontal line at y=0 for residual reference', 'type': 'line'},
+        'show_statistical_results': {'default': True, 'label': 'Show Statistical Results', 'tooltip': 'Display residual statistics on the plot', 'type': 'text'}
     }
     
     def apply(self, ref_data: np.ndarray, test_data: np.ndarray, 
@@ -181,8 +174,8 @@ class ResidualComparison(BaseComparison):
             }
             
         elif model_type == "polynomial":
-            # Polynomial regression with specified degree
-            degree = params.get("polynomial_degree", 3)
+            # Polynomial regression with standard degree 2 (quadratic)
+            degree = 2
             coeffs = np.polyfit(ref_data, test_data, degree)
             fitted_values = np.polyval(coeffs, ref_data)
             residuals = test_data - fitted_values
@@ -651,7 +644,7 @@ class ResidualComparison(BaseComparison):
         except ImportError as e:
             raise ImportError(f"sklearn not available for polynomial regression: {e}")
         
-        degree = self.kwargs.get('polynomial_degree', 2)
+        degree = 2  # Standard quadratic polynomial
         
         # Validate input data
         if len(ref_data) < degree + 1:
@@ -729,13 +722,11 @@ class ResidualComparison(BaseComparison):
         """Test for patterns in residuals."""
         pattern_tests = {}
         
-        # Test for autocorrelation
-        if self.kwargs.get('test_autocorrelation', True):
-            pattern_tests['autocorrelation'] = self._test_autocorrelation(residuals)
+        # Test for autocorrelation (always run for diagnostic purposes)
+        pattern_tests['autocorrelation'] = self._test_autocorrelation(residuals)
         
-        # Test for normality
-        if self.kwargs.get('test_normality', True):
-            pattern_tests['normality'] = self._test_residual_normality(residuals)
+        # Test for normality (always run for diagnostic purposes)
+        pattern_tests['normality'] = self._test_residual_normality(residuals)
         
         # Test for heteroscedasticity
         pattern_tests['heteroscedasticity'] = self._test_heteroscedasticity(residuals, ref_data)
@@ -862,45 +853,18 @@ class ResidualComparison(BaseComparison):
         print(f"[ResidualOverlay] Plot config keys: {list(plot_config.keys())}")
         
         # Check for parameter compatibility (wizard may send different names)
-        show_outliers = plot_config.get('highlight_outliers', plot_config.get('outlier_detection', True))
-        show_conf_bands = plot_config.get('show_confidence_bands', plot_config.get('confidence_bands', False))
-        show_trend = plot_config.get('show_trend_line', plot_config.get('trend_line', False))
+        show_zero_line = plot_config.get('show_zero_line', True)
         
-        print(f"[ResidualOverlay] Overlays - outliers: {show_outliers}, conf_bands: {show_conf_bands}, trend: {show_trend}")
+        print(f"[ResidualOverlay] Overlays - zero_line: {show_zero_line}")
         
-        # Add zero line (always shown for residuals)
-        ax.axhline(y=0, color='red', linestyle='-', alpha=0.8, linewidth=2, label='Zero Line')
-        
-        # Add confidence bands for residuals
-        if show_conf_bands and stats_results:
-            residual_stats = stats_results.get('residual_stats', {})
-            std_res = residual_stats.get('std', 0)
-            if std_res > 0:
-                x_min, x_max = np.min(ref_data), np.max(ref_data)
-                print(f"[ResidualOverlay] Drawing confidence bands: ±{2*std_res:.3f}")
-                ax.fill_between([x_min, x_max], -2*std_res, 2*std_res, 
-                               alpha=0.3, color='yellow', label='±2σ Residual Bands')
-        
-        # Highlight outliers
-        if show_outliers and stats_results:
-            outlier_analysis = stats_results.get('outlier_analysis', {})
-            outlier_indices = outlier_analysis.get('outlier_indices', [])
-            if outlier_indices:
-                print(f"[ResidualOverlay] Highlighting {len(outlier_indices)} outliers")
-                ax.scatter(ref_data[outlier_indices], residuals[outlier_indices], 
-                          color='red', s=50, alpha=0.8, label='Outliers')
-        
-        # Add trend line if pattern detected
-        if show_trend and stats_results:
-            pattern_tests = stats_results.get('pattern_tests', {})
-            trend_test = pattern_tests.get('trend', {})
-            if trend_test.get('trend_present', False):
-                print(f"[ResidualOverlay] Drawing trend line")
-                # Fit line to residuals
-                slope, intercept, _, _, _ = stats.linregress(ref_data, residuals)
-                x_line = np.array([np.min(ref_data), np.max(ref_data)])
-                y_line = slope * x_line + intercept
-                ax.plot(x_line, y_line, 'g--', alpha=0.7, label=f'Trend Line (slope={slope:.3f})')
+        # Add zero line (conditional on overlay option)
+        if show_zero_line:
+            if plot_config.get('show_legend', False):
+                ax.axhline(y=0, color='red', linestyle='-', alpha=0.8, linewidth=2, label='Zero Line')
+                print(f"[ResidualOverlay] Added y=0 line with label")
+            else:
+                ax.axhline(y=0, color='red', linestyle='-', alpha=0.8, linewidth=2)
+                print(f"[ResidualOverlay] Added y=0 line without label")
         
         # Add statistical results text
         if plot_config.get('show_statistical_results', True) and stats_results:
@@ -970,54 +934,44 @@ class ResidualComparison(BaseComparison):
             print(f"[ResidualOverlay] Error adding statistical text: {e}")
     
     def _format_statistical_text(self, stats_results: Dict[str, Any]) -> List[str]:
-        """Format statistical results for display on plot."""
-        text_lines = []
+        """Format statistical results for text overlay."""
+        lines = []
         
-        # Add model fit information
-        if 'model_fit' in stats_results:
-            model_fit = stats_results['model_fit']
-            r_squared = model_fit.get('r_squared', np.nan)
-            if not np.isnan(r_squared):
-                text_lines.append(f"R²: {r_squared:.3f}")
-            
-            model_type = model_fit.get('model_type', 'unknown')
-            text_lines.append(f"Model: {model_type}")
+        mean_residual = stats_results.get('mean_residual', np.nan)
+        if not np.isnan(mean_residual):
+            lines.append(f"Mean Residual: {mean_residual:.3f}")
         
-        # Add residual statistics
-        if 'residual_stats' in stats_results:
-            res_stats = stats_results['residual_stats']
-            rmse = res_stats.get('rmse', np.nan)
-            if not np.isnan(rmse):
-                text_lines.append(f"RMSE: {rmse:.3f}")
-            
-            mean_res = res_stats.get('mean', np.nan)
-            if not np.isnan(mean_res):
-                text_lines.append(f"Mean residual: {mean_res:.3f}")
+        std_residual = stats_results.get('std_residual', np.nan)
+        if not np.isnan(std_residual):
+            lines.append(f"Std Residual: {std_residual:.3f}")
         
-        # Add pattern test results
-        if 'pattern_tests' in stats_results:
-            pattern_tests = stats_results['pattern_tests']
-            
-            # Normality test
-            if 'normality' in pattern_tests:
-                normal_test = pattern_tests['normality']
-                if 'normal' in normal_test:
-                    text_lines.append(f"Normality: {'Yes' if normal_test['normal'] else 'No'}")
-            
-            # Trend test
-            if 'trend' in pattern_tests:
-                trend_test = pattern_tests['trend']
-                if 'trend_present' in trend_test:
-                    text_lines.append(f"Trend: {'Yes' if trend_test['trend_present'] else 'No'}")
+        n_samples = stats_results.get('n_samples', 0)
+        if n_samples > 0:
+            lines.append(f"N: {n_samples}")
         
-        # Add outlier information
-        if 'outlier_analysis' in stats_results:
-            outlier_analysis = stats_results['outlier_analysis']
-            n_outliers = outlier_analysis.get('n_outliers', 0)
-            outlier_pct = outlier_analysis.get('outlier_percentage', 0)
-            text_lines.append(f"Outliers: {n_outliers} ({outlier_pct:.1f}%)")
+        return lines
+    
+    def _get_overlay_functional_properties(self, overlay_id: str, overlay_type: str, 
+                                         stats_results: Dict[str, Any]) -> Dict[str, Any]:
+        """Get functional properties for residual overlays (no arbitrary styling)."""
+        properties = {}
         
-        return text_lines
+        if overlay_id == 'show_zero_line' and overlay_type == 'line':
+            properties.update({
+                'y_value': 0,
+                'label': 'Zero Line'
+            })
+        elif overlay_id == 'show_statistical_results' and overlay_type == 'text':
+            properties.update({
+                'position': (0.02, 0.98),
+                'text_lines': self._format_statistical_text(stats_results)
+            })
+        elif overlay_id == 'show_legend' and overlay_type == 'legend':
+            properties.update({
+                'label': 'Legend'
+            })
+        
+        return properties
     
     @classmethod
     def get_comparison_guidance(cls):

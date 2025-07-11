@@ -30,11 +30,9 @@ class ErrorDistributionHistogramComparison(BaseComparison):
     
     # Parameters following mixer/steps pattern
     params = [
-        {"name": "use_percentage", "type": "bool", "default": False, "help": "Use percentage error instead of absolute error"},
-        {"name": "bins", "type": "int", "default": 50, "help": "Number of histogram bins"},
-        {"name": "density", "type": "bool", "default": True, "help": "Normalize histogram to show density"},
-        {"name": "outlier_threshold", "type": "float", "default": 3.0, "help": "Z-score threshold for outlier detection"},
-        {"name": "confidence_level", "type": "float", "default": 0.95, "help": "Confidence level for statistical tests"}
+        {"name": "num_bins", "type": "int", "default": 50, "min": 5, "max": 1000, "help": "Number of bins in histogram. Too many bins may make the plot hard to read."},
+        {"name": "range_min", "type": "float", "default": -10.0, "min": -100.0, "max": 0.0, "decimals": 2, "help": "Minimum value for histogram range."},
+        {"name": "range_max", "type": "float", "default": 10.0, "min": 0.0, "max": 100.0, "decimals": 2, "help": "Maximum value for histogram range."}
     ]
     
     # Plot configuration
@@ -42,12 +40,8 @@ class ErrorDistributionHistogramComparison(BaseComparison):
     
     # Overlay options - defines which overlay controls should be shown in the wizard
     overlay_options = {
-        'show_kde': {'default': True, 'label': 'Show KDE Curve', 'tooltip': 'Overlay kernel density estimate curve'},
-        'show_gaussian_fit': {'default': True, 'label': 'Show Gaussian Fit', 'tooltip': 'Overlay normal distribution fit'},
-        'show_mean_line': {'default': True, 'label': 'Show Mean Line', 'tooltip': 'Show vertical line at mean error'},
-        'show_zero_line': {'default': True, 'label': 'Show Zero Line', 'tooltip': 'Show vertical line at zero error'},
-        'highlight_outliers': {'default': False, 'label': 'Highlight Outliers', 'tooltip': 'Highlight outlier bins in the histogram'},
-        'show_statistical_results': {'default': True, 'label': 'Show Statistical Results', 'tooltip': 'Display distribution statistics on the plot'}
+        'show_kde': {'default': True, 'label': 'Show KDE Curve', 'tooltip': 'Overlay kernel density estimate curve', 'type': 'line'},
+        'show_zero_line': {'default': True, 'label': 'Show Zero Line', 'tooltip': 'Show vertical line at zero error', 'type': 'line'}
     }
     
     def apply(self, ref_data: np.ndarray, test_data: np.ndarray, 
@@ -73,9 +67,9 @@ class ErrorDistributionHistogramComparison(BaseComparison):
         try:
             # === STEP 1: VALIDATE INPUT DATA ===
             # Basic validation (shape, type, length compatibility)
-        ref_data, test_data = self._validate_input_data(ref_data, test_data)
+            ref_data, test_data = self._validate_input_data(ref_data, test_data)
             # Remove NaN and infinite values
-        ref_clean, test_clean, valid_ratio = self._remove_invalid_data(ref_data, test_data)
+            ref_clean, test_clean, valid_ratio = self._remove_invalid_data(ref_data, test_data)
         
             # === STEP 2: PLOT SCRIPT (core transformation + histogram computation) ===
             x_data, y_data, plot_metadata = self.plot_script(ref_clean, test_clean, self.kwargs)
@@ -83,28 +77,28 @@ class ErrorDistributionHistogramComparison(BaseComparison):
             # === STEP 3: STATS SCRIPT (statistical calculations) ===
             stats_results = self.stats_script(x_data, y_data, ref_clean, test_clean, self.kwargs)
         
-        # Prepare plot data
-        plot_data = {
+            # Prepare plot data
+            plot_data = {
                 'bin_edges': x_data,
                 'bin_counts': y_data,
-            'ref_data': ref_clean,
-            'test_data': test_clean,
+                'ref_data': ref_clean,
+                'test_data': test_clean,
                 'valid_ratio': valid_ratio,
                 'metadata': plot_metadata
-        }
+            }
         
-        # Combine results
-        results = {
-            'method': self.name,
-            'n_samples': len(ref_clean),
-            'valid_ratio': valid_ratio,
-            'statistics': stats_results,
-            'plot_data': plot_data
-        }
+            # Combine results
+            results = {
+                'method': self.name,
+                'n_samples': len(ref_clean),
+                'valid_ratio': valid_ratio,
+                'statistics': stats_results,
+                'plot_data': plot_data
+            }
         
-        # Store results
-        self.results = results
-        return results
+            # Store results
+            self.results = results
+            return results
             
         except Exception as e:
             raise RuntimeError(f"Error distribution histogram analysis failed: {str(e)}")
@@ -135,12 +129,12 @@ class ErrorDistributionHistogramComparison(BaseComparison):
         # Prepare metadata for plotting
         metadata = {
             'x_label': self._get_error_label(params),
-            'y_label': 'Frequency' if not params.get("normalize_histogram", False) else 'Density',
+            'y_label': 'Frequency' if params.get("y_axis_type", "density") == "frequency" else 'Density',
             'title': 'Error Distribution Histogram',
             'plot_type': 'histogram',
-            'error_type': params.get("error_type", "absolute"),
-            'n_bins': params.get("n_bins", 30),
-            'normalized': params.get("normalize_histogram", False),
+            'error_unit': params.get("error_unit", "absolute"),
+            'n_bins': params.get("bins", 50),
+            'y_axis_type': params.get("y_axis_type", "density"),
             'total_samples': len(errors)
         }
         
@@ -148,23 +142,13 @@ class ErrorDistributionHistogramComparison(BaseComparison):
 
     def _calculate_errors(self, ref_data: np.ndarray, test_data: np.ndarray, params: dict) -> np.ndarray:
         """Calculate errors based on configuration."""
-        error_type = params.get("error_type", "absolute")
+        error_unit = params.get("error_unit", "absolute")
         
-        if error_type == "absolute":
+        if error_unit == "absolute":
             errors = test_data - ref_data
-        elif error_type == "relative":
+        elif error_unit == "percentage":
             with np.errstate(divide='ignore', invalid='ignore'):
                 errors = (test_data - ref_data) / ref_data * 100
-                errors = np.nan_to_num(errors, nan=0.0, posinf=0.0, neginf=0.0)
-        elif error_type == "absolute_relative":
-            with np.errstate(divide='ignore', invalid='ignore'):
-                errors = np.abs(test_data - ref_data) / np.abs(ref_data) * 100
-                errors = np.nan_to_num(errors, nan=0.0, posinf=0.0, neginf=0.0)
-        elif error_type == "squared":
-            errors = (test_data - ref_data) ** 2
-        elif error_type == "log":
-            with np.errstate(divide='ignore', invalid='ignore'):
-                errors = np.log(test_data / ref_data)
                 errors = np.nan_to_num(errors, nan=0.0, posinf=0.0, neginf=0.0)
         else:
             # Default to absolute
@@ -174,9 +158,9 @@ class ErrorDistributionHistogramComparison(BaseComparison):
 
     def _create_histogram(self, errors: np.ndarray, params: dict) -> Tuple[np.ndarray, np.ndarray]:
         """Create histogram of errors."""
-        n_bins = params.get("n_bins", 30)
+        n_bins = params.get("bins", 50)
         bin_range = params.get("bin_range", None)
-        normalize = params.get("normalize_histogram", False)
+        y_axis_type = params.get("y_axis_type", "density")
         
         if bin_range is None:
             # Auto-determine range
@@ -191,24 +175,19 @@ class ErrorDistributionHistogramComparison(BaseComparison):
                 bin_range = (np.min(errors), np.max(errors))
         
         # Create histogram
-        bin_counts, bin_edges = np.histogram(errors, bins=n_bins, range=bin_range, density=normalize)
+        density = (y_axis_type == "density")
+        bin_counts, bin_edges = np.histogram(errors, bins=n_bins, range=bin_range, density=density)
         
         return bin_edges, bin_counts
 
     def _get_error_label(self, params: dict) -> str:
         """Get appropriate label for error type."""
-        error_type = params.get("error_type", "absolute")
+        error_unit = params.get("error_unit", "absolute")
         
-        if error_type == "absolute":
-            return "Absolute Error"
-        elif error_type == "relative":
-            return "Relative Error (%)"
-        elif error_type == "absolute_relative":
-            return "Absolute Relative Error (%)"
-        elif error_type == "squared":
-            return "Squared Error"
-        elif error_type == "log":
-            return "Log Error"
+        if error_unit == "absolute":
+            return "Error"
+        elif error_unit == "percentage":
+            return "Percentage Error (%)"
         else:
             return "Error"
     
@@ -520,26 +499,38 @@ class ErrorDistributionHistogramComparison(BaseComparison):
         
         # Create histogram
         bins = self.kwargs.get('bins', 50)
-        density = self.kwargs.get('density', True)
+        y_axis_type = self.kwargs.get('y_axis_type', 'density')
+        density = (y_axis_type == 'density')
         
         # Create histogram
-        n, bins_edges, patches = ax.hist(
-            error_data, 
-            bins=bins, 
-            density=density, 
-            alpha=0.7, 
-            color='skyblue', 
-            edgecolor='black',
-            label='Error Distribution'
-        )
+        if plot_config.get('show_legend', False):
+            n, bins_edges, patches = ax.hist(
+                error_data, 
+                bins=bins, 
+                density=density, 
+                alpha=0.7, 
+                color='skyblue', 
+                edgecolor='black',
+                label='Error Distribution'
+            )
+        else:
+            n, bins_edges, patches = ax.hist(
+                error_data, 
+                bins=bins, 
+                density=density, 
+                alpha=0.7, 
+                color='skyblue', 
+                edgecolor='black'
+            )
         
         # Add overlay elements
         self._add_distribution_overlays(ax, error_data, plot_config, stats_results)
         
         # Set labels and title
-        error_type = "Percentage Error (%)" if self.kwargs.get('use_percentage', False) else "Error"
-        ax.set_xlabel(error_type)
-        ax.set_ylabel('Density' if self.kwargs.get('density', True) else 'Frequency')
+        error_unit = self.kwargs.get('error_unit', 'absolute')
+        error_label = "Percentage Error (%)" if error_unit == "percentage" else "Error"
+        ax.set_xlabel(error_label)
+        ax.set_ylabel('Density' if y_axis_type == 'density' else 'Frequency')
         ax.set_title('Error Distribution Analysis')
         
         # Add grid if requested
@@ -555,12 +546,51 @@ class ErrorDistributionHistogramComparison(BaseComparison):
         """Calculate error values based on configuration."""
         error = test_data - ref_data
         
-        if self.kwargs.get("use_percentage", False):
+        if self.kwargs.get("error_unit", "absolute") == "percentage":
             with np.errstate(divide='ignore', invalid='ignore'):
                 error = error / np.abs(ref_data) * 100
                 error = np.nan_to_num(error, nan=0.0, posinf=0.0, neginf=0.0)
         
         return error
+    
+    def _format_statistical_text(self, stats_results: Dict[str, Any]) -> List[str]:
+        """Format statistical results for text overlay."""
+        lines = []
+        
+        mean_error = stats_results.get('mean_error', np.nan)
+        if not np.isnan(mean_error):
+            lines.append(f"Mean Error: {mean_error:.3f}")
+        
+        std_error = stats_results.get('std_error', np.nan)
+        if not np.isnan(std_error):
+            lines.append(f"Std Error: {std_error:.3f}")
+        
+        n_samples = stats_results.get('n_samples', 0)
+        if n_samples > 0:
+            lines.append(f"N: {n_samples}")
+        
+        return lines
+    
+    def _get_overlay_functional_properties(self, overlay_id: str, overlay_type: str, 
+                                         stats_results: Dict[str, Any]) -> Dict[str, Any]:
+        """Get functional properties for histogram overlays (no arbitrary styling)."""
+        properties = {}
+        
+        if overlay_id == 'show_kde' and overlay_type == 'line':
+            properties.update({
+                'label': 'KDE'
+            })
+        elif overlay_id == 'show_zero_line' and overlay_type == 'line':
+            properties.update({
+                'x_value': 0,
+                'label': 'Zero Error'
+            })
+        elif overlay_id == 'show_legend' and overlay_type == 'legend':
+            properties.update({
+                'label': 'Legend'
+            })
+        
+        return properties
     
     def _compute_distribution_stats(self, error_data: np.ndarray) -> Dict[str, float]:
         """Compute basic distribution statistics."""
@@ -649,28 +679,7 @@ class ErrorDistributionHistogramComparison(BaseComparison):
                 'error': str(e)
             }
     
-    def _create_histogram(self, errors: np.ndarray, params: dict) -> Tuple[np.ndarray, np.ndarray]:
-        """Create histogram of errors."""
-        n_bins = params.get("n_bins", 30)
-        bin_range = params.get("bin_range", None)
-        normalize = params.get("normalize_histogram", False)
-        
-        if bin_range is None:
-            # Auto-determine range
-            if params.get("exclude_outliers", False):
-                # Use IQR-based range
-                q25, q75 = np.percentile(errors, [25, 75])
-                iqr = q75 - q25
-                outlier_factor = params.get("outlier_iqr_factor", 1.5)
-                bin_range = (q25 - outlier_factor * iqr, q75 + outlier_factor * iqr)
-            else:
-                # Use full range
-                bin_range = (np.min(errors), np.max(errors))
-        
-        # Create histogram
-        bin_counts, bin_edges = np.histogram(errors, bins=n_bins, range=bin_range, density=normalize)
-        
-        return bin_edges, bin_counts
+
     
     def _add_distribution_overlays(self, ax, error_data: np.ndarray, 
                                  plot_config: Dict[str, Any], 
@@ -681,113 +690,29 @@ class ErrorDistributionHistogramComparison(BaseComparison):
         
         # KDE overlay
         if plot_config.get('show_kde', True):
-            self._add_kde_overlay(ax, error_data)
-        
-        # Gaussian fit overlay
-        if plot_config.get('show_gaussian_fit', True) and 'gaussian_fit' in stats_results:
-            self._add_gaussian_fit_overlay(ax, error_data, stats_results['gaussian_fit'])
-        
-        # Mean line
-        if plot_config.get('show_mean_line', True) and 'distribution' in stats_results:
-            mean_val = stats_results['distribution'].get('mean', np.nan)
-            if not np.isnan(mean_val):
-                ax.axvline(mean_val, color='red', linestyle='--', linewidth=2, label=f'Mean: {mean_val:.3f}')
+            self._add_kde_overlay(ax, error_data, plot_config.get('show_legend', False))
         
         # Zero line
         if plot_config.get('show_zero_line', True):
-            ax.axvline(0, color='green', linestyle='-', linewidth=2, label='Zero Error')
-        
-        # Statistical results text
-        if plot_config.get('show_statistical_results', True):
-            self._add_statistical_text_box(ax, stats_results, plot_config)
+            if plot_config.get('show_legend', False):
+                ax.axvline(0, color='green', linestyle='-', linewidth=2, label='Zero Error')
+            else:
+                ax.axvline(0, color='green', linestyle='-', linewidth=2)
     
-    def _add_kde_overlay(self, ax, error_data: np.ndarray) -> None:
+    def _add_kde_overlay(self, ax, error_data: np.ndarray, show_legend: bool = True) -> None:
         """Add KDE overlay to histogram."""
         try:
             kde = gaussian_kde(error_data)
             x_range = np.linspace(np.min(error_data), np.max(error_data), 200)
             kde_values = kde(x_range)
-            ax.plot(x_range, kde_values, 'r-', linewidth=2, label='KDE')
+            if show_legend:
+                ax.plot(x_range, kde_values, 'r-', linewidth=2, label='KDE')
+            else:
+                ax.plot(x_range, kde_values, 'r-', linewidth=2)
         except Exception as e:
             print(f"[ErrorDistribution] Error adding KDE overlay: {e}")
     
-    def _add_gaussian_fit_overlay(self, ax, error_data: np.ndarray, fit_results: Dict[str, float]) -> None:
-        """Add Gaussian fit overlay to histogram."""
-        try:
-            mu = fit_results.get('mu', np.nan)
-            sigma = fit_results.get('sigma', np.nan)
-            
-            if not np.isnan(mu) and not np.isnan(sigma):
-                x_range = np.linspace(np.min(error_data), np.max(error_data), 200)
-                gaussian_values = stats.norm.pdf(x_range, mu, sigma)
-                ax.plot(x_range, gaussian_values, 'orange', linestyle='--', linewidth=2, 
-                       label=f'Gaussian Fit (μ={mu:.3f}, σ={sigma:.3f})')
-        except Exception as e:
-            print(f"[ErrorDistribution] Error adding Gaussian fit overlay: {e}")
-    
-    def _highlight_outlier_bins(self, ax, error_data: np.ndarray, bins_edges: np.ndarray, patches) -> None:
-        """Highlight bins containing outliers."""
-        try:
-            threshold = self.kwargs.get('outlier_threshold', 3.0)
-            z_scores = np.abs(stats.zscore(error_data))
-            outlier_mask = z_scores > threshold
-            outlier_values = error_data[outlier_mask]
-            
-            # Color outlier bins differently
-            for i, patch in enumerate(patches):
-                bin_left = bins_edges[i]
-                bin_right = bins_edges[i + 1]
-                if np.any((outlier_values >= bin_left) & (outlier_values < bin_right)):
-                    patch.set_facecolor('red')
-                    patch.set_alpha(0.8)
-        except Exception as e:
-            print(f"[ErrorDistribution] Error highlighting outlier bins: {e}")
-    
-    def _add_statistical_text_box(self, ax, stats_results: Dict[str, Any], plot_config: Dict[str, Any]) -> None:
-        """Add statistical results text box to the plot."""
-        text_lines = self._format_statistical_text(stats_results, plot_config)
-        if text_lines:
-            text_str = '\n'.join(text_lines)
-            ax.text(0.02, 0.98, text_str, transform=ax.transAxes, fontsize=9,
-                   verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
-    
-    def _format_statistical_text(self, stats_results: Dict[str, Any], plot_config: Dict[str, Any] = None) -> List[str]:
-        """Format statistical results for display on plot."""
-        text_lines = []
-        
-        if plot_config is None:
-            plot_config = {}
-        
-        # Distribution statistics
-        if 'distribution' in stats_results:
-            dist_stats = stats_results['distribution']
-            mean_val = dist_stats.get('mean', np.nan)
-            std_val = dist_stats.get('std', np.nan)
-            skew_val = dist_stats.get('skewness', np.nan)
-            
-            if not np.isnan(mean_val):
-                text_lines.append(f"Mean: {mean_val:.4f}")
-            if not np.isnan(std_val):
-                text_lines.append(f"Std: {std_val:.4f}")
-            if not np.isnan(skew_val):
-                text_lines.append(f"Skewness: {skew_val:.3f}")
-        
-        # Normality test results
-        if 'normality' in stats_results:
-            norm_stats = stats_results['normality']
-            if 'shapiro' in norm_stats:
-                shapiro_p = norm_stats['shapiro'].get('p_value', np.nan)
-                if not np.isnan(shapiro_p):
-                    text_lines.append(f"Shapiro p: {shapiro_p:.4f}")
-        
-        # Outlier information
-        if 'outliers' in stats_results:
-            outlier_stats = stats_results['outliers']
-            n_outliers = outlier_stats.get('n_outliers', 0)
-            outlier_pct = outlier_stats.get('outlier_percentage', 0)
-            text_lines.append(f"Outliers: {n_outliers} ({outlier_pct:.1f}%)")
-        
-        return text_lines
+
     
     @classmethod
     def get_comparison_guidance(cls):

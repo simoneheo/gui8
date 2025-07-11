@@ -28,13 +28,10 @@ class CorrelationComparison(BaseComparison):
     
     # Parameters following mixer/steps pattern
     params = [
-        {"name": "correlation_type", "type": "str", "default": "pearson", "help": "Correlation type: pearson, spearman, all"},
-        {"name": "include_rmse", "type": "bool", "default": True, "help": "Include RMSE calculation"},
-        {"name": "outlier_method", "type": "str", "default": "iqr", "help": "Outlier detection method: iqr, zscore, modified_zscore"},
-        {"name": "partial_correlation", "type": "bool", "default": False, "help": "Calculate partial correlation"},
-        {"name": "detrend_method", "type": "str", "default": "none", "help": "Detrending method: none, linear, polynomial"},
-        {"name": "bootstrap_samples", "type": "int", "default": 1000, "help": "Number of bootstrap samples for confidence intervals"},
-        {"name": "confidence_level", "type": "float", "default": 0.95, "help": "Confidence level for statistical tests"}
+        {"name": "correlation_type", "type": "str", "default": "pearson", "options": ["pearson", "spearman", "all"], "help": "Type of correlation to compute"},
+        {"name": "include_rmse", "type": "bool", "default": True, "help": "Include RMSE in statistical results"},
+        {"name": "remove_outliers", "type": "bool", "default": False, "help": "Remove outliers before calculating correlations"},
+        {"name": "outlier_method", "type": "str", "default": "iqr", "options": ["iqr", "zscore"], "help": "Method for detecting outliers"}
     ]
     
     # Plot configuration
@@ -42,12 +39,10 @@ class CorrelationComparison(BaseComparison):
     
     # Overlay options - defines which overlay controls should be shown in the wizard
     overlay_options = {
-        'show_identity_line': {'default': True, 'label': 'Show y = x Line', 'tooltip': 'Show identity line for perfect correlation reference'},
-        'show_regression_line': {'default': True, 'label': 'Show Regression Line', 'tooltip': 'Show best-fit regression line'},
-        'show_confidence_bands': {'default': False, 'label': 'Show Confidence Bands', 'tooltip': 'Show confidence bands around regression line'},
-        'show_r_squared': {'default': True, 'label': 'Show R² Value', 'tooltip': 'Display R² value on the plot'},
-        'highlight_outliers': {'default': False, 'label': 'Highlight Outliers', 'tooltip': 'Highlight outlier points on the plot'},
-        'show_statistical_results': {'default': True, 'label': 'Show Statistical Results', 'tooltip': 'Display correlation statistics on the plot'}
+        'show_identity_line': {'default': True, 'label': 'Show y = x Line', 'tooltip': 'Show identity line for perfect correlation reference', 'type': 'line'},
+        'show_regression_line': {'default': True, 'label': 'Show Regression Line', 'tooltip': 'Show best-fit regression line', 'type': 'line'},
+        'show_regression_equation': {'default': False, 'label': 'Show Regression Equation', 'tooltip': 'Display regression line formula (y = mx + b)', 'type': 'text'},
+        'show_statistical_results': {'default': True, 'label': 'Show Statistical Results', 'tooltip': 'Display correlation statistics on the plot', 'type': 'text'}
     }
     
     def apply(self, ref_data: np.ndarray, test_data: np.ndarray, 
@@ -183,18 +178,9 @@ class CorrelationComparison(BaseComparison):
 
     def _remove_outliers(self, ref_data: np.ndarray, test_data: np.ndarray, params: dict) -> Tuple[np.ndarray, np.ndarray]:
         """Remove outliers from both datasets."""
-        outlier_method = params.get("outlier_method", "z_score")
+        outlier_method = params.get("outlier_method", "iqr")
         
-        if outlier_method == "z_score":
-            # Z-score method on both datasets
-            z_threshold = params.get("outlier_z_threshold", 3.0)
-            
-            ref_z = np.abs((ref_data - np.mean(ref_data)) / np.std(ref_data))
-            test_z = np.abs((test_data - np.mean(test_data)) / np.std(test_data))
-            
-            mask = (ref_z <= z_threshold) & (test_z <= z_threshold)
-            
-        elif outlier_method == "iqr":
+        if outlier_method == "iqr":
             # IQR method on both datasets
             iqr_factor = params.get("outlier_iqr_factor", 1.5)
             
@@ -213,33 +199,15 @@ class CorrelationComparison(BaseComparison):
             mask = ((ref_data >= ref_lower) & (ref_data <= ref_upper) & 
                    (test_data >= test_lower) & (test_data <= test_upper))
             
-        elif outlier_method == "mahalanobis":
-            # Mahalanobis distance method
-            try:
-                from scipy.spatial.distance import mahalanobis
-                
-                # Combine data for covariance calculation
-                combined_data = np.column_stack([ref_data, test_data])
-                mean_vec = np.mean(combined_data, axis=0)
-                cov_matrix = np.cov(combined_data.T)
-                
-                # Calculate Mahalanobis distances
-                distances = []
-                for i in range(len(ref_data)):
-                    point = np.array([ref_data[i], test_data[i]])
-                    dist = mahalanobis(point, mean_vec, np.linalg.inv(cov_matrix))
-                    distances.append(dist)
-                
-                distances = np.array(distances)
-                threshold = params.get("mahalanobis_threshold", 3.0)
-                mask = distances <= threshold
-                
-            except:
-                # Fallback to z-score method
-                ref_z = np.abs((ref_data - np.mean(ref_data)) / np.std(ref_data))
-                test_z = np.abs((test_data - np.mean(test_data)) / np.std(test_data))
-                mask = (ref_z <= 3.0) & (test_z <= 3.0)
-                
+        elif outlier_method == "zscore":
+            # Z-score method on both datasets
+            z_threshold = params.get("outlier_z_threshold", 3.0)
+            
+            ref_z = np.abs((ref_data - np.mean(ref_data)) / np.std(ref_data))
+            test_z = np.abs((test_data - np.mean(test_data)) / np.std(test_data))
+            
+            mask = (ref_z <= z_threshold) & (test_z <= z_threshold)
+            
         else:
             # No outlier removal
             mask = np.ones(len(ref_data), dtype=bool)
@@ -594,7 +562,7 @@ class CorrelationComparison(BaseComparison):
         if plot_config.get('show_grid', True):
             ax.grid(True, alpha=0.3)
         
-        # Add legend if requested
+        # Add legend if requested (use overlay option)
         if plot_config.get('show_legend', False):
             ax.legend()
     
@@ -620,25 +588,29 @@ class CorrelationComparison(BaseComparison):
         if plot_config.get('show_identity_line', False):
             min_val = min(np.min(ref_data), np.min(test_data))
             max_val = max(np.max(ref_data), np.max(test_data))
-            ax.plot([min_val, max_val], [min_val, max_val], 'k--', alpha=0.8, 
-                   linewidth=2, label='y = x (Perfect Correlation)')
+            if plot_config.get('show_legend', False):
+                ax.plot([min_val, max_val], [min_val, max_val], 'k--', alpha=0.8, 
+                       linewidth=2, label='y = x')
+            else:
+                ax.plot([min_val, max_val], [min_val, max_val], 'k--', alpha=0.8, 
+                       linewidth=2)
             print(f"[CorrelationOverlay] Added identity line")
         
         # Add regression line
         if plot_config.get('show_regression_line', False):
-            self._add_regression_line(ax, ref_data, test_data, stats_results)
+            self._add_regression_line(ax, ref_data, test_data, stats_results, plot_config)
             print(f"[CorrelationOverlay] Added regression line")
+        
+        # Add regression equation
+        if plot_config.get('show_regression_equation', False):
+            self._add_regression_equation(ax, ref_data, test_data, stats_results)
+            print(f"[CorrelationOverlay] Added regression equation")
         
         # Add confidence bands around regression line
         if plot_config.get('show_confidence_bands', False):
-            confidence_level = plot_config.get('confidence_level', 0.95)
-            self._add_confidence_bands(ax, ref_data, test_data, confidence_level, stats_results)
+            confidence_level = 0.95  # Standard 95% confidence level
+            self._add_confidence_bands(ax, ref_data, test_data, confidence_level, stats_results, plot_config)
             print(f"[CorrelationOverlay] Added confidence bands")
-        
-        # Highlight outliers
-        if plot_config.get('highlight_outliers', False):
-            self._highlight_outliers(ax, ref_data, test_data, stats_results)
-            print(f"[CorrelationOverlay] Highlighted outliers")
         
         # Add statistical results text (includes R² if requested)
         if plot_config.get('show_statistical_results', False) and stats_results:
@@ -646,7 +618,7 @@ class CorrelationComparison(BaseComparison):
             print(f"[CorrelationOverlay] Added statistical text")
     
     def _add_regression_line(self, ax, ref_data: np.ndarray, test_data: np.ndarray, 
-                           stats_results: Dict[str, Any] = None) -> None:
+                           stats_results: Dict[str, Any] = None, plot_config: Dict[str, Any] = None) -> None:
         """Add regression line to correlation plot."""
         try:
             # Get regression stats from results if available
@@ -664,21 +636,47 @@ class CorrelationComparison(BaseComparison):
                 x_line = np.array([np.min(ref_data), np.max(ref_data)])
                 y_line = slope * x_line + intercept
                 
-                label = f'Regression Line'
-                if r_value is not None:
-                    label += f' (r={r_value:.3f})'
-                
-                ax.plot(x_line, y_line, 'r-', alpha=0.8, linewidth=2, label=label)
-                
-                # Add equation text
-                ax.text(0.05, 0.95, f'y = {slope:.3f}x + {intercept:.3f}', 
-                       transform=ax.transAxes, fontsize=10, 
-                       bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+                # Use plot_config parameter for legend visibility
+                show_legend = plot_config.get('show_legend', False) if plot_config else False
+                if show_legend:
+                    ax.plot(x_line, y_line, 'r-', alpha=0.8, linewidth=2, label='Regression Line')
+                else:
+                    ax.plot(x_line, y_line, 'r-', alpha=0.8, linewidth=2)
         except Exception as e:
             print(f"[CorrelationOverlay] Error adding regression line: {e}")
     
+    def _add_regression_equation(self, ax, ref_data: np.ndarray, test_data: np.ndarray, 
+                               stats_results: Dict[str, Any] = None) -> None:
+        """Add regression equation text to correlation plot."""
+        try:
+            # Get regression stats from results if available
+            if stats_results and 'regression_stats' in stats_results:
+                regression_stats = stats_results['regression_stats']
+                slope = regression_stats.get('slope', None)
+                intercept = regression_stats.get('intercept', None)
+                r_value = regression_stats.get('r_value', None)
+            else:
+                # Fallback to computing regression
+                from scipy.stats import linregress
+                slope, intercept, r_value, p_value, std_err = linregress(ref_data, test_data)
+            
+            if slope is not None and intercept is not None:
+                # Format the equation
+                if intercept >= 0:
+                    equation = f'y = {slope:.3f}x + {intercept:.3f}'
+                else:
+                    equation = f'y = {slope:.3f}x - {abs(intercept):.3f}'
+                
+                # Add equation text without box (just plain text)
+                ax.text(0.05, 0.95, equation, 
+                       transform=ax.transAxes, fontsize=10, 
+                       color='red', weight='bold')
+        except Exception as e:
+            print(f"[CorrelationOverlay] Error adding regression equation: {e}")
+    
     def _add_confidence_bands(self, ax, ref_data: np.ndarray, test_data: np.ndarray, 
-                            confidence_level: float, stats_results: Dict[str, Any] = None) -> None:
+                            confidence_level: float, stats_results: Dict[str, Any] = None, 
+                            plot_config: Dict[str, Any] = None) -> None:
         """Add confidence bands around regression line."""
         try:
             # Get regression stats from results if available
@@ -708,37 +706,16 @@ class CorrelationComparison(BaseComparison):
                     ci_lower = y_line - t_value * se_pred
                     ci_upper = y_line + t_value * se_pred
                     
-                    ax.fill_between(x_line, ci_lower, ci_upper, alpha=0.2, color='red', 
-                                  label=f'{confidence_level*100:.0f}% Confidence Bands')
+                    # Use plot_config parameter for legend visibility
+                    show_legend = plot_config.get('show_legend', False) if plot_config else False
+                    if show_legend:
+                        ax.fill_between(x_line, ci_lower, ci_upper, alpha=0.2, color='red', label='95% Confidence Bands')
+                    else:
+                        ax.fill_between(x_line, ci_lower, ci_upper, alpha=0.2, color='red')
         except Exception as e:
             print(f"[CorrelationOverlay] Error adding confidence bands: {e}")
     
-    def _highlight_outliers(self, ax, ref_data: np.ndarray, test_data: np.ndarray, 
-                          stats_results: Dict[str, Any] = None) -> None:
-        """Highlight outliers on correlation plot."""
-        try:
-            # Simple outlier detection using IQR method on both dimensions
-            q1_ref, q3_ref = np.percentile(ref_data, [25, 75])
-            iqr_ref = q3_ref - q1_ref
-            lower_ref = q1_ref - 1.5 * iqr_ref
-            upper_ref = q3_ref + 1.5 * iqr_ref
-            
-            q1_test, q3_test = np.percentile(test_data, [25, 75])
-            iqr_test = q3_test - q1_test
-            lower_test = q1_test - 1.5 * iqr_test
-            upper_test = q3_test + 1.5 * iqr_test
-            
-            # Find outliers
-            outlier_mask = ((ref_data < lower_ref) | (ref_data > upper_ref) | 
-                           (test_data < lower_test) | (test_data > upper_test))
-            
-            if np.any(outlier_mask):
-                ax.scatter(ref_data[outlier_mask], test_data[outlier_mask], 
-                          color='red', s=50, alpha=0.8, edgecolor='darkred', 
-                          linewidth=1, label='Outliers')
-                print(f"[CorrelationOverlay] Highlighted {np.sum(outlier_mask)} outliers")
-        except Exception as e:
-            print(f"[CorrelationOverlay] Error highlighting outliers: {e}")
+
     
     def _add_statistical_text(self, ax, stats_results: Dict[str, Any], plot_config: Dict[str, Any] = None) -> None:
         """Add statistical results as text on correlation plot."""
@@ -758,10 +735,9 @@ class CorrelationComparison(BaseComparison):
                     else:
                         text_lines.append(f"Pearson r: {pearson_r:.3f}")
                 
-                # Add R² if requested or if show_r_squared is True
-                if (plot_config and plot_config.get('show_r_squared', False)) or True:
-                    if not np.isnan(r_squared):
-                        text_lines.append(f"R²: {r_squared:.3f}")
+                # Add R² value
+                if not np.isnan(r_squared):
+                    text_lines.append(f"R²: {r_squared:.3f}")
                 
                 # Add Spearman if available
                 spearman_r = corr_stats.get('spearman_r', np.nan)
@@ -898,27 +874,6 @@ class CorrelationComparison(BaseComparison):
         
         return interpretation
     
-    def _remove_outliers(self, ref_data: np.ndarray, test_data: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        """Remove outliers from data."""
-        method = self.kwargs.get('outlier_method', 'iqr')
-        
-        if method == 'iqr':
-            # IQR method
-            q1, q3 = np.percentile(ref_data, [25, 75])
-            iqr = q3 - q1
-            lower_bound = q1 - 1.5 * iqr
-            upper_bound = q3 + 1.5 * iqr
-            mask = (ref_data >= lower_bound) & (ref_data <= upper_bound)
-        elif method == 'zscore':
-            # Z-score method
-            z_scores = np.abs(stats.zscore(ref_data))
-            mask = z_scores < 3
-        else:
-            # No outlier removal
-            mask = np.ones(len(ref_data), dtype=bool)
-        
-        return ref_data[mask], test_data[mask]
-    
     def _format_statistical_text(self, stats_results: Dict[str, Any], plot_config: Dict[str, Any] = None) -> List[str]:
         """Format statistical results for display on plot."""
         text_lines = []
@@ -937,9 +892,8 @@ class CorrelationComparison(BaseComparison):
                     else:
                         text_lines.append(f"{corr_type.title()}: r={r:.3f}")
         
-        # Add R² if available and requested
-        if (plot_config.get('show_r_squared', False) and 
-            'correlations' in stats_results and 'pearson' in stats_results['correlations']):
+        # Add R² if available
+        if ('correlations' in stats_results and 'pearson' in stats_results['correlations']):
             pearson_data = stats_results['correlations']['pearson']
             r_squared = pearson_data.get('r_squared', np.nan)
             if not np.isnan(r_squared):
@@ -985,3 +939,107 @@ class CorrelationComparison(BaseComparison):
                 "Consider RMSE for absolute agreement assessment"
             ]
         } 
+    
+    def _get_overlay_functional_properties(self, overlay_id: str, overlay_type: str, 
+                                         stats_results: Dict[str, Any]) -> Dict[str, Any]:
+        """Get functional properties for correlation overlays (no arbitrary styling)."""
+        properties = {}
+        
+        if overlay_id == 'show_identity_line' and overlay_type == 'line':
+            properties.update({
+                'label': 'y = x'
+            })
+        elif overlay_id == 'show_regression_line' and overlay_type == 'line':
+            # Get regression statistics to compute line data
+            if 'regression_stats' in stats_results:
+                reg_stats = stats_results['regression_stats']
+                slope = reg_stats.get('slope')
+                intercept = reg_stats.get('intercept')
+                
+                if slope is not None and intercept is not None:
+                    # Get data range from scatter data (approximate from stats)
+                    # We'll use a reasonable range that will be adjusted by RenderPlotOp
+                    x_min = -10  # Will be replaced by actual data range
+                    x_max = 10   # Will be replaced by actual data range
+                    
+                    # Compute regression line points
+                    x_data = [x_min, x_max]
+                    y_data = [slope * x_min + intercept, slope * x_max + intercept]
+                    
+                    properties.update({
+                        'label': 'Regression Line',
+                        'x_data': x_data,
+                        'y_data': y_data,
+                        'slope': slope,
+                        'intercept': intercept
+                    })
+                else:
+                    properties.update({
+                        'label': 'Regression Line'
+                    })
+            else:
+                properties.update({
+                    'label': 'Regression Line'
+                })
+        elif overlay_id == 'show_regression_equation' and overlay_type == 'text':
+            properties.update({
+                'position': (0.05, 0.95),
+                'text_lines': self._format_regression_equation(stats_results)
+            })
+        elif overlay_id == 'show_confidence_bands' and overlay_type == 'fill':
+            properties.update({
+                'fill_between': True,
+                'confidence_level': 0.95,
+                'label': '95% Confidence Bands'
+            })
+        elif overlay_id == 'show_statistical_results' and overlay_type == 'text':
+            properties.update({
+                'position': (0.02, 0.98),
+                'text_lines': self._format_correlation_stats(stats_results)
+            })
+        elif overlay_id == 'show_legend' and overlay_type == 'legend':
+            properties.update({
+                'label': 'Legend'
+            })
+        
+        return properties
+    
+    def _format_regression_equation(self, stats_results: Dict[str, Any]) -> List[str]:
+        """Format regression equation for text overlay."""
+        lines = []
+        
+        if 'regression_stats' in stats_results:
+            reg_stats = stats_results['regression_stats']
+            slope = reg_stats.get('slope')
+            intercept = reg_stats.get('intercept')
+            
+            if slope is not None and intercept is not None:
+                if intercept >= 0:
+                    equation = f'y = {slope:.3f}x + {intercept:.3f}'
+                else:
+                    equation = f'y = {slope:.3f}x - {abs(intercept):.3f}'
+                lines.append(equation)
+        
+        return lines
+    
+    def _format_correlation_stats(self, stats_results: Dict[str, Any]) -> List[str]:
+        """Format correlation statistics for text overlay."""
+        lines = []
+        
+        if 'correlation_stats' in stats_results:
+            corr_stats = stats_results['correlation_stats']
+            pearson_r = corr_stats.get('pearson_r', np.nan)
+            if not np.isnan(pearson_r):
+                lines.append(f"Pearson r: {pearson_r:.3f}")
+            
+            r_squared = corr_stats.get('r_squared', np.nan)
+            if not np.isnan(r_squared):
+                lines.append(f"R²: {r_squared:.3f}")
+        
+        if 'regression_stats' in stats_results:
+            reg_stats = stats_results['regression_stats']
+            rmse = reg_stats.get('rmse', np.nan)
+            if not np.isnan(rmse):
+                lines.append(f"RMSE: {rmse:.3f}")
+        
+        return lines 

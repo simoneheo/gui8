@@ -79,7 +79,7 @@ class MarkerWizard(QDialog):
     def _backup_marker_properties(self) -> dict:
         """Backup original marker properties for cancel operation"""
         return {
-            'marker_type': self.pair_config.get('marker_type', '○ Circle'),
+            'marker_type': self.pair_config.get('marker_type', 'o'),
             'marker_color': self.pair_config.get('marker_color', '🔵 Blue'),
             'marker_size': self.pair_config.get('marker_size', 50),
             'marker_alpha': self.pair_config.get('marker_alpha', 0.7),
@@ -566,12 +566,23 @@ class MarkerWizard(QDialog):
     
     def load_marker_properties(self):
         """Load current marker properties into the UI"""
-        # Marker type
-        marker_type = self.pair_config.get('marker_type', '○ Circle')
+        # Marker type - handle both old display names and new matplotlib values
+        marker_type = self.pair_config.get('marker_type', 'o')
+        
+        # Try to find by data value first (new format)
+        found = False
         for i in range(self.marker_combo.count()):
-            if self.marker_combo.itemText(i) == marker_type:
+            if self.marker_combo.itemData(i) == marker_type:
                 self.marker_combo.setCurrentIndex(i)
+                found = True
                 break
+        
+        # Fallback to text search (old format)
+        if not found:
+            for i in range(self.marker_combo.count()):
+                if self.marker_combo.itemText(i) == marker_type:
+                    self.marker_combo.setCurrentIndex(i)
+                    break
         
         # Color
         marker_color = self.pair_config.get('marker_color', '🔵 Blue')
@@ -782,8 +793,8 @@ class MarkerWizard(QDialog):
     
     def _update_marker_properties(self):
         """Update pair config with marker properties from UI"""
-        # Marker type
-        self.pair_config['marker_type'] = self.marker_combo.currentText()
+        # Marker type - store the matplotlib-compatible value
+        self.pair_config['marker_type'] = self.marker_combo.currentData()
         self.pair_config['marker_symbol'] = self.marker_combo.currentData()
         
         # Color
@@ -871,3 +882,210 @@ def open_marker_wizard(pair_config: Dict[str, Any], parent=None) -> bool:
         True if changes were applied, False if cancelled
     """
     return MarkerWizard.edit_marker(pair_config, parent) 
+
+
+class ComparisonPairMarkerWizard(QDialog):
+    """
+    Focused dialog for editing visual marker properties and legend label for comparison pairs.
+    Only includes: marker shape, color, size, edge color/thickness, fill style, and legend label.
+    No data transformation, advanced line, animation, or statistical overlay options.
+    Purely visual: does not affect underlying data or analysis.
+    """
+    marker_updated = Signal(dict)
+
+    def __init__(self, pair_config: Dict[str, Any], parent=None):
+        super().__init__(parent)
+        self.pair_config = pair_config
+        self.original_properties = self._backup_marker_properties()
+        self.setWindowTitle(f"Pair Styling - {pair_config.get('name', 'Unnamed Pair')}")
+        self.setModal(True)
+        self.setFixedSize(420, 420)
+        self.init_ui()
+        self.load_marker_properties()
+
+    def _backup_marker_properties(self):
+        return {
+            'marker_type': self.pair_config.get('marker_type', 'o'),
+            'marker_color': self.pair_config.get('marker_color', '🔵 Blue'),
+            'marker_size': self.pair_config.get('marker_size', 50),
+            'marker_alpha': self.pair_config.get('marker_alpha', 0.8),
+            'edge_color': self.pair_config.get('edge_color', '#000000'),
+            'edge_width': self.pair_config.get('edge_width', 1.0),
+            'fill_style': self.pair_config.get('fill_style', 'full'),
+            'legend_label': self.pair_config.get('legend_label', ''),
+        }
+
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        title = QLabel(f"Visual Styling for: {self.pair_config.get('name', 'Unnamed Pair')}")
+        title.setStyleSheet("font-size: 14px; font-weight: bold; margin: 10px;")
+        layout.addWidget(title)
+        info = QLabel("Visual changes only. Data and analysis are not affected.")
+        info.setStyleSheet("color: #2c5aa0; font-size: 10px; font-style: italic; margin-bottom: 8px;")
+        layout.addWidget(info)
+        form = QFormLayout()
+
+        # Marker Shape
+        self.marker_combo = QComboBox()
+        marker_types = [
+            ('○ Circle', 'o'),
+            ('□ Square', 's'),
+            ('△ Triangle', '^'),
+            ('◇ Diamond', 'D'),
+            ('▽ Inverted Triangle', 'v'),
+            ('◁ Left Triangle', '<'),
+            ('▷ Right Triangle', '>'),
+            ('⬟ Pentagon', 'p'),
+            ('✦ Star', '*'),
+            ('⬢ Hexagon', 'h'),
+            ('+ Plus', '+'),
+            ('× Cross', 'x'),
+        ]
+        for name, value in marker_types:
+            self.marker_combo.addItem(name, value)
+        form.addRow("Marker Shape:", self.marker_combo)
+
+        # Marker Color
+        color_layout = QHBoxLayout()
+        self.color_button = ColorButton()
+        self.color_combo = QComboBox()
+        color_options = [
+            ('🔵 Blue', '#1f77b4'),
+            ('🔴 Red', '#d62728'),
+            ('🟢 Green', '#2ca02c'),
+            ('🟣 Purple', '#9467bd'),
+            ('🟠 Orange', '#ff7f0e'),
+            ('🟤 Brown', '#8c564b'),
+            ('🩷 Pink', '#e377c2'),
+            ('⚫ Gray', '#7f7f7f'),
+            ('🟡 Yellow', '#bcbd22'),
+            ('🔶 Cyan', '#17becf'),
+            ('Custom', 'custom')
+        ]
+        for name, value in color_options:
+            self.color_combo.addItem(name, value)
+        self.color_combo.currentTextChanged.connect(self.on_color_combo_changed)
+        self.color_button.color_changed.connect(self.on_color_button_changed)
+        color_layout.addWidget(self.color_button)
+        color_layout.addWidget(self.color_combo)
+        form.addRow("Marker Color:", color_layout)
+
+        # Marker Size
+        size_layout = QHBoxLayout()
+        self.size_spin = QSpinBox()
+        self.size_spin.setRange(6, 200)
+        self.size_spin.setValue(50)
+        self.size_spin.setSuffix(" pts")
+        self.size_slider = QSlider(Qt.Horizontal)
+        self.size_slider.setRange(6, 200)
+        self.size_slider.setValue(50)
+        self.size_spin.valueChanged.connect(self.size_slider.setValue)
+        self.size_slider.valueChanged.connect(self.size_spin.setValue)
+        size_layout.addWidget(self.size_spin)
+        size_layout.addWidget(self.size_slider)
+        form.addRow("Marker Size:", size_layout)
+
+        # Legend Label
+        self.legend_label_edit = QLineEdit()
+        self.legend_label_edit.setPlaceholderText("Custom legend label (optional)")
+        form.addRow("Legend Label:", self.legend_label_edit)
+
+        layout.addLayout(form)
+
+        # Dialog buttons
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel | QDialogButtonBox.Apply)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        button_box.button(QDialogButtonBox.Apply).clicked.connect(self.apply_changes)
+        layout.addWidget(button_box)
+
+        # Live preview connections (optional, placeholder)
+        self.marker_combo.currentTextChanged.connect(self.update_preview)
+        self.size_spin.valueChanged.connect(self.update_preview)
+        self.legend_label_edit.textChanged.connect(self.update_preview)
+
+    def load_marker_properties(self):
+        # Marker type - handle both old display names and new matplotlib values
+        marker_type = self.pair_config.get('marker_type', 'o')
+        
+        # Try to find by data value first (new format)
+        idx = self.marker_combo.findData(marker_type)
+        if idx >= 0:
+            self.marker_combo.setCurrentIndex(idx)
+        else:
+            # Fallback to text search (old format)
+            idx = self.marker_combo.findText(marker_type)
+            if idx >= 0:
+                self.marker_combo.setCurrentIndex(idx)
+            else:
+                # Default to circle if not found
+                self.marker_combo.setCurrentIndex(0)
+        # Color
+        marker_color = self.pair_config.get('marker_color', '🔵 Blue')
+        idx = self.color_combo.findText(marker_color)
+        if idx >= 0:
+            self.color_combo.setCurrentIndex(idx)
+        else:
+            self.color_combo.setCurrentText('Custom')
+            hex_color = self.pair_config.get('marker_color_hex', '#1f77b4')
+            self.color_button.set_color(hex_color)
+        # Size
+        self.size_spin.setValue(self.pair_config.get('marker_size', 50))
+        # Legend label
+        self.legend_label_edit.setText(self.pair_config.get('legend_label', ''))
+
+    def on_color_combo_changed(self, color_name: str):
+        if color_name == 'Custom':
+            return
+        color_map = {
+            '🔵 Blue': '#1f77b4',
+            '🔴 Red': '#d62728',
+            '🟢 Green': '#2ca02c',
+            '🟣 Purple': '#9467bd',
+            '🟠 Orange': '#ff7f0e',
+            '🟤 Brown': '#8c564b',
+            '🩷 Pink': '#e377c2',
+            '⚫ Gray': '#7f7f7f',
+            '🟡 Yellow': '#bcbd22',
+            '🔶 Cyan': '#17becf'
+        }
+        if color_name in color_map:
+            self.color_button.set_color(color_map[color_name])
+
+    def on_color_button_changed(self, color: str):
+        self.color_combo.setCurrentText('Custom')
+
+    def update_preview(self):
+        pass  # Placeholder for live preview
+
+    def apply_changes(self):
+        self._update_marker_properties()
+        self.marker_updated.emit(self.pair_config)
+
+    def accept(self):
+        self.apply_changes()
+        super().accept()
+
+    def reject(self):
+        self._restore_marker_properties()
+        super().reject()
+
+    def _update_marker_properties(self):
+        self.pair_config['marker_type'] = self.marker_combo.currentData()
+        self.pair_config['marker_color'] = self.color_combo.currentText()
+        self.pair_config['marker_color_hex'] = self.color_button.get_color()
+        self.pair_config['marker_size'] = self.size_spin.value()
+        self.pair_config['legend_label'] = self.legend_label_edit.text()
+
+    def _restore_marker_properties(self):
+        for key, value in self.original_properties.items():
+            self.pair_config[key] = value
+
+    @staticmethod
+    def edit_pair_marker(pair_config: Dict[str, Any], parent=None) -> bool:
+        wizard = ComparisonPairMarkerWizard(pair_config, parent)
+        result = wizard.exec()
+        return result == QDialog.Accepted
+
+def open_comparison_pair_marker_wizard(pair_config: Dict[str, Any], parent=None) -> bool:
+    return ComparisonPairMarkerWizard.edit_pair_marker(pair_config, parent) 

@@ -64,70 +64,8 @@ class StackedErrorTimeBandComparison(BaseComparison):
 
     # Rich parameter definitions following mixer/steps pattern
     params = [
-        {
-            "name": "segment_size",
-            "type": "int",
-            "default": 100,
-            "help": "Number of samples per time segment",
-            "tooltip": "Size of each time segment for error analysis",
-            "advanced": False,
-            "min_value": 10,
-            "max_value": 1000
-        },
-        {
-            "name": "error_thresholds",
-            "type": "str",
-            "default": "5,10,20",
-            "help": "Comma-separated percentage thresholds for error tiers",
-            "tooltip": "Define error bands: '5,10,20' creates tiers [0-5], (5-10], (10-20], >20%",
-            "advanced": False,
-            "validation": {
-                "pattern": r"^[\d\.,\s]+$",
-                "message": "Must be comma-separated numbers"
-            }
-        },
-        {
-            "name": "use_percentage",
-            "type": "bool",
-            "default": True,
-            "help": "Use percentage error instead of absolute error",
-            "tooltip": "Calculate error as percentage of reference value",
-            "advanced": False
-        },
-        {
-            "name": "normalize_by_reference",
-            "type": "bool",
-            "default": True,
-            "help": "Normalize error by reference value (for percentage mode)",
-            "tooltip": "Controls whether percentage error uses reference or test value",
-            "advanced": True
-        },
-        {
-            "name": "overlap_segments",
-            "type": "bool",
-            "default": False,
-            "help": "Use overlapping time segments",
-            "tooltip": "Create overlapping segments for smoother temporal analysis",
-            "advanced": True
-        },
-        {
-            "name": "overlap_ratio",
-            "type": "float",
-            "default": 0.5,
-            "help": "Overlap ratio for segments (0-1)",
-            "tooltip": "Fraction of segment size for overlap (0.5 = 50% overlap)",
-            "advanced": True,
-            "min_value": 0.1,
-            "max_value": 0.9
-        },
-        {
-            "name": "exclude_zeros",
-            "type": "bool",
-            "default": False,
-            "help": "Exclude zero reference values from analysis",
-            "tooltip": "Prevents division by zero in percentage calculations",
-            "advanced": True
-        }
+        {"name": "window_size", "type": "int", "default": 11, "min": 3, "max": 10000, "help": "Smoothing window size (odd numbers preferred). Large values may slow down analysis."},
+        {"name": "percentile", "type": "float", "default": 95.0, "min": 0.0, "max": 100.0, "decimals": 1, "help": "Percentile for error band (0–100)."}
     ]
 
     # Rich overlay options for wizard controls
@@ -136,12 +74,6 @@ class StackedErrorTimeBandComparison(BaseComparison):
             'default': True,
             'label': 'Show Legend',
             'tooltip': 'Display error band labels',
-            'type': 'bool'
-        },
-        'show_total_line': {
-            'default': False,
-            'label': 'Show Total Error Line',
-            'tooltip': 'Add line showing total error per segment',
             'type': 'bool'
         },
         'color_scheme': {
@@ -314,33 +246,33 @@ class StackedErrorTimeBandComparison(BaseComparison):
                 y_data: Percentage matrix for stacked areas
                 metadata: Plot configuration dictionary
         """
-            # Handle zero exclusion
+        # Handle zero exclusion
         if params.get("exclude_zeros", False):
-                mask = ref_data != 0
-                ref_data = ref_data[mask]
-                test_data = test_data[mask]
-                if ref_time is not None:
-                    ref_time = ref_time[mask]
-                    
-            if len(ref_data) == 0:
-                raise ValueError("No valid data points after filtering")
-            
-            # Calculate error
+            mask = ref_data != 0
+            ref_data = ref_data[mask]
+            test_data = test_data[mask]
+            if ref_time is not None:
+                ref_time = ref_time[mask]
+                
+        if len(ref_data) == 0:
+            raise ValueError("No valid data points after filtering")
+        
+        # Calculate error
         error = self._calculate_error(ref_data, test_data, params)
-            
-            # Create time segments
+        
+        # Create time segments
         segment_size = params.get("segment_size", 100)
         segments = self._create_time_segments(error, ref_time, segment_size, params)
-            
-            # Generate tier labels
+        
+        # Generate tier labels
         tier_labels = self._generate_tier_labels(params)
-            
-            # Calculate error tier matrix
-            band_matrix = self._calculate_band_matrix(segments, tier_labels)
-            
-            # Create time axis for segments
+        
+        # Calculate error tier matrix
+        band_matrix = self._calculate_band_matrix(segments, tier_labels)
+        
+        # Create time axis for segments
         segment_times = self._create_segment_times(segments, ref_time, params)
-            
+        
         # Prepare metadata for plotting
         metadata = {
             'segment_times': segment_times,
@@ -418,107 +350,107 @@ class StackedErrorTimeBandComparison(BaseComparison):
         percent_matrix = np.array(y_data)
         tier_labels = plot_metadata['labels']
         n_segments = plot_metadata['n_segments']
-            
-            # Per-tier statistics
-            tier_statistics = {}
-            for i, label in enumerate(tier_labels):
-                tier_data = percent_matrix[i, :]
-                tier_statistics[label] = {
-                    "mean_percentage": np.mean(tier_data),
-                    "std_percentage": np.std(tier_data),
-                    "min_percentage": np.min(tier_data),
-                    "max_percentage": np.max(tier_data),
-                    "median_percentage": np.median(tier_data),
-                    "range_percentage": np.max(tier_data) - np.min(tier_data)
+        
+        # Per-tier statistics
+        tier_statistics = {}
+        for i, label in enumerate(tier_labels):
+            tier_data = percent_matrix[i, :]
+            tier_statistics[label] = {
+                "mean_percentage": np.mean(tier_data),
+                "std_percentage": np.std(tier_data),
+                "min_percentage": np.min(tier_data),
+                "max_percentage": np.max(tier_data),
+                "median_percentage": np.median(tier_data),
+                "range_percentage": np.max(tier_data) - np.min(tier_data)
+            }
+        
+        # Temporal stability metrics
+        temporal_stability = {}
+        for i, label in enumerate(tier_labels):
+            tier_data = percent_matrix[i, :]
+            if len(tier_data) > 1:
+                # Calculate coefficient of variation
+                cv = np.std(tier_data) / np.mean(tier_data) if np.mean(tier_data) > 0 else 0
+                temporal_stability[label] = {
+                    "coefficient_of_variation": cv,
+                    "stability_score": 1 / (1 + cv),  # Higher score = more stable
+                    "temporal_range": np.max(tier_data) - np.min(tier_data)
                 }
-            
-            # Temporal stability metrics
-            temporal_stability = {}
+            else:
+                temporal_stability[label] = {
+                    "coefficient_of_variation": 0,
+                    "stability_score": 1,
+                    "temporal_range": 0
+                }
+        
+        # Error concentration indices
+        concentration_indices = {}
+        for i in range(n_segments):
+            segment_data = percent_matrix[:, i]
+            # Calculate entropy (lower entropy = more concentrated)
+            non_zero_probs = segment_data[segment_data > 0] / 100  # Convert to probabilities
+            if len(non_zero_probs) > 0:
+                entropy = -np.sum(non_zero_probs * np.log2(non_zero_probs + 1e-10))
+                concentration_indices[f"segment_{i}"] = {
+                    "entropy": entropy,
+                    "concentration_score": 1 / (1 + entropy),  # Higher score = more concentrated
+                    "dominant_tier": tier_labels[np.argmax(segment_data)],
+                    "dominant_percentage": np.max(segment_data)
+                }
+            else:
+                concentration_indices[f"segment_{i}"] = {
+                    "entropy": 0,
+                    "concentration_score": 1,
+                    "dominant_tier": tier_labels[0],
+                    "dominant_percentage": 0
+                }
+        
+        # Trend analysis for each tier
+        trend_analysis = {}
+        if n_segments > 2:
+            time_indices = np.arange(n_segments)
             for i, label in enumerate(tier_labels):
                 tier_data = percent_matrix[i, :]
-                if len(tier_data) > 1:
-                    # Calculate coefficient of variation
-                    cv = np.std(tier_data) / np.mean(tier_data) if np.mean(tier_data) > 0 else 0
-                    temporal_stability[label] = {
-                        "coefficient_of_variation": cv,
-                        "stability_score": 1 / (1 + cv),  # Higher score = more stable
-                        "temporal_range": np.max(tier_data) - np.min(tier_data)
-                    }
-                else:
-                    temporal_stability[label] = {
-                        "coefficient_of_variation": 0,
-                        "stability_score": 1,
-                        "temporal_range": 0
-                    }
-            
-            # Error concentration indices
-            concentration_indices = {}
-            for i in range(n_segments):
-                segment_data = percent_matrix[:, i]
-                # Calculate entropy (lower entropy = more concentrated)
-                non_zero_probs = segment_data[segment_data > 0] / 100  # Convert to probabilities
-                if len(non_zero_probs) > 0:
-                    entropy = -np.sum(non_zero_probs * np.log2(non_zero_probs + 1e-10))
-                    concentration_indices[f"segment_{i}"] = {
-                        "entropy": entropy,
-                        "concentration_score": 1 / (1 + entropy),  # Higher score = more concentrated
-                        "dominant_tier": tier_labels[np.argmax(segment_data)],
-                        "dominant_percentage": np.max(segment_data)
-                    }
-                else:
-                    concentration_indices[f"segment_{i}"] = {
-                        "entropy": 0,
-                        "concentration_score": 1,
-                        "dominant_tier": tier_labels[0],
-                        "dominant_percentage": 0
-                    }
-            
-            # Trend analysis for each tier
-            trend_analysis = {}
-            if n_segments > 2:
-                time_indices = np.arange(n_segments)
-                for i, label in enumerate(tier_labels):
-                    tier_data = percent_matrix[i, :]
-                    trend_coef = np.polyfit(time_indices, tier_data, 1)[0]
-                    
-                    trend_analysis[label] = {
-                        "trend_slope": trend_coef,
-                        "trend_direction": "increasing" if trend_coef > 0 else "decreasing" if trend_coef < 0 else "stable",
-                        "trend_magnitude": abs(trend_coef),
-                        "first_half_mean": np.mean(tier_data[:n_segments//2]),
-                        "second_half_mean": np.mean(tier_data[n_segments//2:]),
-                        "change_magnitude": abs(np.mean(tier_data[n_segments//2:]) - np.mean(tier_data[:n_segments//2]))
-                    }
-            else:
-                for label in tier_labels:
-                    trend_analysis[label] = {
-                        "trend_slope": 0,
-                        "trend_direction": "insufficient_data",
-                        "trend_magnitude": 0,
-                        "first_half_mean": 0,
-                        "second_half_mean": 0,
-                        "change_magnitude": 0
-                    }
-            
-            # Overall statistics
-            overall_stats = {
-                "total_segments": n_segments,
+                trend_coef = np.polyfit(time_indices, tier_data, 1)[0]
+                
+                trend_analysis[label] = {
+                    "trend_slope": trend_coef,
+                    "trend_direction": "increasing" if trend_coef > 0 else "decreasing" if trend_coef < 0 else "stable",
+                    "trend_magnitude": abs(trend_coef),
+                    "first_half_mean": np.mean(tier_data[:n_segments//2]),
+                    "second_half_mean": np.mean(tier_data[n_segments//2:]),
+                    "change_magnitude": abs(np.mean(tier_data[n_segments//2:]) - np.mean(tier_data[:n_segments//2]))
+                }
+        else:
+            for label in tier_labels:
+                trend_analysis[label] = {
+                    "trend_slope": 0,
+                    "trend_direction": "insufficient_data",
+                    "trend_magnitude": 0,
+                    "first_half_mean": 0,
+                    "second_half_mean": 0,
+                    "change_magnitude": 0
+                }
+        
+        # Overall statistics
+        overall_stats = {
+            "total_segments": n_segments,
             "total_samples": plot_metadata['total_samples'],
             "segment_size": plot_metadata['segment_size'],
-                "most_stable_tier": min(temporal_stability.keys(), key=lambda x: temporal_stability[x]["coefficient_of_variation"]),
-                "most_variable_tier": max(temporal_stability.keys(), key=lambda x: temporal_stability[x]["coefficient_of_variation"]),
-                "average_entropy": np.mean([concentration_indices[f"segment_{i}"]["entropy"] for i in range(n_segments)]),
-                "average_concentration": np.mean([concentration_indices[f"segment_{i}"]["concentration_score"] for i in range(n_segments)])
-            }
-            
+            "most_stable_tier": min(temporal_stability.keys(), key=lambda x: temporal_stability[x]["coefficient_of_variation"]),
+            "most_variable_tier": max(temporal_stability.keys(), key=lambda x: temporal_stability[x]["coefficient_of_variation"]),
+            "average_entropy": np.mean([concentration_indices[f"segment_{i}"]["entropy"] for i in range(n_segments)]),
+            "average_concentration": np.mean([concentration_indices[f"segment_{i}"]["concentration_score"] for i in range(n_segments)])
+        }
+        
         stats_results = {
-                "tier_statistics": tier_statistics,
-                "temporal_stability": temporal_stability,
-                "concentration_indices": concentration_indices,
-                "trend_analysis": trend_analysis,
-                "overall_stats": overall_stats
-            }
-            
+            "tier_statistics": tier_statistics,
+            "temporal_stability": temporal_stability,
+            "concentration_indices": concentration_indices,
+            "trend_analysis": trend_analysis,
+            "overall_stats": overall_stats
+        }
+        
         return stats_results
 
     def _calculate_error(self, ref_data: np.ndarray, test_data: np.ndarray, params: dict) -> np.ndarray:
@@ -648,7 +580,6 @@ class StackedErrorTimeBandComparison(BaseComparison):
             
             # Get overlay options (prefer plot_config over kwargs)
             show_legend = plot_config.get('show_legend', self.kwargs.get('show_legend', True))
-            show_total_line = plot_config.get('show_total_line', self.kwargs.get('show_total_line', False))
             color_scheme = plot_config.get('color_scheme', self.kwargs.get('color_scheme', 'viridis'))
             transparency = plot_config.get('transparency', self.kwargs.get('transparency', 0.7))
             smooth_bands = plot_config.get('smooth_bands', self.kwargs.get('smooth_bands', False))
@@ -672,11 +603,6 @@ class StackedErrorTimeBandComparison(BaseComparison):
             
             # Create stacked area plot
             ax.stackplot(x_data, *percent_matrix, labels=tier_labels, colors=colors, alpha=transparency)
-            
-            # Add total error line if requested
-            if show_total_line:
-                total_error = np.sum(percent_matrix, axis=0)
-                ax.plot(x_data, total_error, 'k-', linewidth=2, label='Total Error')
             
             # Styling
             ax.set_xlabel('Time' if isinstance(x_data[0], (int, float)) and x_data[0] > 10 else 'Segment')
@@ -741,3 +667,39 @@ class StackedErrorTimeBandComparison(BaseComparison):
             },
             "output_types": ["stacked_area_chart", "statistics", "temporal_analysis", "distribution_metrics"]
         }
+
+    def _format_statistical_text(self, stats_results: Dict[str, Any]) -> List[str]:
+        """Format statistical results for text overlay."""
+        lines = []
+        
+        total_samples = stats_results.get('total_samples', 0)
+        if total_samples > 0:
+            lines.append(f"Total Samples: {total_samples}")
+        
+        mean_error = stats_results.get('mean_error', np.nan)
+        if not np.isnan(mean_error):
+            lines.append(f"Mean Error: {mean_error:.3f}")
+        
+        return lines
+    
+    def _get_overlay_functional_properties(self, overlay_id: str, overlay_type: str, 
+                                         stats_results: Dict[str, Any]) -> Dict[str, Any]:
+        """Get functional properties for stacked error overlays (no arbitrary styling)."""
+        properties = {}
+        
+        if overlay_id == 'show_mean_line' and overlay_type == 'line':
+            properties.update({
+                'y_value': stats_results.get('mean_error', 0),
+                'label': 'Mean Error'
+            })
+        elif overlay_id == 'show_statistical_results' and overlay_type == 'text':
+            properties.update({
+                'position': (0.02, 0.98),
+                'text_lines': self._format_statistical_text(stats_results)
+            })
+        elif overlay_id == 'show_legend' and overlay_type == 'legend':
+            properties.update({
+                'label': 'Legend'
+            })
+        
+        return properties

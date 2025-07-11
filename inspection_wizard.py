@@ -53,7 +53,12 @@ class DataTableWidget(QTableWidget):
         self.first_n_rows = 0
         self.last_m_rows = 0
     
-    def load_data(self, x_data: np.ndarray, y_data: np.ndarray, first_n: int = 100, last_m: int = 100, load_all: bool = False):
+    def set_column_headers(self, headers):
+        """Set the column headers dynamically"""
+        if len(headers) == 3:
+            self.setHorizontalHeaderLabels(headers)
+    
+    def load_data(self, x_data: np.ndarray, y_data: np.ndarray, first_n: int = 100, last_m: int = 100, load_all: bool = False, x_label: str = "X Value", y_label: str = "Y Value"):
         """Load X,Y data into the table with selective loading for large datasets"""
         if x_data is None or y_data is None:
             return
@@ -77,7 +82,7 @@ class DataTableWidget(QTableWidget):
             self.last_m_rows = 0
             
             self.setRowCount(data_length)
-            self.setHorizontalHeaderLabels(["Index", "X Value", "Y Value"])
+            self.setHorizontalHeaderLabels(["Index", x_label, y_label])
             
             # Populate table with all data
             for i in range(data_length):
@@ -103,7 +108,7 @@ class DataTableWidget(QTableWidget):
                 loaded_rows += 1  # Add separator row
             
             self.setRowCount(loaded_rows)
-            self.setHorizontalHeaderLabels(["Index", "X Value", "Y Value"])
+            self.setHorizontalHeaderLabels(["Index", x_label, y_label])
             
             row_index = 0
             
@@ -233,23 +238,34 @@ class DataTableWidget(QTableWidget):
 
 class InspectionWizard(QDialog):
     """
-    Data inspection and editing wizard for channel X,Y data
+    Data inspection and editing wizard for channel X,Y data or comparison pair data
     """
     
     data_updated = Signal(str)  # Emitted when channel data is updated (channel_id)
     
-    def __init__(self, channel: Channel, parent=None):
+    def __init__(self, data_source, parent=None):
         super().__init__(parent)
-        self.channel = channel
+        self.data_source = data_source
         self.has_unsaved_changes = False
         
-        self.setWindowTitle(f"Data Inspector - {channel.ylabel or 'Unnamed Channel'}")
+        # Determine if this is a channel or pair
+        self.is_pair_data = isinstance(data_source, dict) and 'ref_channel' in data_source
+        self.channel = data_source if not self.is_pair_data else None
+        self.pair_config = data_source if self.is_pair_data else None
+        
+        # Set window title based on data type
+        if self.is_pair_data:
+            pair_name = data_source.get('name', 'Unnamed Pair')
+            self.setWindowTitle(f"Pair Data Inspector - {pair_name}")
+        else:
+            self.setWindowTitle(f"Data Inspector - {data_source.ylabel or 'Unnamed Channel'}")
+        
         self.setModal(True)
         self.setMinimumSize(800, 600)
         self.resize(1000, 700)
         
         self.init_ui()
-        self.load_channel_data()
+        self.load_data()
         self.connect_signals()
     
     def init_ui(self):
@@ -268,8 +284,14 @@ class InspectionWizard(QDialog):
         
         header_layout.addStretch()
         
-        # Channel info
-        info_label = QLabel(f"Channel: {self.channel.ylabel or 'Unnamed'}")
+        # Data source info
+        if self.is_pair_data:
+            ref_label = self.pair_config.get('ref_channel', 'Unknown')
+            test_label = self.pair_config.get('test_channel', 'Unknown')
+            info_label = QLabel(f"Pair: {ref_label} vs {test_label}")
+        else:
+            info_label = QLabel(f"Channel: {self.channel.ylabel or 'Unnamed'}")
+        
         info_label.setStyleSheet("color: #666; font-size: 11px;")
         header_layout.addWidget(info_label)
         
@@ -294,9 +316,10 @@ class InspectionWizard(QDialog):
         button_layout = QHBoxLayout()
         
         # Left side buttons
-        self.reset_button = QPushButton("🔄 Reset")
-        self.reset_button.setToolTip("Reset all changes to original data")
-        button_layout.addWidget(self.reset_button)
+        if not self.is_pair_data:
+            self.reset_button = QPushButton("🔄 Reset")
+            self.reset_button.setToolTip("Reset all changes to original data")
+            button_layout.addWidget(self.reset_button)
         
         self.export_button = QPushButton("💾 Export")
         self.export_button.setToolTip("Export current data to file")
@@ -305,10 +328,11 @@ class InspectionWizard(QDialog):
         button_layout.addStretch()
         
         # Right side buttons
-        self.apply_button = QPushButton("✅ Apply Changes")
-        self.apply_button.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
-        self.apply_button.setEnabled(False)
-        button_layout.addWidget(self.apply_button)
+        if not self.is_pair_data:
+            self.apply_button = QPushButton("✅ Apply Changes")
+            self.apply_button.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
+            self.apply_button.setEnabled(False)
+            button_layout.addWidget(self.apply_button)
         
         self.cancel_button = QPushButton("❌ Cancel")
         button_layout.addWidget(self.cancel_button)
@@ -371,14 +395,25 @@ class InspectionWizard(QDialog):
         stats_layout = QGridLayout(stats_group)
         
         self.stats_labels = {}
-        stats_info = [
-            ("Total Points", "total_points"),
-            ("Loaded Rows", "loaded_rows"),
-            ("X Range", "x_range"),
-            ("Y Range", "y_range"),
-            ("Modified Points", "modified_points"),
-            ("Invalid Values", "invalid_values")
-        ]
+        
+        # Adapt statistics labels based on data type
+        if self.is_pair_data:
+            stats_info = [
+                ("Total Points", "total_points"),
+                ("Loaded Rows", "loaded_rows"),
+                ("Reference Range", "ref_range"),
+                ("Test Range", "test_range"),
+                ("Invalid Values", "invalid_values")
+            ]
+        else:
+            stats_info = [
+                ("Total Points", "total_points"),
+                ("Loaded Rows", "loaded_rows"),
+                ("X Range", "x_range"),
+                ("Y Range", "y_range"),
+                ("Modified Points", "modified_points"),
+                ("Invalid Values", "invalid_values")
+            ]
         
         for i, (label_text, key) in enumerate(stats_info):
             label = QLabel(f"{label_text}:")
@@ -430,9 +465,10 @@ class InspectionWizard(QDialog):
         # Filter operations
         filter_layout = QHBoxLayout()
         
-        self.show_modified_only = QCheckBox("Show modified only")
-        self.show_modified_only.toggled.connect(self.filter_table)
-        filter_layout.addWidget(self.show_modified_only)
+        if not self.is_pair_data:
+            self.show_modified_only = QCheckBox("Show modified only")
+            self.show_modified_only.toggled.connect(self.filter_table)
+            filter_layout.addWidget(self.show_modified_only)
         
         self.show_invalid_only = QCheckBox("Show invalid only")
         self.show_invalid_only.toggled.connect(self.filter_table)
@@ -451,7 +487,10 @@ class InspectionWizard(QDialog):
         
         # Table header with help text
         header_layout = QHBoxLayout()
-        table_header = QLabel("📊 Channel Data (Editable)")
+        if self.is_pair_data:
+            table_header = QLabel("📊 Aligned Pair Data (Read-Only)")
+        else:
+            table_header = QLabel("📊 Channel Data (Editable)")
         table_header.setStyleSheet("font-weight: bold; font-size: 12px; margin: 5px;")
         header_layout.addWidget(table_header)
         
@@ -478,9 +517,11 @@ class InspectionWizard(QDialog):
     def connect_signals(self):
         """Connect all signals"""
         self.data_table.data_changed.connect(self.on_data_changed)
-        self.reset_button.clicked.connect(self.reset_data)
+        if not self.is_pair_data:
+            self.reset_button.clicked.connect(self.reset_data)
         self.export_button.clicked.connect(self.export_data)
-        self.apply_button.clicked.connect(self.apply_changes)
+        if not self.is_pair_data:
+            self.apply_button.clicked.connect(self.apply_changes)
         self.cancel_button.clicked.connect(self.cancel_changes)
         
         # Search as you type
@@ -490,7 +531,14 @@ class InspectionWizard(QDialog):
         # self.reload_button.clicked.connect(self.reload_data_with_settings) - connected in create_controls_section
         # self.load_all_checkbox.toggled.connect(self.on_load_all_toggled) - connected in create_controls_section
     
-    def load_channel_data(self):
+    def load_data(self):
+        """Load data into the table - handles both channel and pair data"""
+        if self.is_pair_data:
+            self._load_pair_data()
+        else:
+            self._load_channel_data()
+    
+    def _load_channel_data(self):
         """Load the channel's X,Y data into the table with selective loading for large files"""
         if self.channel.xdata is not None and self.channel.ydata is not None:
             # Check file size and determine loading strategy
@@ -520,7 +568,9 @@ class InspectionWizard(QDialog):
                 self.channel.ydata, 
                 first_n=first_n, 
                 last_m=last_m, 
-                load_all=load_all
+                load_all=load_all,
+                x_label="X Value",
+                y_label="Y Value"
             )
             
             # Update controls
@@ -533,8 +583,154 @@ class InspectionWizard(QDialog):
             self.table_status.setText("No data available")
             QMessageBox.warning(self, "No Data", "This channel has no data to inspect.")
     
+    def _load_pair_data(self):
+        """Load aligned pair data into the table"""
+        print(f"[InspectionWizard] Loading pair data for: {self.pair_config.get('name', 'Unknown')}")
+        try:
+            # Get the aligned data from the comparison manager
+            from comparison_wizard_manager import ComparisonWizardManager
+            
+            # We need to get the aligned data from the comparison manager
+            # For now, we'll try to get it from the parent window if available
+            parent_window = self.parent()
+            aligned_data = None
+            
+            print(f"[InspectionWizard] Parent window has comparison_manager: {hasattr(parent_window, 'comparison_manager')}")
+            
+            if hasattr(parent_window, 'comparison_manager') and parent_window.comparison_manager:
+                # Try to get aligned data from the manager
+                ref_channel = parent_window.comparison_manager._get_channel(
+                    self.pair_config['ref_file'], 
+                    self.pair_config['ref_channel']
+                )
+                test_channel = parent_window.comparison_manager._get_channel(
+                    self.pair_config['test_file'], 
+                    self.pair_config['test_channel']
+                )
+                
+                print(f"[InspectionWizard] Found ref_channel: {ref_channel is not None}, test_channel: {test_channel is not None}")
+                
+                if ref_channel and test_channel:
+                    # Use DataAligner instead of legacy alignment method
+                    from data_aligner import DataAligner
+                    from pair import AlignmentConfig, AlignmentMethod
+                    
+                    data_aligner = DataAligner()
+                    alignment_config = AlignmentConfig(
+                        method=AlignmentMethod.INDEX,
+                        start_index=0,
+                        end_index=500
+                    )
+                    
+                    alignment_result = data_aligner.align_channels(
+                        ref_channel, test_channel, alignment_config
+                    )
+                    
+                    if alignment_result.success:
+                        aligned_data = {
+                            'ref_data': alignment_result.ref_data,
+                            'test_data': alignment_result.test_data,
+                            'ref_label': ref_channel.legend_label or ref_channel.ylabel,
+                            'test_label': test_channel.legend_label or test_channel.ylabel,
+                            'alignment_method': alignment_config.method.value,
+                            'n_points': len(alignment_result.ref_data)
+                        }
+                    else:
+                        print(f"[InspectionWizard] Alignment failed: {alignment_result.error_message}")
+                        return
+                    print(f"[InspectionWizard] Aligned data created: {aligned_data is not None}")
+            
+            if aligned_data is None:
+                # Fallback: try to get from cache or recreate
+                if hasattr(parent_window, 'comparison_manager') and parent_window.comparison_manager:
+                    pair_name = self.pair_config['name']
+                    cached_result = parent_window.comparison_manager.pair_cache.get_pair_result(pair_name)
+                    if cached_result:
+                        aligned_data = cached_result.computation_result.get('aligned_data')
+                        print(f"[InspectionWizard] Retrieved from cache: {aligned_data is not None}")
+                
+                if aligned_data is None:
+                    # Last resort: show error
+                    self.table_status.setText("Could not retrieve aligned data")
+                    QMessageBox.warning(self, "Data Error", "Could not retrieve aligned data for this pair.")
+                    return
+            
+            # Load the aligned data into the table
+            ref_data = aligned_data.get('ref_data', [])
+            test_data = aligned_data.get('test_data', [])
+            
+            print(f"[InspectionWizard] Data lengths - ref: {len(ref_data)}, test: {len(test_data)}")
+            
+            if len(ref_data) == 0 or len(test_data) == 0:
+                self.table_status.setText("No aligned data available")
+                QMessageBox.warning(self, "No Data", "No aligned data available for this pair.")
+                return
+            
+            # Check data size and determine loading strategy
+            data_length = len(ref_data)
+            
+            if data_length > 1000:
+                load_all = False
+                first_n = self.first_n_spin.value()
+                last_m = self.last_m_spin.value()
+                
+                if data_length > 10000:
+                    self.table_status.setText(f"⚠️ Large aligned dataset ({data_length:,} rows). Loading first {first_n} and last {last_m} rows for performance.")
+                else:
+                    self.table_status.setText(f"Loading first {first_n} and last {last_m} rows of {data_length:,} aligned rows.")
+            else:
+                load_all = True
+                first_n = data_length
+                last_m = 0
+                self.table_status.setText(f"Loaded {data_length:,} aligned data points")
+            
+            # Load data with appropriate strategy
+            ref_label = aligned_data.get('ref_label', 'Reference')
+            test_label = aligned_data.get('test_label', 'Test')
+            
+            print(f"[InspectionWizard] Loading data with labels: {ref_label}, {test_label}")
+            
+            self.data_table.load_data(
+                ref_data, 
+                test_data, 
+                first_n=first_n, 
+                last_m=last_m, 
+                load_all=load_all,
+                x_label=ref_label,
+                y_label=test_label
+            )
+            
+            # Make table read-only for pair data
+            self.data_table.setEditTriggers(QTableWidget.NoEditTriggers)
+            
+            # Update controls
+            self.goto_row_input.setMaximum(data_length - 1)
+            
+            # Store aligned data for later use
+            self.aligned_data = aligned_data
+            
+            print(f"[InspectionWizard] About to call update_statistics()")
+            
+            # Update statistics
+            self.update_statistics()
+            
+            print(f"[InspectionWizard] Pair data loading complete")
+            
+        except Exception as e:
+            self.table_status.setText(f"Error loading pair data: {str(e)}")
+            QMessageBox.critical(self, "Error", f"Failed to load pair data:\n{str(e)}")
+            import traceback
+            traceback.print_exc()
+    
     def reload_data_with_settings(self):
         """Reload data with current UI settings"""
+        if self.is_pair_data:
+            self._reload_pair_data_with_settings()
+        else:
+            self._reload_channel_data_with_settings()
+    
+    def _reload_channel_data_with_settings(self):
+        """Reload channel data with current UI settings"""
         if self.channel.xdata is not None and self.channel.ydata is not None:
             first_n = self.first_n_spin.value()
             last_m = self.last_m_spin.value()
@@ -545,7 +741,9 @@ class InspectionWizard(QDialog):
                 self.channel.ydata, 
                 first_n=first_n, 
                 last_m=last_m, 
-                load_all=load_all
+                load_all=load_all,
+                x_label="X Value",
+                y_label="Y Value"
             )
             
             # Update status
@@ -557,15 +755,56 @@ class InspectionWizard(QDialog):
             # Update statistics
             self.update_statistics()
     
+    def _reload_pair_data_with_settings(self):
+        """Reload pair data with current UI settings"""
+        if hasattr(self, 'aligned_data') and self.aligned_data:
+            first_n = self.first_n_spin.value()
+            last_m = self.last_m_spin.value()
+            load_all = self.load_all_checkbox.isChecked()
+            
+            ref_data = self.aligned_data.get('ref_data', [])
+            test_data = self.aligned_data.get('test_data', [])
+            
+            ref_label = self.aligned_data.get('ref_label', 'Reference')
+            test_label = self.aligned_data.get('test_label', 'Test')
+            
+            self.data_table.load_data(
+                ref_data, 
+                test_data, 
+                first_n=first_n, 
+                last_m=last_m, 
+                load_all=load_all,
+                x_label=ref_label,
+                y_label=test_label
+            )
+            
+            # Update status
+            if load_all:
+                self.table_status.setText(f"Loaded all {len(ref_data):,} aligned data points")
+            else:
+                self.table_status.setText(f"Loaded first {first_n} and last {last_m} rows of {len(ref_data):,} aligned rows")
+            
+            # Update statistics
+            self.update_statistics()
+        else:
+            # If no aligned data available, try to reload from scratch
+            self._load_pair_data()
+    
     def on_load_all_toggled(self, checked):
         """Handle load all checkbox toggle"""
         if checked:
             # Show confirmation dialog for large files
-            if self.channel.xdata is not None and len(self.channel.ydata) > 10000:
+            data_length = 0
+            if self.is_pair_data and hasattr(self, 'aligned_data') and self.aligned_data:
+                data_length = len(self.aligned_data.get('ref_data', []))
+            elif not self.is_pair_data and self.channel.ydata is not None:
+                data_length = len(self.channel.ydata)
+            
+            if data_length > 10000:
                 reply = QMessageBox.question(
                     self,
                     "Load All Data Warning",
-                    f"You are about to load {len(self.channel.ydata):,} rows.\n"
+                    f"You are about to load {data_length:,} rows.\n"
                     "This may take a long time and use significant memory.\n"
                     "Are you sure you want to continue?",
                     QMessageBox.Yes | QMessageBox.No,
@@ -586,6 +825,14 @@ class InspectionWizard(QDialog):
     
     def update_statistics(self):
         """Update the statistics display"""
+        print(f"[InspectionWizard] update_statistics called, is_pair_data: {self.is_pair_data}")
+        if self.is_pair_data:
+            self._update_pair_statistics()
+        else:
+            self._update_channel_statistics()
+    
+    def _update_channel_statistics(self):
+        """Update statistics for channel data"""
         if self.channel.xdata is None or self.channel.ydata is None:
             return
         
@@ -632,20 +879,109 @@ class InspectionWizard(QDialog):
         
         self.stats_labels["invalid_values"].setText(f"{invalid_count}")
     
+    def _update_pair_statistics(self):
+        """Update statistics for pair data"""
+        print(f"[InspectionWizard] Updating pair statistics...")
+        
+        if not hasattr(self, 'aligned_data') or not self.aligned_data:
+            print(f"[InspectionWizard] No aligned data available")
+            return
+        
+        ref_data = self.aligned_data.get('ref_data', [])
+        test_data = self.aligned_data.get('test_data', [])
+        
+        print(f"[InspectionWizard] Ref data length: {len(ref_data)}, Test data length: {len(test_data)}")
+        
+        if len(ref_data) == 0 or len(test_data) == 0:
+            print(f"[InspectionWizard] Empty data arrays")
+            return
+        
+        # Basic statistics
+        total_points = len(ref_data)
+        print(f"[InspectionWizard] Total points: {total_points}")
+        
+        if "total_points" in self.stats_labels:
+            self.stats_labels["total_points"].setText(f"{total_points:,}")
+        else:
+            print(f"[InspectionWizard] Warning: total_points label not found")
+        
+        # Loaded rows
+        loaded_rows = self.data_table.rowCount()
+        if self.data_table.is_subset_loaded:
+            # Subtract separator row if present
+            separator_count = 0
+            for row in range(self.data_table.rowCount()):
+                item = self.data_table.item(row, 1)
+                if item and "skipped" in item.text():
+                    separator_count += 1
+                    break
+            actual_loaded = loaded_rows - separator_count
+            if "loaded_rows" in self.stats_labels:
+                self.stats_labels["loaded_rows"].setText(f"{actual_loaded:,} (subset)")
+        else:
+            if "loaded_rows" in self.stats_labels:
+                self.stats_labels["loaded_rows"].setText(f"{loaded_rows:,} (all)")
+        
+        # Ranges for reference and test data
+        ref_min, ref_max = np.min(ref_data), np.max(ref_data)
+        test_min, test_max = np.min(test_data), np.max(test_data)
+        
+        print(f"[InspectionWizard] Ref range: {ref_min:.6g} to {ref_max:.6g}")
+        print(f"[InspectionWizard] Test range: {test_min:.6g} to {test_max:.6g}")
+        
+        if "ref_range" in self.stats_labels:
+            self.stats_labels["ref_range"].setText(f"{ref_min:.6g} to {ref_max:.6g}")
+        else:
+            print(f"[InspectionWizard] Warning: ref_range label not found")
+            
+        if "test_range" in self.stats_labels:
+            self.stats_labels["test_range"].setText(f"{test_min:.6g} to {test_max:.6g}")
+        else:
+            print(f"[InspectionWizard] Warning: test_range label not found")
+        
+        # Count invalid values (only in loaded data)
+        invalid_count = 0
+        for row in range(self.data_table.rowCount()):
+            for col in [1, 2]:  # Reference and Test columns
+                item = self.data_table.item(row, col)
+                if item and "skipped" not in item.text():
+                    try:
+                        float(item.text())
+                    except ValueError:
+                        invalid_count += 1
+        
+        print(f"[InspectionWizard] Invalid values: {invalid_count}")
+        
+        if "invalid_values" in self.stats_labels:
+            self.stats_labels["invalid_values"].setText(f"{invalid_count}")
+        else:
+            print(f"[InspectionWizard] Warning: invalid_values label not found")
+        
+        print(f"[InspectionWizard] Available stats labels: {list(self.stats_labels.keys())}")
+    
     def on_data_changed(self):
         """Handle when data in the table changes"""
         self.has_unsaved_changes = True
-        self.apply_button.setEnabled(True)
+        if not self.is_pair_data:
+            self.apply_button.setEnabled(True)
         self.update_statistics()
         
         # Update status
         modified_count = len(self.data_table.modified_rows)
         if modified_count > 0:
             self.table_status.setText(f"Modified: {modified_count} rows")
-            self.setWindowTitle(f"Data Inspector - {self.channel.ylabel or 'Unnamed Channel'} *")
+            if self.is_pair_data:
+                pair_name = self.pair_config.get('name', 'Unnamed Pair')
+                self.setWindowTitle(f"Pair Data Inspector - {pair_name} *")
+            else:
+                self.setWindowTitle(f"Data Inspector - {self.channel.ylabel or 'Unnamed Channel'} *")
         else:
             self.table_status.setText("No modifications")
-            self.setWindowTitle(f"Data Inspector - {self.channel.ylabel or 'Unnamed Channel'}")
+            if self.is_pair_data:
+                pair_name = self.pair_config.get('name', 'Unnamed Pair')
+                self.setWindowTitle(f"Pair Data Inspector - {pair_name}")
+            else:
+                self.setWindowTitle(f"Data Inspector - {self.channel.ylabel or 'Unnamed Channel'}")
     
     def goto_row(self):
         """Go to specific row in the table"""
@@ -685,7 +1021,9 @@ class InspectionWizard(QDialog):
     
     def filter_table(self):
         """Filter table based on checkboxes"""
-        show_modified = self.show_modified_only.isChecked()
+        show_modified = False
+        if hasattr(self, 'show_modified_only'):
+            show_modified = self.show_modified_only.isChecked()
         show_invalid = self.show_invalid_only.isChecked()
         
         if not show_modified and not show_invalid:
@@ -726,10 +1064,15 @@ class InspectionWizard(QDialog):
             if reply == QMessageBox.Yes:
                 self.data_table.reset_modifications()
                 self.has_unsaved_changes = False
-                self.apply_button.setEnabled(False)
+                if not self.is_pair_data:
+                    self.apply_button.setEnabled(False)
                 self.update_statistics()
                 self.table_status.setText("Data reset to original values")
-                self.setWindowTitle(f"Data Inspector - {self.channel.ylabel or 'Unnamed Channel'}")
+                if self.is_pair_data:
+                    pair_name = self.pair_config.get('name', 'Unnamed Pair')
+                    self.setWindowTitle(f"Pair Data Inspector - {pair_name}")
+                else:
+                    self.setWindowTitle(f"Data Inspector - {self.channel.ylabel or 'Unnamed Channel'}")
     
     def export_data(self):
         """Export current data to file"""
@@ -741,40 +1084,120 @@ class InspectionWizard(QDialog):
         )
     
     def apply_changes(self):
-        """Apply the changes to the channel"""
+        """Apply the changes to the data"""
         if not self.has_unsaved_changes:
             self.accept()
             return
         
         try:
-            # Get modified data
-            new_x_data, new_y_data = self.data_table.get_modified_data()
-            
-            if new_x_data is not None and new_y_data is not None:
-                # Update the channel
-                self.channel.xdata = new_x_data
-                self.channel.ydata = new_y_data
-                self.channel.modified_at = datetime.now()
-                
-                # Emit signal that data was updated
-                self.data_updated.emit(self.channel.channel_id)
-                
-                QMessageBox.information(
-                    self, 
-                    "Changes Applied", 
-                    f"Successfully updated {len(self.data_table.modified_rows)} data points."
-                )
-                
-                self.accept()
+            if self.is_pair_data:
+                self._apply_pair_changes()
             else:
-                QMessageBox.warning(self, "Error", "Failed to get modified data.")
-        
+                self._apply_channel_changes()
+                
         except Exception as e:
             QMessageBox.critical(
                 self, 
                 "Error Applying Changes", 
                 f"An error occurred while applying changes:\n{str(e)}"
             )
+    
+    def _apply_channel_changes(self):
+        """Apply changes to channel data"""
+        # Get modified data
+        new_x_data, new_y_data = self.data_table.get_modified_data()
+        
+        if new_x_data is not None and new_y_data is not None:
+            # Update the channel
+            self.channel.xdata = new_x_data
+            self.channel.ydata = new_y_data
+            self.channel.modified_at = datetime.now()
+            
+            # Emit signal that data was updated
+            self.data_updated.emit(self.channel.channel_id)
+            
+            QMessageBox.information(
+                self, 
+                "Changes Applied", 
+                f"Successfully updated {len(self.data_table.modified_rows)} data points."
+            )
+            
+            self.accept()
+        else:
+            QMessageBox.warning(self, "Error", "Failed to get modified data.")
+    
+    def _apply_pair_changes(self):
+        """Apply changes to pair data"""
+        # Get modified data
+        new_ref_data, new_test_data = self.data_table.get_modified_data()
+        
+        if new_ref_data is not None and new_test_data is not None:
+            # Update the aligned data
+            self.aligned_data['ref_data'] = new_ref_data
+            self.aligned_data['test_data'] = new_test_data
+            
+            # Try to update the comparison manager cache
+            parent_window = self.parent()
+            if hasattr(parent_window, 'comparison_manager') and parent_window.comparison_manager:
+                pair_name = self.pair_config['name']
+                
+                # Update the cached result if it exists
+                cached_result = parent_window.comparison_manager.pair_cache.get_pair_result(pair_name)
+                if cached_result:
+                    cached_result.computation_result['aligned_data'] = self.aligned_data
+                    cached_result.touch()  # Update timestamp
+                
+                # Recalculate statistics with modified data
+                try:
+                    # Use basic fallback statistics since this is just for inspection
+                    try:
+                        ref_data = self.aligned_data['ref_data']
+                        test_data = self.aligned_data['test_data']
+                        
+                        # Basic validation
+                        if ref_data is not None and test_data is not None and len(ref_data) > 0:
+                            valid_mask = np.isfinite(ref_data) & np.isfinite(test_data)
+                            if np.sum(valid_mask) > 3:
+                                ref_clean = ref_data[valid_mask]
+                                test_clean = test_data[valid_mask]
+                                
+                                # Basic correlation calculation
+                                if np.var(ref_clean) > 0 and np.var(test_clean) > 0:
+                                    correlation = np.corrcoef(ref_clean, test_clean)[0, 1]
+                                else:
+                                    correlation = np.nan
+                                
+                                # Basic RMS calculation
+                                differences = test_clean - ref_clean
+                                rms = np.sqrt(np.mean(differences ** 2))
+                                
+                                stats = {
+                                    'r': correlation,
+                                    'rms': rms,
+                                    'n': len(ref_clean),
+                                    'valid_ratio': len(ref_clean) / len(ref_data)
+                                }
+                            else:
+                                stats = {'r': np.nan, 'rms': np.nan, 'n': 0, 'error': 'Insufficient valid data'}
+                        else:
+                            stats = {'r': np.nan, 'rms': np.nan, 'n': 0, 'error': 'No data available'}
+                    except Exception as e:
+                        stats = {'r': np.nan, 'rms': np.nan, 'n': 0, 'error': str(e)}
+                    parent_window.comparison_manager.pair_statistics[pair_name] = stats
+                    parent_window.comparison_manager._update_pair_statistics(pair_name, stats)
+                except Exception as e:
+                    print(f"[InspectionWizard] Error recalculating statistics: {e}")
+            
+            QMessageBox.information(
+                self, 
+                "Changes Applied", 
+                f"Successfully updated {len(self.data_table.modified_rows)} aligned data points.\n"
+                "Note: Changes are applied to the aligned data only."
+            )
+            
+            self.accept()
+        else:
+            QMessageBox.warning(self, "Error", "Failed to get modified data.")
     
     def cancel_changes(self):
         """Cancel and close the dialog"""
@@ -820,4 +1243,18 @@ def inspect_channel_data(channel: Channel, parent=None):
         Dialog result (QDialog.Accepted or QDialog.Rejected)
     """
     wizard = InspectionWizard(channel, parent)
+    return wizard.exec()
+
+def inspect_pair_data(pair_config: dict, parent=None):
+    """
+    Open the data inspection wizard for a comparison pair
+    
+    Args:
+        pair_config: Pair configuration dictionary
+        parent: Parent widget
+    
+    Returns:
+        Dialog result (QDialog.Accepted or QDialog.Rejected)
+    """
+    wizard = InspectionWizard(pair_config, parent)
     return wizard.exec() 

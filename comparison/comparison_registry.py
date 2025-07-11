@@ -8,7 +8,7 @@ following the same pattern as MixerRegistry and ProcessRegistry.
 import os
 import importlib
 import inspect
-from typing import Type, Dict, List
+from typing import Type, Dict, List, Optional
 from comparison.base_comparison import BaseComparison
 
 class _ComparisonRegistry:
@@ -22,7 +22,7 @@ class _ComparisonRegistry:
             raise ValueError(f"{comparison_cls} must inherit from BaseComparison")
         self._registry[comparison_cls.name] = comparison_cls
 
-    def get(self, name: str) -> Type[BaseComparison]:
+    def get(self, name: str) -> Optional[Type[BaseComparison]]:
         if name not in self._registry:
             print(f"[ComparisonRegistry] Method '{name}' not found. Available methods: {list(self._registry.keys())}")
             return None

@@ -401,7 +401,7 @@ class ProcessWizardWindow(QMainWindow):
         self.spectrogram_ax = self.spectrogram_figure.add_subplot(111)
         # Initialize colorbar list for spectrogram figure
         self.spectrogram_figure._colorbar_list = []
-        # Set initial layout
+        # Set initial layout with space for right colorbar
         self.spectrogram_figure.subplots_adjust(right=0.85, left=0.1, top=0.9, bottom=0.1)
         self.spectrogram_canvas = FigureCanvas(self.spectrogram_figure)
         self.spectrogram_toolbar = NavigationToolbar(self.spectrogram_canvas, spectrogram_tab)
@@ -1033,16 +1033,16 @@ class ProcessWizardWindow(QMainWindow):
                     x_max = x_max + (x_max - x_min) * 0.02
                     self.spectrogram_ax.set_xlim(x_min, x_max)
                 
-                # Add colorbar below the plot, closer and thinner
+                # Add colorbar on the right side
                 cbar = self.spectrogram_figure.colorbar(im, ax=self.spectrogram_ax, 
-                                                      orientation='horizontal', pad=0.05, aspect=30)
+                                                      orientation='vertical', pad=0.05, aspect=20)
                 cbar.set_label(cbar_label)
                 
                 if hasattr(self.spectrogram_figure, '_colorbar_list'):
                     self.spectrogram_figure._colorbar_list.append(cbar)
                     
         self.spectrogram_ax.set_title(f"File: {active_channel.filename}")
-        self.spectrogram_figure.tight_layout(rect=[0, 0.08, 1, 1])  # leave space for colorbar
+        self.spectrogram_figure.tight_layout(rect=[0, 0.1, 0.85, 1])  # leave space for colorbar on right
         self.spectrogram_canvas.draw()
 
     def _update_bar_chart_plot(self, lineage, active_channel):
@@ -1092,7 +1092,7 @@ class ProcessWizardWindow(QMainWindow):
         self.spectrogram_figure.set_size_inches(spectrogram_size)
         self.bar_chart_figure.set_size_inches(bar_chart_size)
         
-        # Ensure spectrogram layout is maintained
+        # Ensure spectrogram layout is maintained with space for right colorbar
         self.spectrogram_figure.subplots_adjust(right=0.85, left=0.1, top=0.9, bottom=0.1)
         
         # Redraw all canvases to ensure proper display

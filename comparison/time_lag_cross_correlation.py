@@ -30,11 +30,9 @@ class TimeLagCrossCorrelationComparison(BaseComparison):
     
     # Parameters following mixer/steps pattern
     params = [
-        {"name": "max_lag_seconds", "type": "float", "default": 5.0, "help": "Maximum lag to compute (in seconds)"},
-        {"name": "sampling_rate", "type": "float", "default": 100.0, "help": "Sampling rate (Hz)"},
-        {"name": "normalize", "type": "bool", "default": True, "help": "Normalize cross-correlation values"},
-        {"name": "detrend", "type": "bool", "default": True, "help": "Remove mean from signals before correlation"},
-        {"name": "confidence_level", "type": "float", "default": 0.95, "help": "Confidence level for statistical significance"}
+        {"name": "max_lag", "type": "int", "default": 100, "min": 0, "max": 10000, "help": "Maximum lag to compute cross-correlation. Large values may slow down analysis."},
+        {"name": "step", "type": "int", "default": 1, "min": 1, "max": 100, "help": "Step size for lag increments."},
+        {"name": "threshold", "type": "float", "default": 0.5, "min": 0.0, "max": 1.0, "decimals": 3, "help": "Correlation threshold (0.0–1.0 for normalized data)."}
     ]
     
     # Plot configuration
@@ -42,12 +40,10 @@ class TimeLagCrossCorrelationComparison(BaseComparison):
     
     # Overlay options - defines which overlay controls should be shown in the wizard
     overlay_options = {
-        'show_peak_lag': {'default': True, 'label': 'Show Peak Lag', 'tooltip': 'Show vertical line at peak correlation lag'},
-        'show_zero_lag': {'default': True, 'label': 'Show Zero Lag', 'tooltip': 'Show vertical line at zero lag reference'},
-        'show_significance_threshold': {'default': True, 'label': 'Show Significance Threshold', 'tooltip': 'Show statistical significance threshold'},
-        'show_confidence_bands': {'default': False, 'label': 'Show Confidence Bands', 'tooltip': 'Show confidence bands around correlation'},
-        'highlight_significant_lags': {'default': True, 'label': 'Highlight Significant Lags', 'tooltip': 'Highlight statistically significant correlation peaks'},
-        'show_statistical_results': {'default': True, 'label': 'Show Statistical Results', 'tooltip': 'Display correlation statistics on the plot'}
+        'show_peak_lag': {'default': True, 'label': 'Show Peak Lag', 'tooltip': 'Show vertical line at peak correlation lag', 'type': 'line'},
+        'show_zero_lag': {'default': True, 'label': 'Show Zero Lag', 'tooltip': 'Show vertical line at zero lag reference', 'type': 'line'},
+        'show_significance_threshold': {'default': True, 'label': 'Show Significance Threshold', 'tooltip': 'Show statistical significance threshold', 'type': 'line'},
+        'show_statistical_results': {'default': True, 'label': 'Show Statistical Results', 'tooltip': 'Display correlation statistics on the plot', 'type': 'text'}
     }
     
     def apply(self, ref_data: np.ndarray, test_data: np.ndarray, 
@@ -288,10 +284,11 @@ class TimeLagCrossCorrelationComparison(BaseComparison):
         if plot_config.get('show_grid', True):
             ax.grid(True, alpha=0.3)
         
-        # Add legend if there are overlays
-        handles, labels = ax.get_legend_handles_labels()
-        if handles:
-            ax.legend(loc='best')
+        # Add legend if requested
+        if plot_config.get('show_legend', True):
+            handles, labels = ax.get_legend_handles_labels()
+            if handles:
+                ax.legend(loc='best')
     
     def _analyze_correlation_peaks(self, lags_seconds: np.ndarray, xcorr_values: np.ndarray) -> Dict[str, Any]:
         """Analyze correlation peaks and find optimal lag."""
@@ -423,7 +420,10 @@ class TimeLagCrossCorrelationComparison(BaseComparison):
                                       plot_config: Dict[str, Any]) -> None:
         """Create the main cross-correlation plot."""
         # Main correlation plot
-        ax.plot(lags_seconds, xcorr_values, 'b-', linewidth=1.5, label='Cross-Correlation')
+        if plot_config.get('show_legend', True):
+            ax.plot(lags_seconds, xcorr_values, 'b-', linewidth=1.5, label='Cross-Correlation')
+        else:
+            ax.plot(lags_seconds, xcorr_values, 'b-', linewidth=1.5)
         
         # Fill positive and negative areas with different colors
         ax.fill_between(lags_seconds, 0, xcorr_values, where=(xcorr_values >= 0), 
@@ -440,50 +440,56 @@ class TimeLagCrossCorrelationComparison(BaseComparison):
         
         # Peak lag line
         if plot_config.get('show_peak_lag', True) and 'peak_analysis' in stats_results:
-            self._add_peak_lag_line(ax, stats_results['peak_analysis'])
+            self._add_peak_lag_line(ax, stats_results['peak_analysis'], plot_config.get('show_legend', True))
         
         # Zero lag reference line
         if plot_config.get('show_zero_lag', True):
-            ax.axvline(x=0, color='black', linestyle='--', linewidth=1, alpha=0.7, label='Zero Lag')
+            if plot_config.get('show_legend', True):
+                ax.axvline(x=0, color='black', linestyle='--', linewidth=1, alpha=0.7, label='Zero Lag')
+            else:
+                ax.axvline(x=0, color='black', linestyle='--', linewidth=1, alpha=0.7)
         
         # Significance threshold
         if plot_config.get('show_significance_threshold', True) and 'significance' in stats_results:
-            self._add_significance_threshold(ax, stats_results['significance'])
-        
-        # Highlight significant lags
-        if plot_config.get('highlight_significant_lags', True) and 'significance' in stats_results:
-            self._highlight_significant_lags(ax, lags_seconds, xcorr_values, stats_results['significance'])
+            self._add_significance_threshold(ax, stats_results['significance'], plot_config.get('show_legend', True))
         
         # Confidence bands
         if plot_config.get('show_confidence_bands', False) and 'significance' in stats_results:
-            self._add_confidence_bands(ax, lags_seconds, stats_results['significance'])
+            self._add_confidence_bands(ax, lags_seconds, stats_results['significance'], plot_config.get('show_legend', True))
         
         # Statistical results text
         if plot_config.get('show_statistical_results', True):
             self._add_statistical_text_box(ax, stats_results, plot_config)
     
-    def _add_peak_lag_line(self, ax, peak_analysis: Dict[str, Any]) -> None:
+    def _add_peak_lag_line(self, ax, peak_analysis: Dict[str, Any], show_legend: bool = True) -> None:
         """Add vertical line at peak correlation lag."""
         try:
             peak_lag = peak_analysis.get('peak_lag_seconds', np.nan)
             peak_correlation = peak_analysis.get('peak_correlation', np.nan)
             
             if not np.isnan(peak_lag) and not np.isnan(peak_correlation):
-                ax.axvline(x=peak_lag, color='red', linestyle='-', linewidth=2, 
-                          label=f'Peak Lag: {peak_lag:.3f}s')
+                if show_legend:
+                    ax.axvline(x=peak_lag, color='red', linestyle='-', linewidth=2, 
+                              label=f'Peak Lag: {peak_lag:.3f}s')
+                else:
+                    ax.axvline(x=peak_lag, color='red', linestyle='-', linewidth=2)
                 ax.plot(peak_lag, peak_correlation, 'ro', markersize=8, zorder=5)
         except Exception as e:
             print(f"[TimeLagCrossCorrelation] Error adding peak lag line: {e}")
     
-    def _add_significance_threshold(self, ax, significance: Dict[str, Any]) -> None:
+    def _add_significance_threshold(self, ax, significance: Dict[str, Any], show_legend: bool = True) -> None:
         """Add significance threshold lines."""
         try:
             threshold = significance.get('significance_threshold', np.nan)
             
             if not np.isnan(threshold):
-                ax.axhline(y=threshold, color='green', linestyle='--', alpha=0.7, 
-                          label=f'Significance: ±{threshold:.3f}')
-                ax.axhline(y=-threshold, color='green', linestyle='--', alpha=0.7)
+                if show_legend:
+                    ax.axhline(y=threshold, color='green', linestyle='--', alpha=0.7, 
+                              label=f'Significance: ±{threshold:.3f}')
+                    ax.axhline(y=-threshold, color='green', linestyle='--', alpha=0.7)
+                else:
+                    ax.axhline(y=threshold, color='green', linestyle='--', alpha=0.7)
+                    ax.axhline(y=-threshold, color='green', linestyle='--', alpha=0.7)
         except Exception as e:
             print(f"[TimeLagCrossCorrelation] Error adding significance threshold: {e}")
     
@@ -496,67 +502,98 @@ class TimeLagCrossCorrelationComparison(BaseComparison):
             if not np.isnan(threshold):
                 significant_mask = np.abs(xcorr_values) > threshold
                 if np.any(significant_mask):
+                    # This method is not currently called, but fix for completeness
+                    # Should add show_legend parameter when called
                     ax.scatter(lags_seconds[significant_mask], xcorr_values[significant_mask], 
-                              color='orange', s=30, alpha=0.8, label='Significant', zorder=4)
+                              color='orange', s=30, alpha=0.8, zorder=4)
         except Exception as e:
             print(f"[TimeLagCrossCorrelation] Error highlighting significant lags: {e}")
     
-    def _add_confidence_bands(self, ax, lags_seconds: np.ndarray, significance: Dict[str, Any]) -> None:
+    def _add_confidence_bands(self, ax, lags_seconds: np.ndarray, significance: Dict[str, Any], show_legend: bool = True) -> None:
         """Add confidence bands around zero correlation."""
         try:
             threshold = significance.get('significance_threshold', np.nan)
             
             if not np.isnan(threshold):
-                ax.fill_between(lags_seconds, -threshold, threshold, 
-                               alpha=0.2, color='gray', label='Confidence Band')
+                if show_legend:
+                    ax.fill_between(lags_seconds, -threshold, threshold, 
+                                   alpha=0.2, color='gray', label='Confidence Band')
+                else:
+                    ax.fill_between(lags_seconds, -threshold, threshold, 
+                                   alpha=0.2, color='gray')
         except Exception as e:
             print(f"[TimeLagCrossCorrelation] Error adding confidence bands: {e}")
     
     def _add_statistical_text_box(self, ax, stats_results: Dict[str, Any], plot_config: Dict[str, Any]) -> None:
         """Add statistical results text box to the plot."""
-        text_lines = self._format_statistical_text(stats_results, plot_config)
+        text_lines = self._format_statistical_text(stats_results)
         if text_lines:
             text_str = '\n'.join(text_lines)
             ax.text(0.02, 0.98, text_str, transform=ax.transAxes, fontsize=9,
                    verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
     
-    def _format_statistical_text(self, stats_results: Dict[str, Any], plot_config: Dict[str, Any] = None) -> List[str]:
-        """Format statistical results for display on plot."""
-        text_lines = []
+    def _format_statistical_text(self, stats_results: Dict[str, Any]) -> List[str]:
+        """Format statistical results for text overlay."""
+        lines = []
         
-        if plot_config is None:
-            plot_config = {}
-        
-        # Peak analysis
         if 'peak_analysis' in stats_results:
             peak_stats = stats_results['peak_analysis']
             peak_lag = peak_stats.get('peak_lag_seconds', np.nan)
-            peak_corr = peak_stats.get('peak_correlation', np.nan)
-            zero_lag_corr = peak_stats.get('zero_lag_correlation', np.nan)
-            
             if not np.isnan(peak_lag):
-                text_lines.append(f"Peak Lag: {peak_lag:.3f}s")
-            if not np.isnan(peak_corr):
-                text_lines.append(f"Peak Corr: {peak_corr:.3f}")
-            if not np.isnan(zero_lag_corr):
-                text_lines.append(f"Zero Lag: {zero_lag_corr:.3f}")
-        
-        # Correlation statistics
-        if 'correlation_stats' in stats_results:
-            corr_stats = stats_results['correlation_stats']
-            max_abs_corr = corr_stats.get('max_abs_correlation', np.nan)
+                lines.append(f"Peak Lag: {peak_lag:.3f}s")
             
-            if not np.isnan(max_abs_corr):
-                text_lines.append(f"Max |Corr|: {max_abs_corr:.3f}")
+            peak_corr = peak_stats.get('peak_correlation', np.nan)
+            if not np.isnan(peak_corr):
+                lines.append(f"Peak Corr: {peak_corr:.3f}")
         
-        # Significance
         if 'significance' in stats_results:
             sig_stats = stats_results['significance']
             n_significant = sig_stats.get('n_significant', 0)
             sig_pct = sig_stats.get('significance_percentage', 0)
-            text_lines.append(f"Significant: {n_significant} ({sig_pct:.1f}%)")
+            lines.append(f"Significant: {n_significant} ({sig_pct:.1f}%)")
         
-        return text_lines
+        return lines
+    
+    def _get_overlay_functional_properties(self, overlay_id: str, overlay_type: str, 
+                                         stats_results: Dict[str, Any]) -> Dict[str, Any]:
+        """Get functional properties for cross-correlation overlays (no arbitrary styling)."""
+        properties = {}
+        
+        if overlay_id == 'show_peak_lag' and overlay_type == 'line':
+            properties.update({
+                'x_value': stats_results.get('peak_analysis', {}).get('peak_lag_seconds', 0),
+                'label': 'Peak Lag'
+            })
+        elif overlay_id == 'show_zero_lag' and overlay_type == 'line':
+            properties.update({
+                'x_value': 0,
+                'label': 'Zero Lag'
+            })
+        elif overlay_id == 'show_significance_threshold' and overlay_type == 'line':
+            properties.update({
+                'y_values': [
+                    stats_results.get('significance', {}).get('significance_threshold', 0),
+                    -stats_results.get('significance', {}).get('significance_threshold', 0)
+                ],
+                'label': 'Significance Threshold'
+            })
+        elif overlay_id == 'show_confidence_bands' and overlay_type == 'fill':
+            properties.update({
+                'fill_between': True,
+                'confidence_intervals': stats_results.get('significance', {}),
+                'label': 'Confidence Bands'
+            })
+        elif overlay_id == 'show_statistical_results' and overlay_type == 'text':
+            properties.update({
+                'position': (0.02, 0.98),
+                'text_lines': self._format_statistical_text(stats_results)
+            })
+        elif overlay_id == 'show_legend' and overlay_type == 'legend':
+            properties.update({
+                'label': 'Legend'
+            })
+        
+        return properties
     
     @classmethod
     def get_comparison_guidance(cls):

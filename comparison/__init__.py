@@ -10,7 +10,6 @@ Available comparison methods:
 - Bland-Altman analysis for method comparison
 - Residual analysis with multiple fitting methods
 - Error distribution histogram analysis
-- Relative error time series analysis
 - Time lag cross-correlation analysis
 """
 

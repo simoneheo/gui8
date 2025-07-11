@@ -42,12 +42,13 @@ class BaseComparison(ABC):
         Args:
             **kwargs: Parameter values for the comparison method
         """
-        self.kwargs = kwargs
+        # Parse and validate parameters with min/max constraints
+        self.kwargs = self.parse_input(kwargs)
         self.results = {}
         self.metadata = {
             'method': self.name,
             'version': self.version,
-            'parameters': kwargs.copy()
+            'parameters': self.kwargs.copy()
         }
     
     def get_info(self) -> Dict[str, Any]:
@@ -70,15 +71,25 @@ class BaseComparison(ABC):
         return info
     
     @classmethod
+    def get_parameters(cls) -> List[Dict[str, Any]]:
+        """
+        Get the parameters definition for this comparison method.
+        
+        Returns:
+            List of parameter dictionaries with name, type, default, etc.
+        """
+        return cls.params
+    
+    @classmethod
     def parse_input(cls, user_input: dict) -> dict:
         """
-        Parse and validate user input parameters.
+        Parse and validate user input parameters with min/max constraints.
         
         Args:
             user_input: Dictionary of user-provided parameters
             
         Returns:
-            Dictionary of validated parameters with defaults
+            Dictionary of validated parameters with defaults and clamped values
         """
         parsed = {}
         for param in cls.params:
@@ -101,6 +112,17 @@ class BaseComparison(ABC):
                         parsed[name] = bool(value)
                 else:
                     parsed[name] = value
+                
+                # Apply min/max constraints for numeric types
+                if param_type in ["float", "int"]:
+                    min_value = param.get("min_value")
+                    max_value = param.get("max_value")
+                    
+                    if min_value is not None and parsed[name] < min_value:
+                        parsed[name] = min_value
+                    if max_value is not None and parsed[name] > max_value:
+                        parsed[name] = max_value
+                        
             except (ValueError, TypeError):
                 # If conversion fails, use default or keep as string
                 parsed[name] = param.get("default", value)
@@ -157,6 +179,87 @@ class BaseComparison(ABC):
             stats_results: Statistical results from calculate_stats method
         """
         pass
+    
+    def generate_overlays(self, stats_results: Dict[str, Any]) -> List['Overlay']:
+        """
+        Generate overlay objects for this comparison method.
+        
+        This method creates Overlay objects with functional properties (no arbitrary styling).
+        Each comparison method can override this to provide method-specific overlays.
+        
+        Args:
+            stats_results: Combined statistical results from all pairs
+            
+        Returns:
+            List of Overlay objects with functional properties set
+        """
+        from overlay import Overlay
+        
+        overlays = []
+        
+        # Check if this comparison has overlay_options defined
+        if not hasattr(self, 'overlay_options'):
+            return overlays
+        
+        # Generate overlays based on method's overlay_options
+        for overlay_id, overlay_config in self.overlay_options.items():
+            try:
+                # Get overlay type from configuration
+                overlay_type = overlay_config.get('type', 'line')
+                
+                # Get functional properties for this overlay
+                functional_properties = self._get_overlay_functional_properties(
+                    overlay_id, overlay_type, stats_results
+                )
+                
+                # Create overlay object with functional properties only
+                overlay = Overlay(
+                    id=f"{self.name}_{overlay_id}",
+                    name=overlay_config.get('label', overlay_id),
+                    type=overlay_type,
+                    style=functional_properties,  # Only functional properties, no styling
+                    channel=self.name,  # Associate with method
+                    show=overlay_config.get('default', True),
+                    tags=[self.name, overlay_id, overlay_type]
+                )
+                
+                overlays.append(overlay)
+                
+            except Exception as e:
+                print(f"[{self.name}] Error creating overlay {overlay_id}: {e}")
+        
+        return overlays
+    
+    def _get_overlay_functional_properties(self, overlay_id: str, overlay_type: str, 
+                                         stats_results: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Get functional properties for a specific overlay.
+        
+        This is a default implementation that subclasses should override
+        to provide method-specific overlay properties.
+        
+        Args:
+            overlay_id: The overlay identifier
+            overlay_type: The overlay type (line, text, fill, etc.)
+            stats_results: Statistical results
+            
+        Returns:
+            Dictionary of functional properties (no arbitrary styling)
+        """
+        properties = {}
+        
+        # Default implementation - subclasses should override this
+        if overlay_type == 'text' and 'statistical' in overlay_id:
+            properties.update({
+                'position': (0.02, 0.98),
+                'text_lines': [f"Method: {self.name}"]
+            })
+        elif overlay_type == 'line':
+            properties.update({
+                'label': overlay_id.replace('_', ' ').title()
+            })
+        
+        return properties
     
     def _validate_input_data(self, ref_data: np.ndarray, test_data: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -268,7 +371,8 @@ class BaseComparison(ABC):
         
         try:
             if density_type == 'hexbin':
-                bin_size = plot_config.get('bin_size', 20)
+                # Check for both parameter names for compatibility
+                bin_size = plot_config.get('hexbin_gridsize', plot_config.get('bin_size', 20))
                 # Check for zero range (would cause ZeroDivisionError)
                 if np.ptp(x_data) == 0 or np.ptp(y_data) == 0:
                     print("[Performance] Zero range detected, falling back to scatter plot")
@@ -382,16 +486,18 @@ class BaseComparison(ABC):
             y_min -= 0.1 * y_range
             y_max += 0.1 * y_range
             
-            # Create meshgrid
-            xx, yy = np.mgrid[x_min:x_max:50j, y_min:y_max:50j]
+            # Create meshgrid with configurable resolution
+            bins = plot_config.get('bins', 50)  # Use bins parameter for grid resolution
+            xx, yy = np.mgrid[x_min:x_max:complex(bins), y_min:y_max:complex(bins)]
             positions = np.vstack([xx.ravel(), yy.ravel()])
             
             # Evaluate KDE
             f = np.reshape(kde(positions).T, xx.shape)
             
-            # Plot contours
-            ax.contourf(xx, yy, f, levels=10, cmap='viridis', alpha=0.6)
-            ax.contour(xx, yy, f, levels=10, colors='black', alpha=0.3, linewidths=0.5)
+            # Plot contours with configurable levels
+            contour_levels = plot_config.get('contour_levels', 10)
+            ax.contourf(xx, yy, f, levels=contour_levels, cmap='viridis', alpha=0.6)
+            ax.contour(xx, yy, f, levels=contour_levels, colors='black', alpha=0.3, linewidths=0.5)
             
             # Overlay scatter points with individual pair styling if available
             pair_styling = plot_config.get('pair_styling', [])
@@ -430,8 +536,12 @@ class BaseComparison(ABC):
         if plot_config.get('show_identity_line', False):
             min_val = min(np.min(ref_data), np.min(test_data))
             max_val = max(np.max(ref_data), np.max(test_data))
-            ax.plot([min_val, max_val], [min_val, max_val], 'k--', alpha=0.8, 
-                   linewidth=2, label='Perfect Agreement')
+            if plot_config.get('show_legend', False):
+                ax.plot([min_val, max_val], [min_val, max_val], 'k--', alpha=0.8, 
+                       linewidth=2, label='Perfect Agreement')
+            else:
+                ax.plot([min_val, max_val], [min_val, max_val], 'k--', alpha=0.8, 
+                       linewidth=2)
         
         # Add regression line
         if plot_config.get('show_regression_line', False):
@@ -451,8 +561,11 @@ class BaseComparison(ABC):
             custom_line_value = plot_config.get('custom_line_value', plot_config.get('custom_line', 0.0))
             try:
                 line_value = float(custom_line_value)
-                ax.axhline(y=line_value, color='red', linestyle=':', alpha=0.7, 
-                          label=f'Custom: {line_value}')
+                if plot_config.get('show_legend', False):
+                    ax.axhline(y=line_value, color='red', linestyle=':', alpha=0.7, 
+                              label=f'Custom: {line_value}')
+                else:
+                    ax.axhline(y=line_value, color='red', linestyle=':', alpha=0.7)
             except (ValueError, TypeError):
                 pass
         
@@ -468,6 +581,8 @@ class BaseComparison(ABC):
             x_line = np.array([np.min(ref_data), np.max(ref_data)])
             y_line = slope * x_line + intercept
             
+            # Check if we should add labels (this method doesn't get plot_config, so check from caller)
+            # For now, always add label - individual methods should override if needed
             ax.plot(x_line, y_line, 'r-', alpha=0.8, linewidth=2, 
                    label=f'Regression (r={r_value:.3f})')
             

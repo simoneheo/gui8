@@ -20,9 +20,9 @@ from line_wizard import LineWizard
 from metadata_wizard import MetadataWizard
 from inspection_wizard import InspectionWizard
 from transform_wizard import TransformWizard
-
-# Import the new wizard managers
+from comparison_wizard_window import ComparisonWizardWindow
 from comparison_wizard_manager import ComparisonWizardManager
+
 from export_wizard_manager import ExportWizardManager
 from signal_mixer_wizard_manager import SignalMixerWizardManager
 from process_wizard_manager import ProcessWizardManager
@@ -1121,8 +1121,13 @@ Recommendations:
                 file_manager=self.file_manager,
                 channel_manager=self.channel_manager,
                 signal_bus=None,  # Add signal bus if available
-                parent=self
+                parent=self,
+                selected_file_id=self.selected_file_id  # Pass the currently selected file
             )
+            
+            # Connect signals from the comparison wizard manager
+            self.comparison_wizard_manager.comparison_completed.connect(self._on_comparison_completed)
+            self.comparison_wizard_manager.wizard_closed.connect(self._on_comparison_wizard_closed)
             
             # Show the wizard window
             self.comparison_wizard_manager.show()
@@ -1648,3 +1653,38 @@ Recommendations:
             self.plot_manager.update_plot(channels)
             self.plot_manager.plot_canvas.fig.canvas.draw()
             self.plot_manager.plot_canvas.fig.canvas.flush_events()
+
+    def _on_comparison_completed(self, result):
+        """Handle when comparison wizard completes an action"""
+        try:
+            result_type = result.get('type', 'unknown')
+            
+            if result_type == 'pair_added':
+                pair_data = result.get('data', {})
+                pair_name = pair_data.get('name', 'Unnamed')
+                self.log_message(f"Comparison pair added: {pair_name}", "success")
+                
+            elif result_type == 'pair_deleted':
+                self.log_message("Comparison pair deleted", "info")
+                
+            elif result_type == 'plot_generated':
+                plot_data = result.get('data', {})
+                self.log_message("Comparison plot generated successfully", "success")
+                
+            # Refresh the main window to show any new comparison channels
+            self.refresh_channel_table()
+            
+        except Exception as e:
+            self.log_message(f"Error handling comparison completion: {str(e)}", "error")
+    
+    def _on_comparison_wizard_closed(self):
+        """Handle when comparison wizard is closed"""
+        try:
+            self.log_message("Comparison Wizard closed", "info")
+            
+            # Clean up the manager reference
+            if hasattr(self, 'comparison_wizard_manager'):
+                del self.comparison_wizard_manager
+                
+        except Exception as e:
+            self.log_message(f"Error handling comparison wizard close: {str(e)}", "error")

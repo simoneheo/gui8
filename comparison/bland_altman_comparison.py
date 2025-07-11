@@ -28,25 +28,19 @@ class BlandAltmanComparison(BaseComparison):
     
     # Parameters following mixer/steps pattern
     params = [
-        {"name": "agreement_multiplier", "type": "float", "default": 1.96, "help": "Multiplier for limits of agreement (typically 1.96 for 95% limits)"},
-        {"name": "test_proportional_bias", "type": "bool", "default": True, "help": "Test for proportional bias using regression"},
-        {"name": "percentage_difference", "type": "bool", "default": False, "help": "Calculate percentage differences instead of absolute"},
-        {"name": "confidence_level", "type": "float", "default": 0.95, "help": "Confidence level for confidence intervals"},
-        {"name": "bootstrap_samples", "type": "int", "default": 1000, "help": "Number of bootstrap samples for confidence intervals"},
-        {"name": "remove_outliers", "type": "bool", "default": False, "help": "Remove outliers before analysis"},
-        {"name": "outlier_method", "type": "str", "default": "iqr", "help": "Outlier detection method: iqr, zscore"}
+        {"name": "percentage_difference", "type": "bool", "default": False, "help": "Show differences as percentages instead of absolute values"},
+        {"name": "remove_outliers", "type": "bool", "default": False, "help": "Remove outliers before calculating agreement statistics"},
+        {"name": "outlier_method", "type": "str", "default": "iqr", "options": ["iqr", "zscore"], "help": "Method for detecting outliers: IQR (robust) or Z-score (assumes normal distribution)"}
     ]
     
     # Plot configuration
-    plot_type = "bland_altman"
+    plot_type = "scatter"
     
     # Overlay options - defines which overlay controls should be shown in the wizard
     overlay_options = {
-        'show_bias_line': {'default': True, 'label': 'Show Bias Line', 'tooltip': 'Show horizontal line at mean difference (bias)'},
-        'show_limits_of_agreement': {'default': True, 'label': 'Show Limits of Agreement', 'tooltip': 'Show upper and lower limits of agreement'},
-        'show_confidence_intervals': {'default': True, 'label': 'Show Confidence Intervals', 'tooltip': 'Show confidence intervals around bias and limits'},
-        'highlight_outliers': {'default': False, 'label': 'Highlight Outliers', 'tooltip': 'Highlight outlier points on the plot'},
-        'show_statistical_results': {'default': False, 'label': 'Show Statistical Results', 'tooltip': 'Display statistical results on the plot'}
+        'show_bias_line': {'default': True, 'label': 'Show Bias Line', 'tooltip': 'Show horizontal line at mean difference (bias)', 'type': 'line'},
+        'show_limits_of_agreement': {'default': True, 'label': 'Show Limits of Agreement', 'tooltip': 'Show upper and lower limits of agreement', 'type': 'line'},
+        'show_statistical_results': {'default': False, 'label': 'Show Statistical Results', 'tooltip': 'Display statistical results on the plot', 'type': 'text'}
     }
     
     def apply(self, ref_data: np.ndarray, test_data: np.ndarray, 
@@ -256,14 +250,7 @@ class BlandAltmanComparison(BaseComparison):
                 stats_results['std_diff'] = 0.0
                 stats_results['upper_loa'] = 0.0
                 stats_results['lower_loa'] = 0.0
-                stats_results['proportional_bias'] = {
-                    'slope': 0.0,
-                    'intercept': 0.0,
-                    'r_value': 1.0,
-                    'p_value': 1.0,
-                    'significant': False,
-                    'interpretation': "Perfect agreement (identical data)"
-                }
+
                 return stats_results
             else:
                 raise ValueError("Bias calculation produced NaN - check input data")
@@ -318,54 +305,16 @@ class BlandAltmanComparison(BaseComparison):
             upper_loa = bias
             lower_loa = bias
         else:
-            # Limits of agreement
-            agreement_multiplier = params.get('agreement_multiplier', 1.96)
+            # Limits of agreement (using standard 1.96 for 95% limits)
+            agreement_multiplier = 1.96
             upper_loa = bias + agreement_multiplier * std_diff
             lower_loa = bias - agreement_multiplier * std_diff
         
-        # === PROPORTIONAL BIAS TEST (expanded inline) ===
-        proportional_bias = None
-        if params.get('test_proportional_bias', True):
-            try:
-                # Handle same-channel comparison (zero variance) gracefully
-                if std_diff == 0.0:
-                    proportional_bias = {
-                        'slope': 0.0,
-                        'intercept': bias,
-                        'r_value': 1.0 if bias == 0.0 else 0.0,
-                        'p_value': 1.0,
-                        'std_err': 0.0,
-                        'significant': False,
-                        'interpretation': "Perfect agreement (identical data)" if bias == 0.0 else "Constant bias (identical data)"
-                    }
-                else:
-                    # Linear regression to test for proportional bias
-                    slope, intercept, r_value, p_value, std_err = stats.linregress(x_data, y_data)
-                    
-                    # Test if slope is significantly different from zero
-                    t_stat = slope / std_err if std_err != 0 else 0
-                    df = len(x_data) - 2
-                    p_value_slope = 2 * (1 - stats.t.cdf(abs(t_stat), df)) if df > 0 else 1.0
-                    
-                    proportional_bias = {
-                        'slope': slope,
-                        'intercept': intercept,
-                        'r_value': r_value,
-                        'p_value': p_value_slope,
-                        'std_err': std_err,
-                        'significant': p_value_slope < 0.05,
-                        'interpretation': "Significant proportional bias detected" if p_value_slope < 0.05 else "No significant proportional bias"
-                    }
-            except Exception as e:
-                proportional_bias = {
-                    'error': str(e),
-                    'significant': False,
-                    'interpretation': "Could not test for proportional bias"
-                }
+
         
         # === CONFIDENCE INTERVALS (expanded inline) ===
         n = len(y_data)
-        confidence_level = params.get('confidence_level', 0.95)
+        confidence_level = 0.95  # Standard 95% confidence level
         alpha = 1 - confidence_level
         
         # Handle same-channel comparison (zero variance) gracefully
@@ -404,11 +353,10 @@ class BlandAltmanComparison(BaseComparison):
             'upper_loa': upper_loa,
             'lower_loa': lower_loa,
             'agreement_limits': (lower_loa, upper_loa),
-            'proportional_bias': proportional_bias,
             'confidence_intervals': confidence_intervals,
             'n_samples': len(y_data),
             'n_valid': len(y_data),
-            'agreement_multiplier': agreement_multiplier
+            'agreement_multiplier': 1.96  # Standard value for reference
         }
         
         return stats_results
@@ -483,16 +431,23 @@ class BlandAltmanComparison(BaseComparison):
                 
                 # Create scatter plot for this pair
                 # Only add label if legend is enabled
-                pair_label = f"{pair_name} (n={len(means_clean)})" if plot_config.get('show_legend', False) else None
-                
-                ax.scatter(means_clean, differences_clean, 
-                          marker=marker, 
-                          s=50, 
-                          c=color, 
-                          alpha=0.6,
-                          edgecolors='black',
-                          linewidth=0.5,
-                          label=pair_label)
+                if plot_config.get('show_legend', False):
+                    ax.scatter(means_clean, differences_clean, 
+                              marker=marker, 
+                              s=50, 
+                              c=color, 
+                              alpha=0.6,
+                              edgecolors='black',
+                              linewidth=0.5,
+                              label=f"{pair_name} (n={len(means_clean)})")
+                else:
+                    ax.scatter(means_clean, differences_clean, 
+                              marker=marker, 
+                              s=50, 
+                              c=color, 
+                              alpha=0.6,
+                              edgecolors='black',
+                              linewidth=0.5)
             
             # Add legend if multiple pairs and legend is enabled
             if len(pair_styling) > 1 and plot_config.get('show_legend', False):
@@ -581,10 +536,14 @@ class BlandAltmanComparison(BaseComparison):
             bias_alpha = bias_config.get('alpha', 0.8)
             
             # Only add label if legend is enabled
-            label = f'Bias: {bias:.3f}' if show_legend else None
-            ax.axhline(y=bias, color=bias_color, linestyle=bias_style, linewidth=bias_width, 
-                      alpha=bias_alpha, label=label)
-            print(f"[DEBUG] Bias line drawn at y={bias:.3f} with color {bias_color}, label: {label}")
+            if show_legend:
+                ax.axhline(y=bias, color=bias_color, linestyle=bias_style, linewidth=bias_width, 
+                          alpha=bias_alpha, label=f'Bias: {bias:.3f}')
+                print(f"[DEBUG] Bias line drawn at y={bias:.3f} with color {bias_color}, label: Bias: {bias:.3f}")
+            else:
+                ax.axhline(y=bias, color=bias_color, linestyle=bias_style, linewidth=bias_width, 
+                          alpha=bias_alpha)
+                print(f"[DEBUG] Bias line drawn at y={bias:.3f} with color {bias_color}, no label")
         
         # Add limits of agreement
         show_loa = plot_config.get('show_limits_of_agreement', True)
@@ -598,14 +557,18 @@ class BlandAltmanComparison(BaseComparison):
             loa_alpha = loa_config.get('alpha', 0.8)
             
             # Only add labels if legend is enabled
-            upper_label = f'Upper LoA: {upper_loa:.3f}' if show_legend else None
-            lower_label = f'Lower LoA: {lower_loa:.3f}' if show_legend else None
-            
-            ax.axhline(y=upper_loa, color=loa_color, linestyle=loa_style, linewidth=loa_width, 
-                      alpha=loa_alpha, label=upper_label)
-            ax.axhline(y=lower_loa, color=loa_color, linestyle=loa_style, linewidth=loa_width, 
-                      alpha=loa_alpha, label=lower_label)
-            print(f"[DEBUG] LoA lines drawn at y={lower_loa:.3f} and y={upper_loa:.3f} with color {loa_color}, labels: {upper_label}, {lower_label}")
+            if show_legend:
+                ax.axhline(y=upper_loa, color=loa_color, linestyle=loa_style, linewidth=loa_width, 
+                          alpha=loa_alpha, label=f'Upper LoA: {upper_loa:.3f}')
+                ax.axhline(y=lower_loa, color=loa_color, linestyle=loa_style, linewidth=loa_width, 
+                          alpha=loa_alpha, label=f'Lower LoA: {lower_loa:.3f}')
+                print(f"[DEBUG] LoA lines drawn at y={lower_loa:.3f} and y={upper_loa:.3f} with color {loa_color}, with labels")
+            else:
+                ax.axhline(y=upper_loa, color=loa_color, linestyle=loa_style, linewidth=loa_width, 
+                          alpha=loa_alpha)
+                ax.axhline(y=lower_loa, color=loa_color, linestyle=loa_style, linewidth=loa_width, 
+                          alpha=loa_alpha)
+                print(f"[DEBUG] LoA lines drawn at y={lower_loa:.3f} and y={upper_loa:.3f} with color {loa_color}, no labels")
         
         # Add confidence intervals for bias and limits
         # Check both parameter names for backward compatibility
@@ -639,10 +602,14 @@ class BlandAltmanComparison(BaseComparison):
                 print(f"[DEBUG] Drawing bias CI: {bias_lower:.3f} to {bias_upper:.3f}, x_range: [{x_min:.3f}, {x_max:.3f}]")
                 if bias_lower != bias_upper:  # Only draw if there's a meaningful interval
                     bias_ci_color = bias_config.get('color', '#2ecc71')  # Same as bias line
-                    bias_ci_label = 'Bias 95% CI' if show_legend else None
-                    ax.fill_between([x_min, x_max], bias_lower, bias_upper, 
-                                   alpha=ci_alpha, color=bias_ci_color, label=bias_ci_label)
-                    print(f"[DEBUG] Bias CI drawn successfully with color {bias_ci_color}, label: {bias_ci_label}")
+                    if show_legend:
+                        ax.fill_between([x_min, x_max], bias_lower, bias_upper, 
+                                       alpha=ci_alpha, color=bias_ci_color, label='Bias 95% CI')
+                        print(f"[DEBUG] Bias CI drawn successfully with color {bias_ci_color}, with label")
+                    else:
+                        ax.fill_between([x_min, x_max], bias_lower, bias_upper, 
+                                       alpha=ci_alpha, color=bias_ci_color)
+                        print(f"[DEBUG] Bias CI drawn successfully with color {bias_ci_color}, no label")
                 else:
                     print(f"[DEBUG] Bias CI not drawn - identical bounds")
             
@@ -654,19 +621,27 @@ class BlandAltmanComparison(BaseComparison):
                 
                 # Draw lower LoA confidence interval
                 if loa_lower_ci[0] != loa_lower_ci[1]:
-                    lower_loa_ci_label = 'Lower LoA 95% CI' if show_legend else None
-                    ax.fill_between([x_min, x_max], loa_lower_ci[0], loa_lower_ci[1], 
-                                   alpha=ci_alpha, color=loa_ci_color, label=lower_loa_ci_label)
-                    print(f"[DEBUG] Lower LoA CI drawn successfully with color {loa_ci_color}, label: {lower_loa_ci_label}")
+                    if show_legend:
+                        ax.fill_between([x_min, x_max], loa_lower_ci[0], loa_lower_ci[1], 
+                                       alpha=ci_alpha, color=loa_ci_color, label='Lower LoA 95% CI')
+                        print(f"[DEBUG] Lower LoA CI drawn successfully with color {loa_ci_color}, with label")
+                    else:
+                        ax.fill_between([x_min, x_max], loa_lower_ci[0], loa_lower_ci[1], 
+                                       alpha=ci_alpha, color=loa_ci_color)
+                        print(f"[DEBUG] Lower LoA CI drawn successfully with color {loa_ci_color}, no label")
                 else:
                     print(f"[DEBUG] Lower LoA CI not drawn - identical bounds")
                     
                 # Draw upper LoA confidence interval (same color as lower LoA CI)
                 if loa_upper_ci[0] != loa_upper_ci[1]:
-                    upper_loa_ci_label = 'Upper LoA 95% CI' if show_legend else None
-                    ax.fill_between([x_min, x_max], loa_upper_ci[0], loa_upper_ci[1], 
-                                   alpha=ci_alpha, color=loa_ci_color, label=upper_loa_ci_label)
-                    print(f"[DEBUG] Upper LoA CI drawn successfully with color {loa_ci_color}, label: {upper_loa_ci_label}")
+                    if show_legend:
+                        ax.fill_between([x_min, x_max], loa_upper_ci[0], loa_upper_ci[1], 
+                                       alpha=ci_alpha, color=loa_ci_color, label='Upper LoA 95% CI')
+                        print(f"[DEBUG] Upper LoA CI drawn successfully with color {loa_ci_color}, with label")
+                    else:
+                        ax.fill_between([x_min, x_max], loa_upper_ci[0], loa_upper_ci[1], 
+                                       alpha=ci_alpha, color=loa_ci_color)
+                        print(f"[DEBUG] Upper LoA CI drawn successfully with color {loa_ci_color}, no label")
                 else:
                     print(f"[DEBUG] Upper LoA CI not drawn - identical bounds")
     
@@ -675,35 +650,59 @@ class BlandAltmanComparison(BaseComparison):
 
     
     def _format_statistical_text(self, stats_results: Dict[str, Any]) -> List[str]:
-        """Format statistical results for display on plot."""
-        text_lines = []
+        """Format statistical results for text overlay."""
+        lines = []
         
-        # Add bias
         bias = stats_results.get('bias', np.nan)
         if not np.isnan(bias):
-            text_lines.append(f"Bias: {bias:.3f}")
+            lines.append(f"Bias: {bias:.3f}")
         
-        # Add limits of agreement
         upper_loa = stats_results.get('upper_loa', np.nan)
         lower_loa = stats_results.get('lower_loa', np.nan)
         if not np.isnan(upper_loa) and not np.isnan(lower_loa):
-            text_lines.append(f"LoA: [{lower_loa:.3f}, {upper_loa:.3f}]")
+            lines.append(f"LoA: [{lower_loa:.3f}, {upper_loa:.3f}]")
         
-        # Add proportional bias result
-        if 'proportional_bias' in stats_results:
-            prop_bias = stats_results['proportional_bias']
-            if 'significant' in prop_bias:
-                if prop_bias['significant']:
-                    text_lines.append(f"Proportional bias: Yes (p={prop_bias.get('p_value', 'N/A'):.3f})")
-                else:
-                    text_lines.append("Proportional bias: No")
-        
-        # Add sample size
         n_samples = stats_results.get('n_samples', 0)
         if n_samples > 0:
-            text_lines.append(f"N: {n_samples}")
+            lines.append(f"N: {n_samples}")
         
-        return text_lines
+        return lines
+    
+    def _get_overlay_functional_properties(self, overlay_id: str, overlay_type: str, 
+                                         stats_results: Dict[str, Any]) -> Dict[str, Any]:
+        """Get functional properties for Bland-Altman overlays (no arbitrary styling)."""
+        properties = {}
+        
+        if overlay_id == 'show_bias_line' and overlay_type == 'line':
+            properties.update({
+                'y_value': stats_results.get('bias', 0),
+                'label': f'Bias: {stats_results.get("bias", 0):.3f}'
+            })
+        elif overlay_id == 'show_limits_of_agreement' and overlay_type == 'line':
+            properties.update({
+                'y_values': [
+                    stats_results.get('lower_loa', 0),
+                    stats_results.get('upper_loa', 0)
+                ],
+                'label': 'Limits of Agreement'
+            })
+        elif overlay_id == 'show_confidence_intervals' and overlay_type == 'fill':
+            properties.update({
+                'fill_between': True,
+                'confidence_intervals': stats_results.get('confidence_intervals', {}),
+                'label': '95% Confidence Intervals'
+            })
+        elif overlay_id == 'show_statistical_results' and overlay_type == 'text':
+            properties.update({
+                'position': (0.02, 0.98),
+                'text_lines': self._format_statistical_text(stats_results)
+            })
+        elif overlay_id == 'show_legend' and overlay_type == 'legend':
+            properties.update({
+                'label': 'Legend'
+            })
+        
+        return properties
     
     @classmethod
     def get_comparison_guidance(cls):
@@ -714,7 +713,6 @@ class BlandAltmanComparison(BaseComparison):
             "interpretation": {
                 "bias": "Mean difference between methods (systematic error)",
                 "limits_of_agreement": "Range within which 95% of differences are expected to lie",
-                "proportional_bias": "Whether bias changes with magnitude of measurement",
                 "confidence_intervals": "Uncertainty ranges for bias and limits of agreement"
             },
             "use_cases": [
@@ -726,7 +724,6 @@ class BlandAltmanComparison(BaseComparison):
             "tips": [
                 "Look for bias (mean difference) close to zero",
                 "Check if limits of agreement are clinically acceptable",
-                "Test for proportional bias (trend in differences)",
                 "Consider percentage differences for ratio data",
                 "Remove outliers cautiously - they may be real differences"
             ]
