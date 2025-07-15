@@ -357,5 +357,105 @@ class PairManager:
             'pairs_by_channel': {channel_id: len(pairs) for channel_id, pairs in self._pairs_by_channel.items()}
         }
     
-    
-    
+    def get_visible_data_bounds(self, channel_manager=None) -> dict:
+        """
+        Extract xmin, xmax, ymin, ymax for all pairs with show=True.
+        
+        Args:
+            channel_manager: Optional channel manager to access channel data.
+                           If None, will try to use aligned data from pairs.
+        
+        Returns:
+            dict: Dictionary with keys 'xmin', 'xmax', 'ymin', 'ymax' containing
+                  the overall bounds of all visible pairs' data.
+        """
+        import numpy as np
+        
+        # Initialize bounds with None to detect if we have any valid data
+        bounds: dict = {
+            'xmin': None,
+            'xmax': None,
+            'ymin': None,
+            'ymax': None
+        }
+        
+        # Get all visible pairs
+        visible_pairs = [pair for pair in self._pairs.values() if pair.show]
+        
+        if not visible_pairs:
+            print("[PairManager] DEBUG: No visible pairs found for bounds calculation")
+            return bounds
+        
+        print(f"[PairManager] DEBUG: Calculating bounds for {len(visible_pairs)} visible pairs")
+        for pair in visible_pairs:
+            print(f"[PairManager] DEBUG: Visible pair: {pair.name} (id: {pair.pair_id})")
+        
+        print(f"[PairManager] Calculating bounds for {len(visible_pairs)} visible pairs")
+        
+        # Collect all data points from visible pairs
+        all_x_values = []
+        all_y_values = []
+        
+        for pair in visible_pairs:
+            try:
+                # Try to get data from aligned data first (if available)
+                if pair.has_aligned_data():
+                    aligned_data = pair.get_aligned_data()
+                    ref_data = aligned_data.get('ref_data')
+                    test_data = aligned_data.get('test_data')
+                    if ref_data is not None and test_data is not None:
+                        # For comparison plots, x is typically ref_data and y is test_data
+                        # Convert to numpy arrays and flatten
+                        ref_array = np.array(ref_data)
+                        test_array = np.array(test_data)
+                        all_x_values.extend(ref_array.flatten())
+                        all_y_values.extend(test_array.flatten())
+                        continue
+                
+                # If no aligned data, try to get data from channels via channel manager
+                if channel_manager is not None:
+                    # Get reference channel
+                    if pair.ref_channel_id:
+                        ref_channel = channel_manager.get_channel(pair.ref_channel_id)
+                        if ref_channel and ref_channel.xdata is not None and ref_channel.ydata is not None:
+                            all_x_values.extend(ref_channel.xdata.flatten())
+                            all_y_values.extend(ref_channel.ydata.flatten())
+                    
+                    # Get test channel
+                    if pair.test_channel_id:
+                        test_channel = channel_manager.get_channel(pair.test_channel_id)
+                        if test_channel and test_channel.xdata is not None and test_channel.ydata is not None:
+                            all_x_values.extend(test_channel.xdata.flatten())
+                            all_y_values.extend(test_channel.ydata.flatten())
+                
+            except Exception as e:
+                print(f"[PairManager] Error processing pair {pair.name} for bounds: {e}")
+                continue
+        
+        # Calculate bounds if we have data
+        if all_x_values and all_y_values:
+            try:
+                # Convert to numpy arrays for efficient computation
+                x_array = np.array(all_x_values)
+                y_array = np.array(all_y_values)
+                
+                # Filter out NaN and infinite values
+                x_finite = x_array[np.isfinite(x_array)]
+                y_finite = y_array[np.isfinite(y_array)]
+                
+                if len(x_finite) > 0 and len(y_finite) > 0:
+                    bounds['xmin'] = float(np.min(x_finite))
+                    bounds['xmax'] = float(np.max(x_finite))
+                    bounds['ymin'] = float(np.min(y_finite))
+                    bounds['ymax'] = float(np.max(y_finite))
+                    
+                    print(f"[PairManager] Calculated bounds: x=[{bounds['xmin']:.3f}, {bounds['xmax']:.3f}], y=[{bounds['ymin']:.3f}, {bounds['ymax']:.3f}]")
+                else:
+                    print("[PairManager] No finite values found in data")
+                    
+            except Exception as e:
+                print(f"[PairManager] Error calculating bounds: {e}")
+        else:
+            print("[PairManager] No data found in visible pairs")
+        
+        return bounds

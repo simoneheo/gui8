@@ -13,6 +13,16 @@ import numpy as np
 import re
 import hashlib
 from datetime import datetime
+from channel import SourceType
+import ast
+import textwrap
+import sys
+import os
+import json
+from typing import Dict, Any, List, Optional, Tuple
+
+# Import the reusable DataAlignerWidget
+from data_aligner_window import DataAlignerWidget
 
 
 class ScriptChangeTracker:
@@ -201,7 +211,7 @@ class ComparisonWizardWindow(QWidget):
     
     # Signals for communication
     pair_added = Signal(dict)
-    pair_deleted = Signal()
+    pair_deleted = Signal(dict)
     plot_generated = Signal(dict)
     
     def __init__(self, file_manager=None, channel_manager=None, signal_bus=None, parent=None):
@@ -441,10 +451,6 @@ class ComparisonWizardWindow(QWidget):
         plot_tab = self._create_plot_script_tab()
         self.method_tabs.addTab(plot_tab, "📊 Plot Script")
         
-        # Stat Script tab
-        stat_tab = self._create_stat_script_tab()
-        self.method_tabs.addTab(stat_tab, "📈 Stat Script")
-        
         layout.addWidget(group)
         
     def _create_parameters_tab(self):
@@ -526,39 +532,7 @@ class ComparisonWizardWindow(QWidget):
         
         return plot_tab
 
-    def _create_stat_script_tab(self):
-        """Create the statistics script tab with modification tracking"""
-        stat_tab = QWidget()
-        layout = QVBoxLayout(stat_tab)
-        
-        # Header with modification status
-        header_layout = QHBoxLayout()
-        header_label = QLabel("Statistics Script:")
-        header_label.setFont(QFont("Arial", 10, QFont.Bold))
-        header_layout.addWidget(header_label)
-        
-        # Modification status label
-        self.stats_script_status_label = QLabel("Default")
-        self.stats_script_status_label.setStyleSheet("color: gray; font-style: italic;")
-        header_layout.addWidget(self.stats_script_status_label)
-        header_layout.addStretch()
-        
-        # Reset button
-        self.reset_stats_script_btn = QPushButton("Reset to Default")
-        self.reset_stats_script_btn.setMaximumWidth(120)
-        self.reset_stats_script_btn.clicked.connect(self._reset_stats_script)
-        header_layout.addWidget(self.reset_stats_script_btn)
-        
-        layout.addLayout(header_layout)
-        
-        # Script text area
-        self.stats_script_text = QTextEdit()
-        self.stats_script_text.setFont(QFont("Consolas", 10))
-        self.stats_script_text.setPlaceholderText("Statistics script will be loaded when a comparison method is selected...")
-        self.stats_script_text.textChanged.connect(self._on_stats_script_changed)
-        layout.addWidget(self.stats_script_text)
-        
-        return stat_tab
+
 
     def _create_performance_options_group(self, layout):
         """Create performance options group"""
@@ -620,9 +594,9 @@ class ComparisonWizardWindow(QWidget):
         """)
         buttons_layout.addWidget(self.refresh_plot_btn)
         
-        # Add configuration button to demonstrate dynamic parameter capture
-        self.show_config_btn = QPushButton("Show Configuration")
-        self.show_config_btn.setStyleSheet("""
+        # Add export data button
+        self.export_data_btn = QPushButton("Export Data")
+        self.export_data_btn.setStyleSheet("""
             QPushButton {
                 background-color: #27ae60;
                 color: white;
@@ -635,59 +609,36 @@ class ComparisonWizardWindow(QWidget):
                 background-color: #229954;
             }
         """)
-        self.show_config_btn.clicked.connect(self._show_configuration_dialog)
-        buttons_layout.addWidget(self.show_config_btn)
+        self.export_data_btn.clicked.connect(self._export_data)
+        buttons_layout.addWidget(self.export_data_btn)
         
         layout.addLayout(buttons_layout)
         
-    def _show_configuration_dialog(self):
-        """Show current configuration in a dialog"""
+
+    def _export_data(self):
+        """Export current analysis data to Excel format"""
         try:
-            from PySide6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QPushButton, QHBoxLayout
+            # Check if we have a manager reference
+            if not hasattr(self, 'manager') or not self.manager:
+                if hasattr(self, 'info_output'):
+                    self.info_output.append("Export Data: Exports currently plotted data and statistics to Excel format")
+                    self.info_output.append("Run analysis first to generate data for export")
+                return
             
-            dialog = QDialog(self)
-            dialog.setWindowTitle("Current Configuration")
-            dialog.setMinimumSize(600, 400)
-            
-            layout = QVBoxLayout(dialog)
-            
-            # Configuration text area
-            config_text = QTextEdit()
-            config_text.setFont(QFont("Consolas", 10))
-            config_text.setReadOnly(True)
-            config_text.setPlainText(self.get_configuration_summary())
-            layout.addWidget(config_text)
-            
-            # Buttons
-            buttons_layout = QHBoxLayout()
-            
-            copy_btn = QPushButton("Copy to Clipboard")
-            copy_btn.clicked.connect(lambda: self._copy_to_clipboard(config_text.toPlainText()))
-            buttons_layout.addWidget(copy_btn)
-            
-            close_btn = QPushButton("Close")
-            close_btn.clicked.connect(dialog.close)
-            buttons_layout.addWidget(close_btn)
-            
-            layout.addLayout(buttons_layout)
-            
-            dialog.exec()
+            # Check if analysis results exist
+            if not hasattr(self.manager, '_last_analysis_results') or not self.manager._last_analysis_results:
+                if hasattr(self, 'info_output'):
+                    self.info_output.append("Export Data: Exports currently plotted data and statistics to Excel format")
+                    self.info_output.append("Run analysis first to generate data for export")
+                return
+                
+            # Call the manager's export method
+            self.manager._export_analysis_data()
             
         except Exception as e:
-            print(f"[ComparisonWizard] Error showing configuration dialog: {e}")
-    
-    def _copy_to_clipboard(self, text):
-        """Copy text to clipboard"""
-        try:
-            from PySide6.QtGui import QClipboard
-            from PySide6.QtWidgets import QApplication
-            
-            clipboard = QApplication.clipboard()
-            clipboard.setText(text)
-            print("[ComparisonWizard] Configuration copied to clipboard")
-            
-        except Exception as e:
-            print(f"[ComparisonWizard] Error copying to clipboard: {e}")
+            print(f"[ComparisonWizard] Error exporting data: {e}")
+            if hasattr(self, 'info_output'):
+                self.info_output.append(f"Error exporting data: {e}")
     
     def _create_channel_selection_group(self, layout):
         """Create channel selection group"""
@@ -718,96 +669,13 @@ class ComparisonWizardWindow(QWidget):
         layout.addWidget(group)
         
     def _create_alignment_group(self, layout):
-        """Create data alignment controls"""
-        group = QGroupBox("Data Alignment")
-        group.setStyleSheet("QGroupBox { font-weight: bold; }")
-        group_layout = QVBoxLayout(group)
+        """Create data alignment controls using the reusable DataAlignerWidget"""
+        self.data_aligner_widget = DataAlignerWidget(self)
         
-        # Alignment mode
-        mode_layout = QHBoxLayout()
-        mode_layout.addWidget(QLabel("Alignment Mode:"))
-        self.alignment_mode_combo = QComboBox()
-        self.alignment_mode_combo.addItems(["Index-Based", "Time-Based"])
-        mode_layout.addWidget(self.alignment_mode_combo)
-        group_layout.addLayout(mode_layout)
+        # Connect to parameter changes
+        self.data_aligner_widget.parameters_changed.connect(self._on_alignment_parameters_changed)
         
-        # Index-based options
-        self.index_group = QGroupBox("Index Options")
-        index_layout = QFormLayout(self.index_group)
-        
-        self.index_mode_combo = QComboBox()
-        self.index_mode_combo.addItems(["Truncate to Shortest", "Custom Range"])
-        index_layout.addRow("Mode:", self.index_mode_combo)
-        
-        self.start_index_spin = QSpinBox()
-        self.start_index_spin.setRange(0, 999999)
-        index_layout.addRow("Start Index:", self.start_index_spin)
-        
-        self.end_index_spin = QSpinBox()
-        self.end_index_spin.setRange(0, 999999)
-        index_layout.addRow("End Index:", self.end_index_spin)
-        
-        self.index_offset_spin = QSpinBox()
-        self.index_offset_spin.setRange(-999999, 999999)
-        index_layout.addRow("Offset:", self.index_offset_spin)
-        
-        group_layout.addWidget(self.index_group)
-        
-        # Time-based options
-        self.time_group = QGroupBox("Time Options")
-        time_layout = QFormLayout(self.time_group)
-        
-        self.time_mode_combo = QComboBox()
-        self.time_mode_combo.addItems(["Overlap Region", "Custom Range"])
-        time_layout.addRow("Mode:", self.time_mode_combo)
-        
-        self.start_time_spin = QDoubleSpinBox()
-        self.start_time_spin.setRange(-999999999.0, 999999999.0)
-        self.start_time_spin.setDecimals(9)
-        self.start_time_spin.setSingleStep(0.1)
-        self.start_time_spin.setKeyboardTracking(True)
-        time_layout.addRow("Start Time:", self.start_time_spin)
-        
-        self.end_time_spin = QDoubleSpinBox()
-        self.end_time_spin.setRange(-999999999.0, 999999999.0)
-        self.end_time_spin.setDecimals(9)
-        self.end_time_spin.setSingleStep(0.1)
-        self.end_time_spin.setValue(10.0)
-        self.end_time_spin.setKeyboardTracking(True)
-        time_layout.addRow("End Time:", self.end_time_spin)
-        
-        self.time_offset_spin = QDoubleSpinBox()
-        self.time_offset_spin.setRange(-999999999.0, 999999999.0)
-        self.time_offset_spin.setDecimals(9)
-        self.time_offset_spin.setSingleStep(0.1)
-        self.time_offset_spin.setValue(0.0)
-        self.time_offset_spin.setKeyboardTracking(True)
-        time_layout.addRow("Offset:", self.time_offset_spin)
-        
-        self.interpolation_combo = QComboBox()
-        self.interpolation_combo.addItems(["linear", "nearest", "cubic"])
-        time_layout.addRow("Interpolation:", self.interpolation_combo)
-        
-        self.resolution_spin = QDoubleSpinBox()
-        self.resolution_spin.setRange(0.000000001, 999999999.0)
-        self.resolution_spin.setDecimals(9)
-        self.resolution_spin.setSingleStep(0.01)
-        self.resolution_spin.setValue(0.1)
-        self.resolution_spin.setSuffix(" s")
-        self.resolution_spin.setKeyboardTracking(True)
-        time_layout.addRow("Resolution:", self.resolution_spin)
-        
-        group_layout.addWidget(self.time_group)
-        
-        # Status
-        self.alignment_status_label = QLabel("Alignment configured")
-        self.alignment_status_label.setStyleSheet("color: #666; font-size: 11px; padding: 5px;")
-        group_layout.addWidget(self.alignment_status_label)
-        
-        # Show/hide groups based on mode
-        self._on_alignment_mode_changed("Index-Based")
-        
-        layout.addWidget(group)
+        layout.addWidget(self.data_aligner_widget)
         
     def _create_console_group(self, layout):
         """Create console output and pair management"""
@@ -972,8 +840,7 @@ class ComparisonWizardWindow(QWidget):
             # Method selection
             self.method_list.currentItemChanged.connect(self._on_method_changed)
             
-            # Alignment mode
-            self.alignment_mode_combo.currentTextChanged.connect(self._on_alignment_mode_changed)
+            # Alignment mode handled by DataAlignerWidget
             
             # Performance options
             self.max_points_checkbox.toggled.connect(self.max_points_input.setEnabled)
@@ -1137,12 +1004,8 @@ class ComparisonWizardWindow(QWidget):
                 'method_name': self.get_current_method_name(),
                 'parameters': self.param_capture.capture_all_parameters(),
                 'plot_script': self.plot_script_text.toPlainText(),
-                'stats_script': self.stats_script_text.toPlainText(),
                 'plot_script_modified': self.script_tracker.is_plot_script_modified(
                     self.plot_script_text.toPlainText()
-                ),
-                'stats_script_modified': self.script_tracker.is_stats_script_modified(
-                    self.stats_script_text.toPlainText()
                 ),
                 'alignment_mode': self.alignment_mode_combo.currentText(),
                 'timestamp': datetime.now().isoformat()
@@ -1174,9 +1037,6 @@ class ComparisonWizardWindow(QWidget):
             # Set scripts
             if 'plot_script' in config:
                 self.plot_script_text.setPlainText(config['plot_script'])
-            
-            if 'stats_script' in config:
-                self.stats_script_text.setPlainText(config['stats_script'])
             
             # Set alignment mode
             if 'alignment_mode' in config:
@@ -1308,22 +1168,26 @@ class ComparisonWizardWindow(QWidget):
             import inspect
             plot_script = inspect.getsource(comparison_cls.plot_script)
             
+            # Process the script to remove method definition and return statements
+            processed_script = self._process_script_for_execution(plot_script)
+            
             # Initialize script tracker if not already done
             if self.script_tracker.original_plot_script is None:
                 stats_script = inspect.getsource(comparison_cls.stats_script) if hasattr(comparison_cls, 'stats_script') else ''
-                self.script_tracker.initialize_scripts(plot_script, stats_script)
+                processed_stats_script = self._process_script_for_execution(stats_script) if stats_script else ''
+                self.script_tracker.initialize_scripts(processed_script, processed_stats_script)
             else:
                 # Reset to new script
-                self.script_tracker.reset_plot_script(plot_script)
+                self.script_tracker.reset_plot_script(processed_script)
             
             # Load into text editor
-            self.plot_script_text.setPlainText(plot_script)
+            self.plot_script_text.setPlainText(processed_script)
             
             # Reset status
             self.plot_script_status_label.setText("Default")
             self.plot_script_status_label.setStyleSheet("color: gray; font-style: italic;")
             
-            print(f"[ComparisonWizard] Plot script loaded for {comparison_cls.__name__}")
+            print(f"[ComparisonWizard] Plot script loaded and processed for {comparison_cls.__name__}")
             
         except Exception as e:
             print(f"[ComparisonWizard] Error updating plot script tab: {e}")
@@ -1339,25 +1203,262 @@ class ComparisonWizardWindow(QWidget):
             import inspect
             stats_script = inspect.getsource(comparison_cls.stats_script)
             
+            # Process the script to remove method definition and return statements
+            processed_script = self._process_script_for_execution(stats_script)
+            
             # Initialize script tracker if not already done
             if self.script_tracker.original_stats_script is None:
                 plot_script = inspect.getsource(comparison_cls.plot_script) if hasattr(comparison_cls, 'plot_script') else ''
-                self.script_tracker.initialize_scripts(plot_script, stats_script)
+                processed_plot_script = self._process_script_for_execution(plot_script) if plot_script else ''
+                self.script_tracker.initialize_scripts(processed_plot_script, processed_script)
             else:
                 # Reset to new script
-                self.script_tracker.reset_stats_script(stats_script)
+                self.script_tracker.reset_stats_script(processed_script)
             
             # Load into text editor
-            self.stats_script_text.setPlainText(stats_script)
+            self.stats_script_text.setPlainText(processed_script)
             
             # Reset status
             self.stats_script_status_label.setText("Default")
             self.stats_script_status_label.setStyleSheet("color: gray; font-style: italic;")
             
-            print(f"[ComparisonWizard] Stats script loaded for {comparison_cls.__name__}")
+            print(f"[ComparisonWizard] Stats script loaded and processed for {comparison_cls.__name__}")
             
         except Exception as e:
             print(f"[ComparisonWizard] Error updating stats script tab: {e}")
+    
+    def _process_script_for_execution(self, script_content: str) -> str:
+        """
+        Process script content to make it suitable for exec() execution.
+        Removes method definition and converts return statements to variable assignments.
+        
+        This handles complex scripts with nested functions and control flow.
+        """
+        if not script_content:
+            return ""
+        
+        try:
+            import ast
+            import textwrap
+            
+            # Parse the script to understand its structure
+            try:
+                tree = ast.parse(script_content)
+            except SyntaxError as e:
+                print(f"[ComparisonWizard] Syntax error in original script: {e}")
+                return self._process_script_simple(script_content)
+            
+            # Find the method definition (plot_script or stats_script)
+            method_node = None
+            for node in ast.walk(tree):
+                if isinstance(node, ast.FunctionDef) and node.name in ['plot_script', 'stats_script']:
+                    method_node = node
+                    break
+            
+            if method_node is None:
+                print("[ComparisonWizard] No method definition found, using simple processing")
+                return self._process_script_simple(script_content)
+            
+            # Get the method body as complete source code, including nested functions
+            lines = script_content.split('\n')
+            
+            # Find the method definition line
+            method_start_line = method_node.lineno - 1  # Convert to 0-based index
+            method_end_line = method_node.end_lineno - 1 if hasattr(method_node, 'end_lineno') else len(lines) - 1
+            
+            # Extract the complete method definition
+            method_lines = lines[method_start_line:method_end_line + 1]
+            
+            # Find the first line after the method signature and docstring
+            signature_end = 0
+            for i, line in enumerate(method_lines):
+                if line.rstrip().endswith(':'):
+                    signature_end = i
+                    break
+            
+            # Start from the line after the signature
+            body_start = signature_end + 1
+            
+            # Skip any docstring
+            if body_start < len(method_lines):
+                first_body_line = method_lines[body_start].strip()
+                if first_body_line.startswith('"""') or first_body_line.startswith("'''"):
+                    quote_type = '"""' if first_body_line.startswith('"""') else "'''"
+                    
+                    # Check if docstring is on single line
+                    if first_body_line.count(quote_type) >= 2:
+                        # Single line docstring
+                        body_start += 1
+                    else:
+                        # Multi-line docstring, find the end
+                        body_start += 1
+                        while body_start < len(method_lines):
+                            if quote_type in method_lines[body_start]:
+                                body_start += 1
+                                break
+                            body_start += 1
+            
+            # Extract method body lines (including nested functions)
+            if body_start < len(method_lines):
+                method_body_lines = method_lines[body_start:]
+                
+                # Remove the common indentation using textwrap.dedent
+                body_text = '\n'.join(method_body_lines)
+                dedented_body = textwrap.dedent(body_text)
+                
+                # Process return statements but preserve nested functions
+                processed_body = self._process_return_statements_safe(dedented_body, script_content)
+                
+                return processed_body
+            
+            return ""
+            
+        except Exception as e:
+            print(f"[ComparisonWizard] Error processing script with AST: {e}")
+            import traceback
+            traceback.print_exc()
+            # Fallback to simpler processing
+            return self._process_script_simple(script_content)
+    
+    def _process_return_statements_safe(self, script_body: str, original_script: str) -> str:
+        """Process return statements in the script body with better error handling."""
+        lines = script_body.split('\n')
+        processed_lines = []
+        
+        # Track indentation levels to identify nested functions
+        inside_nested_function = False
+        function_indent_level = None
+        
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            
+            # Check if we're entering a nested function definition
+            if stripped.startswith('def ') and ':' in stripped:
+                inside_nested_function = True
+                function_indent_level = len(line) - len(line.lstrip())
+                processed_lines.append(line)
+                continue
+            
+            # Check if we're exiting a nested function (back to main level)
+            if inside_nested_function and line.strip() and not line.startswith(' ' * (function_indent_level + 1)):
+                inside_nested_function = False
+                function_indent_level = None
+            
+            # Process return statements
+            if stripped.startswith('return '):
+                # Only convert return statements that are NOT inside nested functions
+                if not inside_nested_function:
+                    # Extract the return expression
+                    return_expr = stripped[7:].strip()  # Remove "return "
+                    
+                    # Get the indentation of the original line
+                    indent = line[:len(line) - len(line.lstrip())]
+                    
+                    # Determine what to assign based on the return expression
+                    if 'plot_script' in original_script:
+                        # For plot scripts, expect: return x_data, y_data, metadata
+                        if return_expr.startswith('(') and return_expr.endswith(')'):
+                            # Tuple return: return (x_data, y_data, metadata)
+                            processed_line = f"{indent}x_data, y_data, plot_metadata = {return_expr}"
+                        elif ',' in return_expr:
+                            # Multiple values: return x_data, y_data, metadata
+                            processed_line = f"{indent}x_data, y_data, plot_metadata = {return_expr}"
+                        else:
+                            # Single value (shouldn't happen for plot scripts, but handle it)
+                            processed_line = f"{indent}result = {return_expr}"
+                    else:
+                        # For stats scripts, expect: return stats_dict
+                        processed_line = f"{indent}stats_results = {return_expr}"
+                    
+                    processed_lines.append(processed_line)
+                else:
+                    # Keep return statements inside nested functions unchanged
+                    processed_lines.append(line)
+            else:
+                processed_lines.append(line)
+        
+        return '\n'.join(processed_lines)
+    
+    def _process_script_simple(self, script_content: str) -> str:
+        """Fallback simple script processing method."""
+        try:
+            lines = script_content.split('\n')
+            processed_lines = []
+            
+            # Find the method definition line and skip it
+            method_start = None
+            for i, line in enumerate(lines):
+                if line.strip().startswith('def ') and ('plot_script(' in line or 'stats_script(' in line):
+                    method_start = i
+                    break
+            
+            if method_start is None:
+                return script_content
+            
+            # Skip the method definition line and any docstring
+            body_start = method_start + 1
+            while body_start < len(lines):
+                line = lines[body_start].strip()
+                if line and not line.startswith('"""') and not line.startswith("'''"):
+                    break
+                body_start += 1
+                # Skip multi-line docstrings
+                if line.startswith('"""') or line.startswith("'''"):
+                    quote = '"""' if line.startswith('"""') else "'''"
+                    if not line.endswith(quote) or len(line) <= 3:
+                        # Multi-line docstring, find the end
+                        body_start += 1
+                        while body_start < len(lines) and not lines[body_start].strip().endswith(quote):
+                            body_start += 1
+                        body_start += 1  # Skip the closing quote line
+                    break
+            
+            # Process the method body
+            method_body = lines[body_start:]
+            
+            # Find minimum indentation
+            min_indent = float('inf')
+            for line in method_body:
+                if line.strip():
+                    indent = len(line) - len(line.lstrip())
+                    min_indent = min(min_indent, indent)
+            
+            if min_indent == float('inf'):
+                min_indent = 0
+            
+            # Remove common indentation and process return statements
+            for line in method_body:
+                if line.strip():
+                    # Remove common indentation
+                    processed_line = line[min_indent:] if min_indent > 0 else line
+                    
+                    # Convert return statements
+                    stripped = processed_line.strip()
+                    if stripped.startswith('return '):
+                        return_expr = stripped[7:].strip()
+                        indent = processed_line[:len(processed_line) - len(processed_line.lstrip())]
+                        
+                        if 'plot_script' in script_content:
+                            if ',' in return_expr:
+                                processed_line = f"{indent}x_data, y_data, plot_metadata = {return_expr}"
+                            else:
+                                processed_line = f"{indent}result = {return_expr}"
+                        else:
+                            processed_line = f"{indent}stats_results = {return_expr}"
+                    
+                    processed_lines.append(processed_line)
+                else:
+                    processed_lines.append("")
+            
+            # Remove trailing empty lines
+            while processed_lines and not processed_lines[-1].strip():
+                processed_lines.pop()
+            
+            return '\n'.join(processed_lines)
+            
+        except Exception as e:
+            print(f"[ComparisonWizard] Error in simple script processing: {e}")
+            return script_content
     
     
     def _clear_method_configuration(self):
@@ -1388,28 +1489,7 @@ class ComparisonWizardWindow(QWidget):
         except Exception as e:
             print(f"[ComparisonWizard] Error handling method change: {e}")
             
-    def _on_alignment_mode_changed(self, mode):
-        """Handle alignment mode change"""
-        try:
-            if mode == "Index-Based":
-                self.index_group.show()
-                self.time_group.hide()
-            else:
-                self.index_group.hide()
-                self.time_group.show()
-                
-                # Update alignment status
-                self.alignment_status_label.setText(f"Alignment mode: {mode}")
-                
-                # Call the manager's suggest_alignment_parameters for the new mode
-                if self.manager and hasattr(self.manager, 'suggest_alignment_parameters'):
-                    params = self.manager.suggest_alignment_parameters(mode=mode)
-                    if params:
-                        self._apply_alignment_params(params)
-                        print(f"[ComparisonWizard] Applied suggested alignment parameters for {mode} mode")
-                
-        except Exception as e:
-            print(f"[ComparisonWizard] Error handling alignment mode change: {e}")
+
     
     def _on_density_changed(self, density_type):
         """Handle density type change"""
@@ -1591,27 +1671,9 @@ class ComparisonWizardWindow(QWidget):
             print(f"[ComparisonWizard] Error handling manager comparison result: {e}")
     
     def _get_alignment_params(self):
-        """Get current alignment parameters"""
+        """Get current alignment parameters from DataAlignerWidget"""
         try:
-            mode = self.alignment_mode_combo.currentText()
-            
-            if mode == "Index-Based":
-                return {
-                    'mode': 'Index-Based',  # Match the format expected by DataAligner
-                    'start_index': self.start_index_spin.value(),
-                    'end_index': self.end_index_spin.value(),
-                    'offset': self.index_offset_spin.value()
-                }
-            else:
-                return {
-                    'mode': 'Time-Based',  # Match the format expected by DataAligner
-                    'start_time': self.start_time_spin.value(),
-                    'end_time': self.end_time_spin.value(),
-                    'offset': self.time_offset_spin.value(),
-                    'interpolation': self.interpolation_combo.currentText(),
-                    'resolution': self.resolution_spin.value()
-                }
-                
+            return self.data_aligner_widget.get_alignment_parameters()
         except Exception as e:
             print(f"[ComparisonWizard] Error getting alignment params: {e}")
             return {}
@@ -1693,6 +1755,8 @@ class ComparisonWizardWindow(QWidget):
             
             style_btn = QPushButton("🎨")
             style_btn.setMaximumSize(25, 25)
+            style_btn.setToolTip("Edit pair marker styling")
+            style_btn.clicked.connect(lambda: self._on_pair_style_clicked(pair))
             actions_layout.addWidget(style_btn)
             
             delete_btn = QPushButton("🗑️")
@@ -1814,13 +1878,20 @@ class ComparisonWizardWindow(QWidget):
             return fallback_widget
     
     def _delete_pair(self, row):
-        """Delete a pair from the channels table"""
+        """Delete a pair from the channels table and backend"""
         try:
+            # Get the pair name before removing the row
+            pair_name_item = self.channels_table.item(row, 2)  # Pair name is in column 2
+            pair_name = pair_name_item.text() if pair_name_item else "Unknown"
+            
+            # Remove from UI table
             self.channels_table.removeRow(row)
-            self.pair_deleted.emit()
+            
+            # Emit signal with pair name so manager can remove it from backend
+            self.pair_deleted.emit({'pair_name': pair_name})
             
             if hasattr(self, 'info_output'):
-                self.info_output.append("🗑️ Pair deleted")
+                self.info_output.append(f"🗑️ Pair deleted: {pair_name}")
                 
         except Exception as e:
             print(f"[ComparisonWizard] Error deleting pair: {e}")
@@ -1864,6 +1935,162 @@ class ComparisonWizardWindow(QWidget):
             import traceback
             traceback.print_exc()
     
+    def _on_pair_style_clicked(self, pair):
+        """Handle paint icon click for pair styling"""
+        try:
+            print(f"[ComparisonWizard] Opening pair marker wizard for: {pair.name}")
+            
+            # Import the pair marker wizard
+            from pair_marker_wizard import PairMarkerWizard
+            
+            # Create pair configuration dict from pair object
+            pair_config = self._create_pair_config_from_object(pair)
+            
+            # Store the pair reference for the signal handler
+            self._current_editing_pair = pair
+            
+            # Open the pair marker wizard
+            wizard = PairMarkerWizard(pair_config, self)
+            wizard.marker_updated.connect(self._on_pair_marker_updated)
+            result = wizard.exec()
+            
+            if result == QDialog.Accepted:
+                print(f"[ComparisonWizard] Pair marker wizard accepted for: {pair.name}")
+                # Final update and cleanup
+                self._update_pair_object_from_config(pair, pair_config)
+                self._trigger_plot_update()
+                self._refresh_channels_table()
+            else:
+                print(f"[ComparisonWizard] Pair marker wizard cancelled for: {pair.name}")
+            
+            # Clear the stored pair reference
+            self._current_editing_pair = None
+                
+        except Exception as e:
+            print(f"[ComparisonWizard] Error opening pair marker wizard: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _create_pair_config_from_object(self, pair):
+        """Create a pair configuration dict from a pair object"""
+        config = {
+            'name': getattr(pair, 'name', 'Unnamed Pair'),
+            'ref_channel': getattr(pair, 'ref_channel_name', 'Unknown'),
+            'test_channel': getattr(pair, 'test_channel_name', 'Unknown'),
+            'pair_id': getattr(pair, 'pair_id', 'unknown'),
+            'show': getattr(pair, 'show', True),
+            # Marker properties - map from Pair object attributes
+            'marker_type': getattr(pair, 'marker_type', 'o'),
+            'marker_color': getattr(pair, 'marker_color', '🔵 Blue'),
+            'marker_color_hex': getattr(pair, 'color', '#1f77b4'),  # Use color attribute
+            'marker_size': getattr(pair, 'marker_size', 50),
+            'marker_alpha': getattr(pair, 'alpha', 0.8),  # Use alpha attribute
+            'edge_color': getattr(pair, 'edge_color', '#000000'),
+            'edge_width': getattr(pair, 'edge_width', 1.0),
+            'fill_style': getattr(pair, 'fill_style', 'full'),
+            'legend_label': getattr(pair, 'legend_label', ''),
+            'z_order': getattr(pair, 'z_order', 0),
+        }
+        return config
+    
+    def _update_pair_object_from_config(self, pair, config):
+        """Update a pair object with styling from configuration"""
+        # Update marker properties using Pair object attributes
+        pair.marker_type = config.get('marker_type', 'o')
+        pair.marker_color = config.get('marker_color', '🔵 Blue')
+        pair.color = config.get('marker_color_hex', '#1f77b4')  # Use color attribute
+        pair.marker_size = config.get('marker_size', 50)
+        pair.alpha = config.get('marker_alpha', 0.8)  # Use alpha attribute
+        pair.legend_label = config.get('legend_label', '')
+        
+        # Set additional styling attributes (now guaranteed to exist)
+        pair.edge_color = config.get('edge_color', '#000000')
+        pair.edge_width = config.get('edge_width', 1.0)
+        pair.fill_style = config.get('fill_style', 'full')
+        pair.z_order = config.get('z_order', 0)
+        
+        # Update the modified timestamp
+        pair.modified_at = datetime.now()
+        
+        print(f"[ComparisonWizard] Updated pair {pair.name} with new styling")
+    
+    def _on_pair_marker_updated(self, pair_config):
+        """Handle marker update signal from pair marker wizard"""
+        try:
+            print(f"[ComparisonWizard] Pair marker updated: {pair_config.get('name', 'Unknown')}")
+            
+            # Use the stored pair reference if available
+            pair = getattr(self, '_current_editing_pair', None)
+            
+            if pair:
+                print(f"[ComparisonWizard] Found pair reference: {pair.name}")
+                # Update the pair object with new styling
+                self._update_pair_object_from_config(pair, pair_config)
+                # Trigger plot update
+                self._trigger_plot_update()
+                # Refresh the table to show updated styling
+                self._refresh_channels_table()
+                print(f"[ComparisonWizard] Applied marker updates to pair: {pair.name}")
+            else:
+                print(f"[ComparisonWizard] No pair reference available for marker update")
+                
+        except Exception as e:
+            print(f"[ComparisonWizard] Error handling pair marker update: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _find_pair_by_name(self, pair_name):
+        """Find a pair object by name from the manager"""
+        try:
+            if self.manager and hasattr(self.manager, 'pair_manager'):
+                pair_manager = self.manager.pair_manager
+                if hasattr(pair_manager, 'get_pairs'):
+                    pairs = pair_manager.get_pairs()
+                    for pair in pairs:
+                        if getattr(pair, 'name', '') == pair_name:
+                            return pair
+            return None
+        except Exception as e:
+            print(f"[ComparisonWizard] Error finding pair by name: {e}")
+            return None
+    
+    def _trigger_plot_update(self):
+        """Trigger plot update through the manager"""
+        try:
+            if self.manager and hasattr(self.manager, '_trigger_analysis_update'):
+                self.manager._trigger_analysis_update()
+                print(f"[ComparisonWizard] Triggered plot update")
+            else:
+                print(f"[ComparisonWizard] Manager missing _trigger_analysis_update method")
+        except Exception as e:
+            print(f"[ComparisonWizard] Error triggering plot update: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _on_alignment_parameters_changed(self, parameters):
+        """Handle alignment parameter changes from DataAlignerWidget"""
+        try:
+            # Check if alignment method has changed
+            current_method = parameters.get('alignment_method', 'index')
+            previous_method = getattr(self, '_previous_alignment_method', None)
+            
+            if current_method != previous_method:
+                # Alignment method changed - trigger auto-configuration
+                ref_channel = self.ref_channel_combo.currentData()
+                test_channel = self.test_channel_combo.currentData()
+                
+                if ref_channel and test_channel:
+                    print(f"[ComparisonWizard] Alignment method changed from {previous_method} to {current_method}, auto-configuring...")
+                    self.data_aligner_widget.auto_configure_for_channels(ref_channel, test_channel)
+                    pair_name = f"{getattr(ref_channel, 'legend_label', 'Unknown')}_vs_{getattr(test_channel, 'legend_label', 'Unknown')}"
+                    self.pair_name_input.setText(pair_name)
+                
+                # Store the new method for next comparison
+                self._previous_alignment_method = current_method
+                
+        except Exception as e:
+            print(f"[ComparisonWizard] Error handling alignment parameter change: {e}")
+    
     def _on_channel_selection_changed(self):
         """Handle channel selection changes"""
         try:
@@ -1875,13 +2102,13 @@ class ComparisonWizardWindow(QWidget):
                 pair_name = f"{getattr(ref_channel, 'legend_label', 'Unknown')}_vs_{getattr(test_channel, 'legend_label', 'Unknown')}"
                 self.pair_name_input.setText(pair_name)
                 
-                # Call the manager's suggest_alignment_parameters if available
-                if self.manager and hasattr(self.manager, 'suggest_alignment_parameters'):
-                    mode = self.alignment_mode_combo.currentText()
-                    params = self.manager.suggest_alignment_parameters(mode=mode)
-                    if params:
-                        self._apply_alignment_params(params)
-                        print(f"[ComparisonWizard] Applied suggested alignment parameters for {getattr(ref_channel, 'legend_label', 'Unknown')} vs {getattr(test_channel, 'legend_label', 'Unknown')}")
+                # Auto-configure alignment parameters
+                self.data_aligner_widget.auto_configure_for_channels(ref_channel, test_channel)
+                
+                # Initialize previous alignment method tracking
+                if hasattr(self, 'data_aligner_widget'):
+                    params = self.data_aligner_widget.get_alignment_parameters()
+                    self._previous_alignment_method = params.get('alignment_method', 'index')
                 
         except Exception as e:
             print(f"[ComparisonWizard] Error handling channel selection change: {e}")
@@ -1890,8 +2117,10 @@ class ComparisonWizardWindow(QWidget):
         """Handle reference file selection change"""
         try:
             # Update reference channel dropdown based on selected file
-            # This would typically populate channels from the selected file
-            pass
+            selected_file = self.ref_file_combo.currentData()
+            if selected_file and self.channel_manager:
+                self._update_channel_dropdown_for_file(selected_file, self.ref_channel_combo)
+                print(f"[ComparisonWizard] Updated ref channel dropdown for file: {selected_file.filename}")
         except Exception as e:
             print(f"[ComparisonWizard] Error handling ref file change: {e}")
     
@@ -1899,41 +2128,50 @@ class ComparisonWizardWindow(QWidget):
         """Handle test file selection change"""
         try:
             # Update test channel dropdown based on selected file
-            # This would typically populate channels from the selected file
-            pass
+            selected_file = self.test_file_combo.currentData()
+            if selected_file and self.channel_manager:
+                self._update_channel_dropdown_for_file(selected_file, self.test_channel_combo)
+                print(f"[ComparisonWizard] Updated test channel dropdown for file: {selected_file.filename}")
         except Exception as e:
             print(f"[ComparisonWizard] Error handling test file change: {e}")
     
-    def _apply_alignment_params(self, params):
-        """Apply alignment parameters to the UI"""
+    def _update_channel_dropdown_for_file(self, file_obj, channel_combo):
+        """Update a channel dropdown to show only channels from the selected file"""
         try:
-            if not params:
-                print("[DEBUG] _apply_alignment_params: No params provided")
-                return
-
-            mode = params.get('mode', 'index')
-            print(f"[DEBUG] _apply_alignment_params: mode={mode}, params={params}")
+            # Store current selection
+            current_channel = channel_combo.currentData() if channel_combo.currentIndex() >= 0 else None
             
-            # Apply parameter values based on the current mode (don't change the mode)
-            if mode == 'index' or mode == 'Index-Based':
-                start_index = params.get('start_index', 0)
-                end_index = params.get('end_index', 0)
-                offset = params.get('offset', 0)
-                print(f"[DEBUG] _apply_alignment_params: Setting index params - start={start_index}, end={end_index}, offset={offset}")
-                self.start_index_spin.setValue(start_index)
-                self.end_index_spin.setValue(end_index)
-                self.index_offset_spin.setValue(offset)
+            # Clear and repopulate with channels from the selected file
+            channel_combo.clear()
+            
+            if file_obj and hasattr(file_obj, 'file_id'):
+                # Get channels for this specific file
+                file_channels = self.channel_manager.get_channels_by_file(file_obj.file_id)
+                
+                # Filter for channels that should be shown (typically RAW channels for comparison)
+                filtered_channels = [ch for ch in file_channels if ch.type == SourceType.RAW]
+                
+                # Add filtered channels to combo
+                for ch in filtered_channels:
+                    # Use legend_label if available, otherwise channel_id
+                    label = getattr(ch, 'legend_label', None) or getattr(ch, 'channel_id', str(ch))
+                    channel_combo.addItem(label, ch)
+                
+                # Try to restore previous selection if the channel is still available
+                if current_channel:
+                    for i in range(channel_combo.count()):
+                        if channel_combo.itemData(i) == current_channel:
+                            channel_combo.setCurrentIndex(i)
+                            break
+                
+                print(f"[ComparisonWizard] Updated channel dropdown with {len(filtered_channels)} channels from file: {file_obj.filename}")
             else:
-                self.start_time_spin.setValue(params.get('start_time', 0.0))
-                self.end_time_spin.setValue(params.get('end_time', 0.0))
-                self.time_offset_spin.setValue(params.get('offset', 0.0))
-                interpolation = params.get('interpolation', 'nearest')
-                interp_index = self.interpolation_combo.findText(interpolation)
-                if interp_index >= 0:
-                    self.interpolation_combo.setCurrentIndex(interp_index)
-                self.resolution_spin.setValue(params.get('resolution', 0.1))
+                print(f"[ComparisonWizard] Invalid file object provided for channel dropdown update")
+                
         except Exception as e:
-            print(f"[ComparisonWizard] Error applying alignment params: {e}")
+            print(f"[ComparisonWizard] Error updating channel dropdown for file: {e}")
+    
+
     
     def _generate_pair_name(self, ref_channel=None, test_channel=None):
         """Generate a descriptive pair name from channel names"""
@@ -2091,23 +2329,6 @@ class ComparisonWizardWindow(QWidget):
         except Exception as e:
             print(f"[ComparisonWizard] Error handling plot script change: {e}")
 
-    def _on_stats_script_changed(self):
-        """Handle stats script text changes"""
-        try:
-            current_script = self.stats_script_text.toPlainText()
-            is_modified = self.script_tracker.is_stats_script_modified(current_script)
-            
-            if is_modified:
-                self.stats_script_status_label.setText("✏️ Modified")
-                self.stats_script_status_label.setStyleSheet("color: orange; font-weight: bold;")
-                self.script_tracker.mark_stats_script_modified()
-            else:
-                self.stats_script_status_label.setText("Default")
-                self.stats_script_status_label.setStyleSheet("color: gray; font-style: italic;")
-                
-        except Exception as e:
-            print(f"[ComparisonWizard] Error handling stats script change: {e}")
-
     def _reset_plot_script(self):
         """Reset plot script to default"""
         try:
@@ -2118,17 +2339,6 @@ class ComparisonWizardWindow(QWidget):
                 print("[ComparisonWizard] Plot script reset to default")
         except Exception as e:
             print(f"[ComparisonWizard] Error resetting plot script: {e}")
-
-    def _reset_stats_script(self):
-        """Reset stats script to default"""
-        try:
-            if self.script_tracker.original_stats_script:
-                self.stats_script_text.setPlainText(self.script_tracker.original_stats_script)
-                self.stats_script_status_label.setText("Default")
-                self.stats_script_status_label.setStyleSheet("color: gray; font-style: italic;")
-                print("[ComparisonWizard] Stats script reset to default")
-        except Exception as e:
-            print(f"[ComparisonWizard] Error resetting stats script: {e}")
 
     def _get_pair_data_shape_from_object(self, pair):
         """Get the data shape of a pair from its aligned data"""
@@ -2162,18 +2372,6 @@ class ComparisonWizardWindow(QWidget):
         except Exception as e:
             print(f"[ComparisonWizard] Error getting pair data shape for '{pair.name}': {e}")
             return "Error"
-    
-    def _delete_pair(self, row):
-        """Delete a pair from the channels table"""
-        try:
-            self.channels_table.removeRow(row)
-            self.pair_deleted.emit()
-            
-            if hasattr(self, 'info_output'):
-                self.info_output.append("🗑️ Pair deleted")
-                
-        except Exception as e:
-            print(f"[ComparisonWizard] Error deleting pair: {e}")
 
     def get_performance_options(self):
         """Get current performance options from UI"""

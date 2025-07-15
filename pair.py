@@ -65,6 +65,7 @@ class Pair:
                  ref_file_id=None, test_file_id=None, ref_channel_name=None, test_channel_name=None,
                  alignment_config=None, show=True, color=None, marker_type=None, marker_color=None, 
                  line_style="-", alpha=1.0, marker_size=50, legend_label=None, 
+                 edge_color="#000000", edge_width=1.0, fill_style="full", z_order=0,
                  tags=None, description=None, metadata=None):
         
         # Core identifiers
@@ -92,6 +93,10 @@ class Pair:
         self.alpha = alpha
         self.marker_size = marker_size
         self.legend_label = legend_label or self.name
+        self.edge_color = edge_color
+        self.edge_width = edge_width
+        self.fill_style = fill_style
+        self.z_order = z_order
         
         # Metadata
         self.tags = tags or []
@@ -164,6 +169,10 @@ class Pair:
             'alpha': self.alpha,
             'marker_size': self.marker_size,
             'legend_label': self.legend_label,
+            'edge_color': self.edge_color,
+            'edge_width': self.edge_width,
+            'fill_style': self.fill_style,
+            'z_order': self.z_order,
             'show': self.show
         }
     
@@ -183,6 +192,14 @@ class Pair:
             self.marker_size = style_config['marker_size']
         if 'legend_label' in style_config:
             self.legend_label = style_config['legend_label']
+        if 'edge_color' in style_config:
+            self.edge_color = style_config['edge_color']
+        if 'edge_width' in style_config:
+            self.edge_width = style_config['edge_width']
+        if 'fill_style' in style_config:
+            self.fill_style = style_config['fill_style']
+        if 'z_order' in style_config:
+            self.z_order = style_config['z_order']
         if 'show' in style_config:
             self.show = style_config['show']
         

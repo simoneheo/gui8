@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 from typing import Optional, Tuple, Dict, Any, Union
 from dataclasses import dataclass
 from pair import AlignmentConfig, AlignmentMethod
@@ -7,82 +8,618 @@ import warnings
 
 
 @dataclass
+class ValidationResult:
+    """Result of validation operations"""
+    is_valid: bool
+    issues: list
+    warnings: list
+    quality_metrics: Optional[Dict[str, Any]] = None
+    data_quality_score: Optional[float] = None
+
+
+@dataclass
 class AlignmentResult:
     """Container for alignment results - just the aligned data"""
     ref_data: np.ndarray
     test_data: np.ndarray
-
     success: bool = True
     error_message: Optional[str] = None
+    quality_metrics: Optional[Dict[str, Any]] = None
+    warnings: Optional[list] = None
     
     def __post_init__(self):
         if not self.success and not self.error_message:
             self.error_message = "Unknown alignment error"
 
 
-class DataAligner:
-    """
-    Service for aligning data from two channels according to alignment configuration.
+class DataQualityValidator:
+    """Comprehensive data quality assessment for alignment inputs"""
     
-    Supports both index-based and time-based alignment methods with various
-    options for handling different data scenarios.
-    """
+    def validate_channel_data(self, channel: Channel) -> ValidationResult:
+        """Validate channel data quality and characteristics"""
+        issues = []
+        warnings = []
+        
+        # Basic data presence
+        if channel.ydata is None or len(channel.ydata) == 0:
+            issues.append("Channel has no Y data")
+        
+        # Data type validation
+        if channel.ydata is not None and not isinstance(channel.ydata, np.ndarray):
+            try:
+                channel.ydata = np.array(channel.ydata)
+                warnings.append("Y data converted to numpy array")
+            except:
+                issues.append("Y data cannot be converted to numpy array")
+        
+        # NaN/Infinite validation
+        if channel.ydata is not None:
+            nan_count = np.sum(np.isnan(channel.ydata))
+            inf_count = np.sum(np.isinf(channel.ydata))
+            total_count = len(channel.ydata)
+            
+            if nan_count > 0:
+                nan_ratio = nan_count / total_count
+                if nan_ratio > 0.5:
+                    issues.append(f"Channel has {nan_ratio*100:.1f}% NaN values")
+                elif nan_ratio > 0.1:
+                    warnings.append(f"Channel has {nan_ratio*100:.1f}% NaN values")
+            
+            if inf_count > 0:
+                issues.append(f"Channel has {inf_count} infinite values")
+        
+        # X-data validation for time-based alignment
+        if channel.xdata is not None:
+            # Check for monotonic time
+            if not np.all(np.diff(channel.xdata) >= 0):
+                warnings.append("X data is not monotonically increasing")
+            
+            # Check for duplicate time points
+            unique_x_count = len(np.unique(channel.xdata))
+            if unique_x_count < len(channel.xdata):
+                duplicate_ratio = 1 - (unique_x_count / len(channel.xdata))
+                if duplicate_ratio > 0.1:
+                    warnings.append(f"X data has {duplicate_ratio*100:.1f}% duplicate time points")
+        
+        return ValidationResult(
+            is_valid=len(issues) == 0,
+            issues=issues,
+            warnings=warnings,
+            data_quality_score=self._calculate_quality_score(channel, issues, warnings)
+        )
+    
+    def _calculate_quality_score(self, channel: Channel, issues: list, warnings: list) -> float:
+        """Calculate data quality score (0-1)"""
+        score = 1.0
+        
+        # Penalize for issues
+        score -= len(issues) * 0.2
+        
+        # Penalize for warnings
+        score -= len(warnings) * 0.1
+        
+        # Penalize for NaN values
+        if channel.ydata is not None:
+            nan_ratio = np.sum(np.isnan(channel.ydata)) / len(channel.ydata)
+            score -= nan_ratio * 0.3
+        
+        return max(0.0, min(1.0, score))
+
+
+class ParameterValidator:
+    """Validate alignment parameters and configurations"""
+    
+    def validate_alignment_params(self, params: Dict[str, Any]) -> ValidationResult:
+        """Validate alignment parameters from wizard"""
+        issues = []
+        warnings = []
+        
+        # Handle both comparison wizard format and signal mixer wizard format
+        alignment_method = params.get('alignment_method')
+        mode = params.get('mode')
+        
+        # Check for valid alignment method
+        if alignment_method not in ['index', 'time']:
+            issues.append(f"Invalid alignment method: {alignment_method}")
+        
+        if alignment_method == 'index':
+            start_idx = params.get('start_index', 0)
+            end_idx = params.get('end_index', 0)
+            offset = params.get('offset', 0)
+            
+            if not isinstance(start_idx, int) or start_idx < 0:
+                issues.append("Start index must be non-negative integer")
+            
+            if not isinstance(end_idx, int) or end_idx < 0:
+                issues.append("End index must be non-negative integer")
+            
+            if start_idx >= end_idx:
+                issues.append("Start index must be less than end index")
+                
+            if abs(offset) > 1000000:
+                warnings.append("Large offset value may cause performance issues")
+            
+            # Validate mode for index-based alignment
+            if mode not in ['truncate', 'custom']:
+                warnings.append(f"Unknown index mode: {mode}, using 'truncate'")
+        
+        elif alignment_method == 'time':
+            start_time = params.get('start_time', 0.0)
+            end_time = params.get('end_time', 0.0)
+            
+            if start_time >= end_time:
+                issues.append("Start time must be less than end time")
+            
+            # Check for resolution or round_to
+            resolution = params.get('resolution', params.get('round_to', 0.1))
+            if resolution <= 0:
+                issues.append("Resolution must be positive")
+            
+            interpolation = params.get('interpolation', 'linear')
+            if interpolation not in ['linear', 'nearest', 'cubic']:
+                warnings.append(f"Unknown interpolation method: {interpolation}")
+            
+            # Validate mode for time-based alignment
+            if mode not in ['overlap', 'custom']:
+                warnings.append(f"Unknown time mode: {mode}, using 'overlap'")
+        
+        return ValidationResult(
+            is_valid=len(issues) == 0,
+            issues=issues,
+            warnings=warnings
+        )
+
+
+class DateTimeConverter:
+    """Advanced datetime detection and conversion capabilities"""
+    
+    def __init__(self):
+        self.datetime_formats = [
+            '%Y-%m-%d %H:%M:%S',
+            '%Y-%m-%d %H:%M:%S.%f',
+            '%Y-%m-%d',
+            '%m/%d/%Y %H:%M:%S',
+            '%m/%d/%Y',
+            '%d/%m/%Y %H:%M:%S',
+            '%d/%m/%Y',
+            '%Y/%m/%d %H:%M:%S',
+            '%Y/%m/%d',
+            '%Y-%m-%dT%H:%M:%S',
+            '%Y-%m-%dT%H:%M:%S.%f',
+            '%Y-%m-%dT%H:%M:%SZ',
+            '%Y-%j',  # Julian date
+            '%Y%m%d',  # YYYYMMDD
+            '%Y%m%d%H%M%S',  # YYYYMMDDHHMMSS
+        ]
+    
+    def detect_and_convert_datetime(self, channel: Channel) -> Channel:
+        """Detect and convert datetime data in channel"""
+        if channel.xdata is None:
+            return channel
+        
+        # Check if already converted
+        if channel.metadata.get('x_is_datetime'):
+            return channel
+        
+        # Try to detect datetime patterns
+        conversion_result = self._attempt_datetime_conversion(channel.xdata)
+        
+        if conversion_result['success']:
+            # Update channel with converted data
+            channel.xdata = conversion_result['numeric_values']
+            channel.metadata.update({
+                'x_is_datetime': True,
+                'datetime_original': conversion_result['original_datetime'],
+                'datetime_format': conversion_result['format_used'],
+                'datetime_reference': conversion_result['reference_time'],
+                'datetime_sampling_stats': conversion_result['sampling_stats']
+            })
+            
+            # Update xlabel to reflect datetime conversion
+            ref_time = conversion_result['reference_time']
+            if isinstance(ref_time, pd.Timestamp):
+                channel.xlabel = f"Time (seconds from {ref_time.strftime('%Y-%m-%d %H:%M:%S')})"
+            else:
+                channel.xlabel = f"Time (seconds from reference)"
+        
+        return channel
+    
+    def _attempt_datetime_conversion(self, xdata: np.ndarray) -> Dict[str, Any]:
+        """Attempt to convert x-data to datetime"""
+        try:
+            # First try pandas auto-detection
+            if isinstance(xdata[0], str):
+                datetime_index = pd.to_datetime(xdata, errors='coerce')
+                if not datetime_index.isnull().all():
+                    datetime_series = pd.Series(datetime_index)
+                    return self._process_datetime_series(datetime_series, 'pandas_auto')
+            
+            # Try specific formats
+            for fmt in self.datetime_formats:
+                try:
+                    datetime_index = pd.to_datetime(xdata, format=fmt, errors='coerce')
+                    if not datetime_index.isnull().all():
+                        datetime_series = pd.Series(datetime_index)
+                        return self._process_datetime_series(datetime_series, fmt)
+                except:
+                    continue
+            
+            # Try Unix timestamp detection
+            if self._could_be_unix_timestamp(xdata):
+                datetime_index = pd.to_datetime(xdata, unit='s', errors='coerce')
+                if not datetime_index.isnull().all():
+                    datetime_series = pd.Series(datetime_index)
+                    return self._process_datetime_series(datetime_series, 'unix_timestamp')
+            
+            return {'success': False, 'reason': 'No datetime format detected'}
+            
+        except Exception as e:
+            return {'success': False, 'reason': f'Conversion error: {e}'}
+    
+    def _process_datetime_series(self, datetime_series: pd.Series, format_used: str) -> Dict[str, Any]:
+        """Process successfully converted datetime series"""
+        # Remove NaN values
+        clean_series = datetime_series.dropna()
+        if len(clean_series) < 2:
+            return {'success': False, 'reason': 'Insufficient valid datetime values'}
+        
+        # Use first datetime as reference
+        reference_time = clean_series.iloc[0]
+        
+        # Convert to numeric (seconds from reference)
+        numeric_values = (clean_series - reference_time).dt.total_seconds().values
+        
+        # Calculate sampling statistics
+        sampling_stats = self._compute_datetime_sampling_stats(clean_series)
+        
+        return {
+            'success': True,
+            'numeric_values': numeric_values,
+            'original_datetime': clean_series.values,
+            'format_used': format_used,
+            'reference_time': reference_time,
+            'sampling_stats': sampling_stats
+        }
+    
+    def _compute_datetime_sampling_stats(self, clean_series: pd.Series) -> Dict[str, Any]:
+        """Compute sampling statistics for datetime series"""
+        if len(clean_series) < 2:
+            return {'sampling_rate': None, 'irregularity': None}
+        
+        # Calculate time differences
+        time_diffs = clean_series.diff().dt.total_seconds()
+        time_diffs = time_diffs.dropna()
+        
+        if len(time_diffs) == 0:
+            return {'sampling_rate': None, 'irregularity': None}
+        
+        # Calculate stats
+        mean_interval = time_diffs.mean()
+        std_interval = time_diffs.std()
+        
+        return {
+            'sampling_rate': 1.0 / mean_interval if mean_interval > 0 else None,
+            'mean_interval': mean_interval,
+            'std_interval': std_interval,
+            'irregularity': std_interval / mean_interval if mean_interval > 0 else None
+        }
+    
+    def _could_be_unix_timestamp(self, xdata: np.ndarray) -> bool:
+        """Check if data could be Unix timestamps"""
+        if not np.all(np.isfinite(xdata)):
+            return False
+        
+        # Check if values are in reasonable Unix timestamp range
+        # (1970-01-01 to 2100-01-01)
+        min_val = np.min(xdata)
+        max_val = np.max(xdata)
+        
+        return (0 < min_val < 4e9) and (0 < max_val < 4e9)
+
+
+class AlignmentResultValidator:
+    """Validate alignment results for quality and consistency"""
+    
+    def validate_alignment_result(self, result: AlignmentResult, 
+                                 original_ref: Channel, original_test: Channel) -> ValidationResult:
+        """Comprehensive validation of alignment results"""
+        issues = []
+        warnings = []
+        quality_metrics = {}
+        
+        # Basic result validation
+        if not result.success:
+            issues.append(f"Alignment failed: {result.error_message}")
+            return ValidationResult(False, issues, warnings, quality_metrics)
+        
+        # Data presence validation
+        if result.ref_data is None or result.test_data is None:
+            issues.append("Alignment result contains null data")
+            return ValidationResult(False, issues, warnings, quality_metrics)
+        
+        # Data length validation
+        if len(result.ref_data) != len(result.test_data):
+            issues.append("Aligned data arrays have different lengths")
+        
+        if len(result.ref_data) == 0:
+            issues.append("Alignment result contains no data points")
+        
+        # Data loss assessment
+        original_ref_len = len(original_ref.ydata) if original_ref.ydata is not None else 0
+        original_test_len = len(original_test.ydata) if original_test.ydata is not None else 0
+        aligned_len = len(result.ref_data)
+        
+        if original_ref_len > 0:
+            ref_retention = aligned_len / original_ref_len
+            quality_metrics['ref_data_retention'] = ref_retention
+            if ref_retention < 0.1:
+                warnings.append(f"Low reference data retention: {ref_retention*100:.1f}%")
+        
+        if original_test_len > 0:
+            test_retention = aligned_len / original_test_len
+            quality_metrics['test_data_retention'] = test_retention
+            if test_retention < 0.1:
+                warnings.append(f"Low test data retention: {test_retention*100:.1f}%")
+        
+        # Data quality validation
+        if len(result.ref_data) > 0:
+            ref_nan_count = np.sum(np.isnan(result.ref_data))
+            test_nan_count = np.sum(np.isnan(result.test_data))
+            
+            if ref_nan_count > 0:
+                ref_nan_ratio = ref_nan_count / len(result.ref_data)
+                quality_metrics['ref_nan_ratio'] = ref_nan_ratio
+                if ref_nan_ratio > 0.1:
+                    warnings.append(f"Reference data has {ref_nan_ratio*100:.1f}% NaN values after alignment")
+            
+            if test_nan_count > 0:
+                test_nan_ratio = test_nan_count / len(result.test_data)
+                quality_metrics['test_nan_ratio'] = test_nan_ratio
+                if test_nan_ratio > 0.1:
+                    warnings.append(f"Test data has {test_nan_ratio*100:.1f}% NaN values after alignment")
+        
+        # Statistical validation
+        if len(result.ref_data) > 1:
+            ref_std = np.std(result.ref_data)
+            test_std = np.std(result.test_data)
+            
+            if ref_std == 0:
+                warnings.append("Reference data has zero variance after alignment")
+            if test_std == 0:
+                warnings.append("Test data has zero variance after alignment")
+        
+        # Performance metrics
+        quality_metrics['final_length'] = aligned_len
+        quality_metrics['alignment_success'] = True
+        
+        return ValidationResult(
+            is_valid=len(issues) == 0,
+            issues=issues,
+            warnings=warnings,
+            quality_metrics=quality_metrics
+        )
+
+
+class DataAligner:
+    """Enhanced data aligner with comprehensive validation and fallback strategies"""
     
     def __init__(self):
         self._alignment_cache = {}
         self._cache_hits = 0
         self._cache_misses = 0
+        
+        # Initialize validators and converters
+        self.data_validator = DataQualityValidator()
+        self.param_validator = ParameterValidator()
+        self.datetime_converter = DateTimeConverter()
+        self.result_validator = AlignmentResultValidator()
+        
+        # Performance tracking
+        self.alignment_stats = {
+            'total_alignments': 0,
+            'successful_alignments': 0,
+            'failed_alignments': 0,
+            'datetime_conversions': 0,
+            'validation_failures': 0,
+            'fallback_usage': 0
+        }
     
     def align_from_wizard_params(self, ref_channel: Channel, test_channel: Channel, 
                                 alignment_params: Dict[str, Any]) -> AlignmentResult:
-        """
-        Align channels using parameters from the comparison wizard.
+        """Enhanced alignment with full validation and robust fallback strategy"""
+        self.alignment_stats['total_alignments'] += 1
+        error_messages = []
         
-        Args:
-            ref_channel: Reference channel object
-            test_channel: Test channel object
-            alignment_params: Dictionary with alignment parameters from wizard
-                Expected keys:
-                - mode: 'Index-Based' or 'Time-Based'
-                - start_index, end_index: for index-based alignment
-                - start_time, end_time: for time-based alignment
-                - offset: time offset (always 0 for index-based)
-                - interpolation: interpolation method for time-based
-                - resolution: resolution for time-based alignment
-                
-        Returns:
-            AlignmentResult with aligned data or error information
-        """
-        try:
-            # Convert wizard parameters to AlignmentConfig
-            alignment_config = self._convert_wizard_params_to_config(alignment_params)
-            
-            # Use existing alignment method
-            return self.align_channels(ref_channel, test_channel, alignment_config)
-            
-        except Exception as e:
+        # CRITICAL: Check if channels have data - if not, fail immediately
+        if (ref_channel.ydata is None or len(ref_channel.ydata) == 0 or
+            test_channel.ydata is None or len(test_channel.ydata) == 0):
+            self.alignment_stats['failed_alignments'] += 1
             return AlignmentResult(
                 ref_data=np.array([]),
                 test_data=np.array([]),
                 success=False,
-                error_message=f"Error converting wizard parameters: {e}"
+                error_message="Cannot align: one or both channels have no data"
             )
+        
+        try:
+            # Step 1: Validate input parameters - but continue with fallback if invalid
+            param_validation = self.param_validator.validate_alignment_params(alignment_params)
+            if not param_validation.is_valid:
+                error_messages.append(f"Parameter validation: {', '.join(param_validation.issues)}")
+                alignment_params = self._get_fallback_params(alignment_params, ref_channel, test_channel)
+                self.alignment_stats['fallback_usage'] += 1
+            
+            # Step 2: Validate input channels - but continue with cleanup if issues
+            ref_validation = self.data_validator.validate_channel_data(ref_channel)
+            test_validation = self.data_validator.validate_channel_data(test_channel)
+            
+            if not ref_validation.is_valid or not test_validation.is_valid:
+                error_messages.append(f"Channel validation: {', '.join(ref_validation.issues + test_validation.issues)}")
+                # Clean up channels before proceeding
+                ref_channel = self._cleanup_channel_data(ref_channel)
+                test_channel = self._cleanup_channel_data(test_channel)
+                self.alignment_stats['fallback_usage'] += 1
+            
+            # Step 3: Apply datetime conversion if needed - but continue if it fails
+            try:
+                enhanced_ref = self.datetime_converter.detect_and_convert_datetime(ref_channel)
+                enhanced_test = self.datetime_converter.detect_and_convert_datetime(test_channel)
+                
+                if enhanced_ref.metadata.get('x_is_datetime') or enhanced_test.metadata.get('x_is_datetime'):
+                    self.alignment_stats['datetime_conversions'] += 1
+            except Exception as e:
+                error_messages.append(f"DateTime conversion failed: {e}")
+                enhanced_ref = ref_channel
+                enhanced_test = test_channel
+                self.alignment_stats['fallback_usage'] += 1
+            
+            # Step 4: Perform alignment - this is the core operation
+            alignment_result = self._perform_enhanced_alignment(enhanced_ref, enhanced_test, alignment_params)
+            
+            # Step 5: Validate alignment result - but don't fail if validation fails
+            if alignment_result.success:
+                try:
+                    result_validation = self.result_validator.validate_alignment_result(
+                        alignment_result, enhanced_ref, enhanced_test
+                    )
+                    
+                    if not result_validation.is_valid:
+                        error_messages.append(f"Result validation: {', '.join(result_validation.issues)}")
+                        # Don't fail - just add warnings
+                        alignment_result.warnings = result_validation.warnings
+                    else:
+                        # Add quality metrics to result
+                        alignment_result.quality_metrics = result_validation.quality_metrics
+                        alignment_result.warnings = result_validation.warnings
+                except Exception as e:
+                    error_messages.append(f"Result validation failed: {e}")
+                    self.alignment_stats['fallback_usage'] += 1
+                
+                self.alignment_stats['successful_alignments'] += 1
+            else:
+                self.alignment_stats['failed_alignments'] += 1
+            
+            # Add accumulated error messages to result
+            if error_messages:
+                if alignment_result.error_message:
+                    alignment_result.error_message += f" | Validation issues: {'; '.join(error_messages)}"
+                else:
+                    alignment_result.error_message = f"Validation issues: {'; '.join(error_messages)}"
+            
+            return alignment_result
+            
+        except Exception as e:
+            # Final fallback - try basic alignment
+            error_messages.append(f"Enhanced alignment failed: {e}")
+            self.alignment_stats['fallback_usage'] += 1
+            
+            try:
+                # Convert to basic alignment config and try again
+                basic_config = self._convert_wizard_params_to_config(alignment_params)
+                fallback_result = self._basic_align_channels(ref_channel, test_channel, basic_config)
+                
+                if fallback_result.success:
+                    self.alignment_stats['successful_alignments'] += 1
+                    fallback_result.error_message = f"Used fallback alignment: {'; '.join(error_messages)}"
+                    return fallback_result
+                else:
+                    self.alignment_stats['failed_alignments'] += 1
+                    fallback_result.error_message = f"All alignment methods failed: {'; '.join(error_messages + [fallback_result.error_message or 'Unknown error'])}"
+                    return fallback_result
+                    
+            except Exception as final_e:
+                self.alignment_stats['failed_alignments'] += 1
+                return AlignmentResult(
+                    ref_data=np.array([]),
+                    test_data=np.array([]),
+                    success=False,
+                    error_message=f"Complete alignment failure: {'; '.join(error_messages + [str(final_e)])}"
+                )
+    
+    def _perform_enhanced_alignment(self, ref_channel: Channel, test_channel: Channel, 
+                                   alignment_params: Dict[str, Any]) -> AlignmentResult:
+        """Perform enhanced alignment with all validation features"""
+        # Convert parameters to config and use basic alignment
+        alignment_config = self._convert_wizard_params_to_config(alignment_params)
+        return self._basic_align_channels(ref_channel, test_channel, alignment_config)
+    
+    def _get_fallback_params(self, params: Dict[str, Any], ref_channel: Channel, test_channel: Channel) -> Dict[str, Any]:
+        """Get safe fallback parameters when validation fails"""
+        fallback_params = params.copy()
+        
+        alignment_method = params.get('alignment_method', 'index')
+        
+        if alignment_method == 'index' or alignment_method not in ['index', 'time']:
+            # Safe index-based fallback
+            ref_len = len(ref_channel.ydata) if ref_channel.ydata is not None else 0
+            test_len = len(test_channel.ydata) if test_channel.ydata is not None else 0
+            safe_len = min(ref_len, test_len, 1000)  # Limit to prevent memory issues
+            
+            fallback_params.update({
+                'alignment_method': 'index',
+                'mode': 'truncate',  # Use valid mode
+                'start_index': 0,
+                'end_index': safe_len,
+                'offset': 0
+            })
+        
+        elif alignment_method == 'time':
+            # Safe time-based fallback
+            if ref_channel.xdata is not None and test_channel.xdata is not None:
+                ref_time_range = (ref_channel.xdata[0], ref_channel.xdata[-1])
+                test_time_range = (test_channel.xdata[0], test_channel.xdata[-1])
+                
+                # Find safe overlap
+                safe_start = max(ref_time_range[0], test_time_range[0])
+                safe_end = min(ref_time_range[1], test_time_range[1])
+                
+                if safe_start < safe_end:
+                    fallback_params.update({
+                        'alignment_method': 'time',
+                        'mode': 'overlap',  # Use valid mode
+                        'start_time': safe_start,
+                        'end_time': safe_end,
+                        'offset': 0.0,
+                        'interpolation': 'nearest',
+                        'resolution': 1.0
+                    })
+                else:
+                    # Fall back to index-based
+                    return self._get_fallback_params({'alignment_method': 'index'}, ref_channel, test_channel)
+            else:
+                # No time data - fall back to index-based
+                return self._get_fallback_params({'alignment_method': 'index'}, ref_channel, test_channel)
+        
+        return fallback_params
+    
+    def _cleanup_channel_data(self, channel: Channel) -> Channel:
+        """Clean up channel data to make it more suitable for alignment"""
+        if channel.ydata is not None:
+            # Remove NaN and infinite values
+            finite_mask = np.isfinite(channel.ydata)
+            if np.any(finite_mask):
+                channel.ydata = channel.ydata[finite_mask]
+                if channel.xdata is not None:
+                    channel.xdata = channel.xdata[finite_mask]
+            
+            # Ensure data is not empty after cleanup
+            if len(channel.ydata) == 0:
+                # Create minimal dummy data to prevent complete failure
+                channel.ydata = np.array([0.0])
+                if channel.xdata is not None:
+                    channel.xdata = np.array([0.0])
+        
+        return channel
     
     def _convert_wizard_params_to_config(self, alignment_params: Dict[str, Any]) -> 'AlignmentConfig':
-        """
-        Convert comparison wizard alignment parameters to AlignmentConfig.
-        
-        Args:
-            alignment_params: Dictionary with alignment parameters from wizard
-            
-        Returns:
-            AlignmentConfig object
-        """
+        """Convert wizard alignment parameters to AlignmentConfig"""
         from pair import AlignmentConfig, AlignmentMethod
         
-        mode = alignment_params.get('mode', 'Index-Based')
+        # Get alignment method from params
+        alignment_method = alignment_params.get('alignment_method', 'index')
+        mode = alignment_params.get('mode', 'truncate')
         
-        if mode == 'Index-Based':
+        if alignment_method == 'index':
             # Index-based alignment
             start_index = alignment_params.get('start_index', 0)
             end_index = alignment_params.get('end_index', 100)
@@ -90,7 +627,7 @@ class DataAligner:
             
             return AlignmentConfig(
                 method=AlignmentMethod.INDEX,
-                mode='custom',  # Always use custom mode for wizard
+                mode=mode,  # Use the actual mode from params ('truncate' or 'custom')
                 offset=offset,
                 start_index=start_index,
                 end_index=end_index,
@@ -100,19 +637,17 @@ class DataAligner:
                 round_to=None
             )
             
-        elif mode == 'Time-Based':
+        elif alignment_method == 'time':
             # Time-based alignment
             start_time = alignment_params.get('start_time', 0.0)
             end_time = alignment_params.get('end_time', 10.0)
             offset = alignment_params.get('offset', 0.0)
             interpolation = alignment_params.get('interpolation', 'nearest')
-            resolution = alignment_params.get('resolution', 0.1)
+            resolution = alignment_params.get('resolution', alignment_params.get('round_to', 0.1))
             
             # Store resolution for time grid creation
-            # round_to is now used for display precision only
             round_to = None
             if resolution is not None and resolution > 0:
-                # Calculate decimal places needed for the resolution
                 if resolution < 1:
                     round_to = abs(int(np.log10(resolution)))
                 else:
@@ -120,7 +655,7 @@ class DataAligner:
             
             return AlignmentConfig(
                 method=AlignmentMethod.TIME,
-                mode='custom',  # Always use custom mode as the wizard provides specific ranges
+                mode=mode,  # Use the actual mode from params ('overlap' or 'custom')
                 offset=offset,
                 start_index=None,
                 end_index=None,
@@ -128,25 +663,15 @@ class DataAligner:
                 end_time=end_time,
                 interpolation=interpolation,
                 round_to=round_to,
-                resolution=resolution  # Add resolution to AlignmentConfig
+                resolution=resolution
             )
             
         else:
-            raise ValueError(f"Unknown alignment mode: {mode}")
+            raise ValueError(f"Unknown alignment method: {alignment_method}")
     
-    def align_channels(self, ref_channel: Channel, test_channel: Channel, 
+    def _basic_align_channels(self, ref_channel: Channel, test_channel: Channel, 
                       alignment_config: AlignmentConfig) -> AlignmentResult:
-        """
-        Align two channels according to the specified configuration.
-        
-        Args:
-            ref_channel: Reference channel object
-            test_channel: Test channel object
-            alignment_config: Alignment configuration
-            
-        Returns:
-            AlignmentResult with aligned data or error information
-        """
+        """Basic alignment method with minimal validation"""
         # Validate inputs
         validation_result = self._validate_inputs(ref_channel, test_channel, alignment_config)
         if not validation_result['valid']:
@@ -195,9 +720,8 @@ class DataAligner:
         if len(ref_channel.ydata) == 0 or len(test_channel.ydata) == 0:
             return {'valid': False, 'error': 'Both channels must have non-empty data'}
         
-        # Check for self-comparison
-        if (ref_channel.channel_id == test_channel.channel_id and 
-            ref_channel.file_id == test_channel.file_id):
+        # Check for self-comparison - only check channel_id since it's unique
+        if ref_channel.channel_id == test_channel.channel_id:
             return {'valid': False, 'error': 'Cannot align channel to itself'}
         
         # Validate alignment config
@@ -653,4 +1177,17 @@ class DataAligner:
             'cache_hits': self._cache_hits,
             'cache_misses': self._cache_misses,
             'hit_rate': self._cache_hits / (self._cache_hits + self._cache_misses) if (self._cache_hits + self._cache_misses) > 0 else 0
+        } 
+
+    def get_alignment_stats(self) -> Dict[str, Any]:
+        """Get alignment performance statistics"""
+        return {
+            'total_alignments': self.alignment_stats['total_alignments'],
+            'successful_alignments': self.alignment_stats['successful_alignments'],
+            'failed_alignments': self.alignment_stats['failed_alignments'],
+            'datetime_conversions': self.alignment_stats['datetime_conversions'],
+            'validation_failures': self.alignment_stats['validation_failures'],
+            'fallback_usage': self.alignment_stats['fallback_usage'],
+            'success_rate': self.alignment_stats['successful_alignments'] / self.alignment_stats['total_alignments'] if self.alignment_stats['total_alignments'] > 0 else 0,
+            'fallback_rate': self.alignment_stats['fallback_usage'] / self.alignment_stats['total_alignments'] if self.alignment_stats['total_alignments'] > 0 else 0
         } 

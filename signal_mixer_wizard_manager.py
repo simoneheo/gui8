@@ -197,7 +197,7 @@ class SignalMixerWizardManager:
         return True, f"Channels are compatible (length: {len(channel_a.ydata)})"
     
     def validate_channels_for_mixing_with_alignment(self, channel_a, channel_b, alignment_config):
-        """Validate that two channels can be mixed together with alignment options."""
+        """Validate that two channels can be mixed together with alignment options using DataAligner."""
         if not channel_a or not channel_b:
             return False, "Both channels must be selected", {}
         
@@ -207,86 +207,112 @@ class SignalMixerWizardManager:
         if channel_a.channel_id == channel_b.channel_id:
             return False, "Cannot mix a channel with itself", {}
         
-        len_a = len(channel_a.ydata)
-        len_b = len(channel_b.ydata)
+        # Use DataAligner for enhanced validation
+        from data_aligner import DataAligner
         
-        # Check if alignment is needed
-        if len_a == len_b:
+        try:
+            data_aligner = DataAligner()
+            
+            # Validate channel data quality
+            ref_validation = data_aligner.data_validator.validate_channel_data(channel_a)
+            test_validation = data_aligner.data_validator.validate_channel_data(channel_b)
+            
+            # Check for critical issues
+            if not ref_validation.is_valid:
+                return False, f"Channel A validation failed: {'; '.join(ref_validation.issues)}", {}
+            
+            if not test_validation.is_valid:
+                return False, f"Channel B validation failed: {'; '.join(test_validation.issues)}", {}
+            
+            # Validate alignment parameters
+            param_validation = data_aligner.param_validator.validate_alignment_params(alignment_config)
+            if not param_validation.is_valid:
+                return False, f"Alignment parameters invalid: {'; '.join(param_validation.issues)}", {}
+            
+            # Check basic dimensions
+            len_a = len(channel_a.ydata)
+            len_b = len(channel_b.ydata)
+            
             # Same length - no alignment needed
-            return True, f"Channels are compatible (length: {len_a})", {'needs_alignment': False}
-        
-        # Different lengths - check if alignment can handle this
-        alignment_method = alignment_config.get('alignment_method', 'index')
-        
-        if alignment_method == 'index':
-            # Index-based alignment
-            mode = alignment_config.get('mode', 'truncate')
-            if mode == 'truncate':
-                min_length = min(len_a, len_b)
-                return True, f"Channels compatible with alignment (will truncate to {min_length})", {
-                    'needs_alignment': True,
-                    'alignment_message': f"Will truncate to {min_length} samples"
-                }
-            else:  # custom
-                start_idx = alignment_config.get('start_index', 0)
-                end_idx = alignment_config.get('end_index', 500)
-                max_possible = min(len_a, len_b) - 1
-                
-                if start_idx >= max_possible or end_idx >= max_possible:
-                    return False, f"Index range exceeds data bounds (max: {max_possible})", {}
-                
-                if start_idx >= end_idx:
-                    return False, "Invalid index range: start >= end", {}
-                
-                aligned_length = end_idx - start_idx + 1
-                return True, f"Channels compatible with alignment (will use {aligned_length} samples)", {
-                    'needs_alignment': True,
-                    'alignment_message': f"Will align to {aligned_length} samples"
-                }
-        
-        else:  # time-based
-            # Check if channels have time data
-            has_time_a = hasattr(channel_a, 'xdata') and channel_a.xdata is not None
-            has_time_b = hasattr(channel_b, 'xdata') and channel_b.xdata is not None
+            if len_a == len_b:
+                return True, f"Channels are compatible (length: {len_a})", {'needs_alignment': False}
             
-            if not has_time_a or not has_time_b:
-                # Try to create time data
-                if self._can_create_time_data(channel_a, channel_b):
-                    return True, "Channels compatible with alignment (will create time data)", {
+            # Different lengths - check if alignment can handle this
+            alignment_method = alignment_config.get('alignment_method', 'index')
+            
+            if alignment_method == 'index':
+                # Index-based alignment
+                mode = alignment_config.get('mode', 'truncate')
+                if mode == 'truncate':
+                    min_length = min(len_a, len_b)
+                    return True, f"Channels compatible with alignment (will truncate to {min_length})", {
                         'needs_alignment': True,
-                        'alignment_message': "Will create time data and align"
+                        'alignment_message': f"Will truncate to {min_length} samples"
                     }
-                else:
-                    return False, "Time-based alignment requires time data or sampling rate", {}
+                else:  # custom
+                    start_idx = alignment_config.get('start_index', 0)
+                    end_idx = alignment_config.get('end_index', 500)
+                    max_possible = min(len_a, len_b) - 1
+                    
+                    if start_idx >= max_possible or end_idx >= max_possible:
+                        return False, f"Index range exceeds data bounds (max: {max_possible})", {}
+                    
+                    if start_idx >= end_idx:
+                        return False, "Invalid index range: start >= end", {}
+                    
+                    aligned_length = end_idx - start_idx + 1
+                    return True, f"Channels compatible with alignment (will use {aligned_length} samples)", {
+                        'needs_alignment': True,
+                        'alignment_message': f"Will align to {aligned_length} samples"
+                    }
             
-            # Both have time data - check if alignment is possible
-            mode = alignment_config.get('mode', 'overlap')
-            if mode == 'overlap':
-                # Check for overlapping time ranges
-                time_a_range = (channel_a.xdata.min(), channel_a.xdata.max())
-                time_b_range = (channel_b.xdata.min(), channel_b.xdata.max())
+            else:  # time-based
+                # Check if channels have time data
+                has_time_a = hasattr(channel_a, 'xdata') and channel_a.xdata is not None
+                has_time_b = hasattr(channel_b, 'xdata') and channel_b.xdata is not None
                 
-                overlap_start = max(time_a_range[0], time_b_range[0])
-                overlap_end = min(time_a_range[1], time_b_range[1])
+                if not has_time_a or not has_time_b:
+                    # Try to create time data
+                    if self._can_create_time_data(channel_a, channel_b):
+                        return True, "Channels compatible with alignment (will create time data)", {
+                            'needs_alignment': True,
+                            'alignment_message': "Will create time data and align"
+                        }
+                    else:
+                        return False, "Time-based alignment requires time data or sampling rate", {}
                 
-                if overlap_start >= overlap_end:
-                    return False, "No overlapping time range found", {}
-                
-                return True, f"Channels compatible with alignment (overlap {overlap_start:.3f}s to {overlap_end:.3f}s)", {
-                    'needs_alignment': True,
-                    'alignment_message': f"Will align to overlap region ({overlap_start:.3f}s to {overlap_end:.3f}s)"
-                }
-            else:  # custom
-                start_time = alignment_config.get('start_time', 0.0)
-                end_time = alignment_config.get('end_time', 10.0)
-                
-                if start_time >= end_time:
-                    return False, "Invalid time range: start >= end", {}
-                
-                return True, f"Channels compatible with alignment (custom time range)", {
-                    'needs_alignment': True,
-                    'alignment_message': f"Will align to custom time range ({start_time:.3f}s to {end_time:.3f}s)"
-                }
+                # Both have time data - check if alignment is possible
+                mode = alignment_config.get('mode', 'overlap')
+                if mode == 'overlap':
+                    # Check for overlapping time ranges
+                    time_a_range = (channel_a.xdata.min(), channel_a.xdata.max())
+                    time_b_range = (channel_b.xdata.min(), channel_b.xdata.max())
+                    
+                    overlap_start = max(time_a_range[0], time_b_range[0])
+                    overlap_end = min(time_a_range[1], time_b_range[1])
+                    
+                    if overlap_start >= overlap_end:
+                        return False, "No overlapping time range found", {}
+                    
+                    return True, f"Channels compatible with alignment (overlap {overlap_start:.3f}s to {overlap_end:.3f}s)", {
+                        'needs_alignment': True,
+                        'alignment_message': f"Will align to overlap region ({overlap_start:.3f}s to {overlap_end:.3f}s)"
+                    }
+                else:  # custom
+                    start_time = alignment_config.get('start_time', 0.0)
+                    end_time = alignment_config.get('end_time', 10.0)
+                    
+                    if start_time >= end_time:
+                        return False, "Invalid time range: start >= end", {}
+                    
+                    return True, f"Channels compatible with alignment (custom time range)", {
+                        'needs_alignment': True,
+                        'alignment_message': f"Will align to custom time range ({start_time:.3f}s to {end_time:.3f}s)"
+                    }
+        
+        except Exception as e:
+            # Fallback to basic validation if DataAligner fails
+            return self.validate_channels_for_mixing(channel_a, channel_b)
     
     def _can_create_time_data(self, channel_a, channel_b):
         """Check if time data can be created for channels that don't have it."""
@@ -871,51 +897,45 @@ class SignalMixerWizardManager:
             
             if len_a != len_b or (alignment_params and alignment_params.get('alignment_method')):
                 if alignment_params:
-                    # Use DataAligner instead of legacy alignment method
+                    # Use DataAligner with enhanced validation and fallback strategies
                     from data_aligner import DataAligner
-                    from pair import AlignmentConfig, AlignmentMethod
                     
                     data_aligner = DataAligner()
                     
-                    # Convert alignment_params to AlignmentConfig
-                    alignment_method = alignment_params.get('alignment_method', 'index')
-                    if alignment_method == 'index':
-                        alignment_config = AlignmentConfig(
-                            method=AlignmentMethod.INDEX,
-                            start_index=alignment_params.get('start_index', 0),
-                            end_index=alignment_params.get('end_index', 500),
-                            offset=alignment_params.get('offset', 0)
-                        )
-                    else:
-                        alignment_config = AlignmentConfig(
-                            method=AlignmentMethod.TIME,
-                            start_time=alignment_params.get('start_time', 0.0),
-                            end_time=alignment_params.get('end_time', 10.0),
-                            offset=alignment_params.get('offset', 0.0)
-                        )
-                    
-                    alignment_result = data_aligner.align_channels(channel_a, channel_b, alignment_config)
+                    # Use the DataAligner's align_from_wizard_params method directly
+                    alignment_result = data_aligner.align_from_wizard_params(channel_a, channel_b, alignment_params)
                     
                     if not alignment_result.success:
                         return None, f"Failed to align channels: {alignment_result.error_message}"
                     
-                    # Convert DataAligner result to legacy format
-                    aligned_result = {
-                        'ref_data': alignment_result.ref_data,
-                        'test_data': alignment_result.test_data,
-                        'alignment_method': alignment_config.method.value,
-                        'n_points': len(alignment_result.ref_data)
-                    }
+                    # Get alignment stats for logging
+                    alignment_stats = data_aligner.get_alignment_stats()
                     
                     # Create new channel objects with aligned data
-                    aligned_a = self._create_aligned_channel(channel_a, aligned_result.get('ref_data'), aligned_result.get('time_data'))
-                    aligned_b = self._create_aligned_channel(channel_b, aligned_result.get('test_data'), aligned_result.get('time_data'))
+                    aligned_a = self._create_aligned_channel(channel_a, alignment_result.ref_data, None)
+                    aligned_b = self._create_aligned_channel(channel_b, alignment_result.test_data, None)
                     
                     # Update context with aligned channels
                     channel_context['A'] = aligned_a
                     channel_context['B'] = aligned_b
                     
-                    self._log_state_change(f"Aligned channels: A={len(aligned_a.ydata)}, B={len(aligned_b.ydata)}")
+                    # Log detailed alignment information
+                    self._log_state_change(f"✅ DataAligner: A={len(aligned_a.ydata)}, B={len(aligned_b.ydata)}")
+                    if alignment_result.warnings:
+                        for warning in alignment_result.warnings:
+                            self._log_state_change(f"⚠️ DataAligner warning: {warning}")
+                    
+                    # Log alignment statistics
+                    if alignment_stats.get('datetime_conversions', 0) > 0:
+                        self._log_state_change(f"🕐 Applied datetime conversion")
+                    if alignment_stats.get('fallback_usage', 0) > 0:
+                        self._log_state_change(f"⚠️ Used fallback alignment strategies")
+                    
+                    # Log quality metrics if available
+                    if alignment_result.quality_metrics:
+                        retention_ref = alignment_result.quality_metrics.get('data_retention_ref', 0) * 100
+                        retention_test = alignment_result.quality_metrics.get('data_retention_test', 0) * 100
+                        self._log_state_change(f"📊 Data retention: ref={retention_ref:.1f}%, test={retention_test:.1f}%")
                 else:
                     return None, "Channels have different dimensions but no alignment parameters provided"
             

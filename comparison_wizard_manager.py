@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QMainWindow, QMessageBox, QCheckBox, QLabel, QTableWidgetItem, QWidget, QHBoxLayout, QPushButton
+from PySide6.QtWidgets import QMainWindow, QMessageBox, QCheckBox, QLabel, QTableWidgetItem, QWidget, QHBoxLayout, QPushButton, QDialog
 from PySide6.QtCore import Qt, QPoint
 from PySide6.QtCore import Signal, QObject, QTimer
 from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QPixmap
@@ -15,6 +15,7 @@ from comparison import ComparisonRegistry, load_all_comparisons
 from pair_analyzer import PairAnalyzer
 from pair_analyzer import MethodConfigOp as PairAnalyzerMethodConfig
 from overlay import Overlay
+from overlay_wizard import OverlayWizard
 
 
 class PairSelectionOp:
@@ -602,6 +603,9 @@ class RenderPlotOp:
         
         # Store scatter data for overlay calculations
         self.current_scatter_data = []  # List of scatter data dictionaries
+        
+        # Initialize overlay zorder to ensure overlays appear above scatter points
+        self._current_overlay_zorder = 10
     
     def render(self, analysis_results: Dict[str, Any], plot_config: Dict[str, Any] = None) -> bool:
         """
@@ -642,51 +646,72 @@ class RenderPlotOp:
             # Clear previous plot
             self._clear_plot()
             
-            # DEBUG: Check if scatter_data is still intact after _clear_plot
-            print(f"[RenderPlotOp] DEBUG: After _clear_plot(), scatter_data length: {len(scatter_data)}")
-            
             # Create new figure and axes if needed
             if not self._ensure_plot_ready():
                 return False
                 
-            # DEBUG: Check scatter_data right before rendering
-            print(f"[RenderPlotOp] DEBUG: About to render {len(scatter_data)} pairs with plot_type: {plot_type}")
-            if scatter_data:
-                print(f"[RenderPlotOp] DEBUG: scatter_data[0] keys: {list(scatter_data[0].keys())}")
-                print(f"[RenderPlotOp] DEBUG: scatter_data[0] x_data length: {len(scatter_data[0].get('x_data', []))}")
-                
             # Route rendering based on plot_type
-            if plot_type == "scatter":
-                self._render_scatter_plot(scatter_data, plot_config)
-            elif plot_type == "bar":
-                self._render_bar_plot(scatter_data, plot_config)
-            elif plot_type == "stacked_area":
-                self._render_stacked_area_plot(scatter_data, plot_config)
-            elif plot_type == "histogram":
-                self._render_histogram_plot(scatter_data, plot_config)
-            elif plot_type == "line":
-                self._render_line_plot(scatter_data, plot_config)
-            else:
-                print(f"[RenderPlotOp] Unknown plot_type: {plot_type}, falling back to scatter")
-                self._render_scatter_plot(scatter_data, plot_config)
+            try:
+                if plot_type == "scatter":
+                    self._render_scatter_plot(scatter_data, plot_config)
+                elif plot_type == "bar":
+                    self._render_bar_plot(scatter_data, plot_config)
+                elif plot_type == "stacked_area":
+                    self._render_stacked_area_plot(scatter_data, plot_config)
+                elif plot_type == "histogram":
+                    self._render_histogram_plot(scatter_data, plot_config)
+                elif plot_type == "line":
+                    self._render_line_plot(scatter_data, plot_config)
+                else:
+                    print(f"[RenderPlotOp] Unknown plot_type: {plot_type}, falling back to scatter")
+                    self._render_scatter_plot(scatter_data, plot_config)
+            except Exception as e:
+                print(f"[RenderPlotOp] Error rendering main plot: {e}")
+                import traceback
+                traceback.print_exc()
+                # Continue with overlays even if main plot fails
             
-            # Auto-zoom to scatter data bounds (excluding overlays)
-            self._auto_zoom_to_scatter_data(scatter_data)
+            # Auto-zoom based on plot type
+            try:
+                if plot_type == "histogram":
+                    self._auto_zoom_to_histogram_data(scatter_data)
+                else:
+                    self._auto_zoom_to_scatter_data(scatter_data)
+            except Exception as e:
+                print(f"[RenderPlotOp] Error auto-zooming: {e}")
+                # Continue without auto-zoom
             
             # Render overlays
+            print(f"[RenderPlotOp] About to render {len(overlays)} overlays")
+            for overlay in overlays:
+                print(f"[RenderPlotOp] Overlay {overlay.id}: type={overlay.type}, data={overlay.data}, show={overlay.show}")
             self._render_overlays(overlays, plot_config)
             
             # Configure plot appearance
-            self._configure_plot_appearance(scatter_data, method_name, plot_config)
+            try:
+                self._configure_plot_appearance(scatter_data, method_name, plot_config)
+            except Exception as e:
+                print(f"[RenderPlotOp] Error configuring plot appearance: {e}")
+                # Continue without appearance configuration
             
             # Refresh the plot widget
-            self._refresh_plot_widget()
+            try:
+                self._refresh_plot_widget()
+            except Exception as e:
+                print(f"[RenderPlotOp] Error refreshing plot widget: {e}")
+                # Try alternative refresh method
+                try:
+                    if self.current_figure and hasattr(self.current_figure, 'canvas'):
+                        self.current_figure.canvas.draw()
+                        print(f"[RenderPlotOp] Used alternative refresh method")
+                except Exception as e2:
+                    print(f"[RenderPlotOp] Alternative refresh also failed: {e2}")
             
             print(f"[RenderPlotOp] Successfully rendered plot for method: {method_name}")
             return True
             
         except Exception as e:
-            print(f"[RenderPlotOp] Error rendering plot: {e}")
+            print(f"[RenderPlotOp] Critical error rendering plot: {e}")
             import traceback
             traceback.print_exc()
             return False
@@ -711,13 +736,11 @@ class RenderPlotOp:
                 # Clear existing axes and create new one
                 self.current_figure.clear()
                 self.current_axes = self.current_figure.add_subplot(111)
-                print(f"[RenderPlotOp] Using existing figure from canvas")
                 return True
             else:
                 # Fallback: create standalone figure
                 self.current_figure = plt.figure(figsize=(10, 6))
                 self.current_axes = self.current_figure.add_subplot(111)
-                print(f"[RenderPlotOp] Created new standalone figure")
                 return True
         except Exception as e:
             print(f"[RenderPlotOp] Error setting up plot: {e}")
@@ -725,26 +748,19 @@ class RenderPlotOp:
     
     def _render_scatter_plot(self, scatter_data: List[Dict[str, Any]], plot_config: Dict[str, Any]):
         """Render scatter points with performance options (density modes)."""
-        print(f"[RenderPlotOp] DEBUG: _render_scatter_data called with {len(scatter_data)} pairs")
-        
         if not scatter_data:
-            print("[RenderPlotOp] DEBUG: No scatter data to render")
             return
             
         for i, pair_data in enumerate(scatter_data):
-            print(f"[RenderPlotOp] DEBUG: Processing pair {i}: {pair_data.keys()}")
             try:
                 x_data = pair_data.get('x_data', [])
                 y_data = pair_data.get('y_data', [])
                 
                 if len(x_data) == 0 or len(y_data) == 0:
-                    print(f"[RenderPlotOp] DEBUG: Skipping pair {i} due to empty data")
                     continue
                 
                 # Get density mode from pair data (set by performance options)
                 density_mode = pair_data.get('density_mode', 'scatter')
-                
-                print(f"[RenderPlotOp] DEBUG: Rendering pair '{pair_data.get('pair_name', 'unknown')}' with density mode: {density_mode}")
                 
                 # Render based on density mode
                 if density_mode == 'scatter':
@@ -816,6 +832,74 @@ class RenderPlotOp:
         
         print(f"[RenderPlotOp] Auto-zoomed to scatter data bounds: x=({x_min:.3f}, {x_max:.3f}), y=({y_min:.3f}, {y_max:.3f})")
     
+    def _auto_zoom_to_histogram_data(self, scatter_data: List[Dict[str, Any]], padding_factor: float = 0.05):
+        """Auto-zoom the plot to histogram data with proper y-range for frequencies."""
+        if not scatter_data or not self.current_axes:
+            return
+        
+        print(f"[RenderPlotOp] Auto-zooming for histogram with {len(scatter_data)} data series")
+        
+        # Calculate x-range from all histogram data (error values)
+        x_min, x_max = float('inf'), float('-inf')
+        max_frequency = 0
+        
+        for pair_data in scatter_data:
+            x_data = pair_data.get('x_data', [])
+            
+            if len(x_data) > 0:
+                try:
+                    # X-range: based on the error values being histogrammed
+                    x_min = min(x_min, min(x_data))
+                    x_max = max(x_max, max(x_data))
+                    
+                    # Estimate maximum frequency by calculating histogram
+                    bins = pair_data.get('bins', 30)
+                    bin_edges = pair_data.get('bin_edges', None)
+                    
+                    if bin_edges is not None:
+                        # Use pre-computed bin edges
+                        counts, _ = np.histogram(x_data, bins=bin_edges)
+                    else:
+                        # Use bin count
+                        counts, _ = np.histogram(x_data, bins=bins)
+                    
+                    # Track maximum frequency across all pairs
+                    max_frequency = max(max_frequency, max(counts) if len(counts) > 0 else 0)
+                    
+                except (ValueError, TypeError):
+                    # Skip if data is not numeric
+                    continue
+        
+        # Check if we found valid bounds
+        if x_min == float('inf') or x_max == float('-inf'):
+            print("[RenderPlotOp] No valid histogram data bounds found, using auto-limits")
+            return
+        
+        # Handle edge case where all data points are identical
+        x_range = x_max - x_min
+        if x_range == 0:
+            x_range = abs(x_min) * 0.1 if x_min != 0 else 1.0
+            x_min -= x_range / 2
+            x_max += x_range / 2
+        
+        # Apply padding to x-range
+        x_padding = x_range * padding_factor
+        
+        # For histograms: y always starts at 0, goes to max_frequency + padding
+        y_min = 0
+        y_max = max_frequency * (1 + padding_factor * 2)  # Extra padding for readability
+        
+        # Ensure minimum y-range
+        if y_max <= y_min:
+            y_max = y_min + 1
+        
+        # Set axis limits
+        self.current_axes.set_xlim(x_min - x_padding, x_max + x_padding)
+        self.current_axes.set_ylim(y_min, y_max)
+        
+        print(f"[RenderPlotOp] Auto-zoomed histogram: x=({x_min:.3f}, {x_max:.3f}), y=({y_min:.3f}, {y_max:.3f})")
+        print(f"[RenderPlotOp] Max frequency: {max_frequency}, Y-range: [0, {y_max:.3f}]")
+    
     def _render_overlays(self, overlays: List[Overlay], plot_config: Dict[str, Any]):
         """Render overlay elements on the plot."""
         for overlay in overlays:
@@ -836,20 +920,34 @@ class RenderPlotOp:
                 
             except Exception as e:
                 print(f"[RenderPlotOp] Error rendering overlay {overlay.id}: {e}")
+                import traceback
+                traceback.print_exc()
+                # Continue with next overlay instead of breaking the entire plot
+                continue
     
     def _render_single_overlay(self, overlay: Overlay, plot_config: Dict[str, Any]):
         """Render a single overlay element with rich styling support."""
         style = overlay.style
         overlay_type = overlay.type
+        overlay_data = overlay.data or {}
         
         print(f"[RenderPlotOp] Rendering overlay: {overlay.id} (type: {overlay_type})")
+        print(f"[RenderPlotOp] Overlay data keys: {list(overlay_data.keys())}")
+        print(f"[RenderPlotOp] Overlay style keys: {list(style.keys())}")
         
         # Store artist reference for this overlay
         artist = None
         
         if overlay_type == 'line':
             artist = self._render_line_overlay(overlay, style)
+        elif overlay_type == 'hline':
+            # Handle hline type overlays using the line renderer
+            artist = self._render_line_overlay(overlay, style)
+        elif overlay_type == 'vline':
+            # Handle vline type overlays using the line renderer
+            artist = self._render_line_overlay(overlay, style)
         elif overlay_type == 'text':
+            # Try to render with detailed error handling
             artist = self._render_text_overlay(overlay, style)
         elif overlay_type == 'fill':
             artist = self._render_fill_overlay(overlay, style)
@@ -861,111 +959,126 @@ class RenderPlotOp:
         # Store artist reference for visibility toggling
         if artist:
             self.overlay_artists[overlay.id] = artist
+            print(f"[RenderPlotOp] Registered artist for overlay {overlay.id}")
+        else:
+            print(f"[RenderPlotOp] No artist created for overlay {overlay.id}")
+        
+        return artist
     
     def _render_line_overlay(self, overlay: Overlay, style: Dict[str, Any]):
         """Render line-type overlays (horizontal, vertical, or general lines)."""
+        if not self.current_axes:
+            print("[RenderPlotOp] No axes available for line overlay")
+            return None
         color = style.get('color')
         linestyle = style.get('linestyle')
         linewidth = style.get('linewidth')
         alpha = style.get('alpha')
         label = style.get('label', overlay.name)
+        zorder = style.get('zorder', getattr(self, '_current_overlay_zorder', 10))
+        artists = []
+        overlay_data = overlay.data or {}
         
-        artists = []  # Collect all artists for this overlay
+        print(f"[RenderPlotOp] Line overlay data: {overlay_data}")
+        print(f"[RenderPlotOp] Line overlay style: {style}")
         
-        # Horizontal line (y = constant)
-        if 'y_value' in style:
-            y_value = style['y_value']
+        # Check overlay_data first for coordinate data
+        if 'y_value' in overlay_data:
+            y_value = overlay_data['y_value']
             artist = self.current_axes.axhline(
                 y=y_value, color=color, linestyle=linestyle,
-                linewidth=linewidth, alpha=alpha, label=label
+                linewidth=linewidth, alpha=alpha, label=label, zorder=zorder
             )
             artists.append(artist)
             print(f"[RenderPlotOp] Added horizontal line at y={y_value}")
-        
-        # Vertical line (x = constant)
-        elif 'x_value' in style:
-            x_value = style['x_value']
-            artist = self.current_axes.axvline(
-                x=x_value, color=color, linestyle=linestyle,
-                linewidth=linewidth, alpha=alpha, label=label
+        elif 'y' in overlay_data and (overlay.type == 'hline' or 'hline' in overlay.id.lower() or 'bias' in overlay.name.lower()):
+            # Handle hline type overlays with {'y': constant_value} format
+            y_value = overlay_data['y']
+            artist = self.current_axes.axhline(
+                y=y_value, color=color, linestyle=linestyle,
+                linewidth=linewidth, alpha=alpha, label=label, zorder=zorder
             )
             artists.append(artist)
-            print(f"[RenderPlotOp] Added vertical line at x={x_value}")
-        
-        # Multiple horizontal lines (e.g., limits of agreement)
-        elif 'y_values' in style:
-            y_values = style['y_values']
-            for i, y_value in enumerate(y_values):
-                # Only add label to first line to avoid duplicate legend entries
-                line_label = label if i == 0 else None
-                artist = self.current_axes.axhline(
-                    y=y_value, color=color, linestyle=linestyle,
-                    linewidth=linewidth, alpha=alpha, label=line_label
-                )
-                artists.append(artist)
-            print(f"[RenderPlotOp] Added {len(y_values)} horizontal lines")
-        
-        # Multiple vertical lines
-        elif 'x_values' in style:
-            x_values = style['x_values']
+            print(f"[RenderPlotOp] Added horizontal line (hline type) at y={y_value}")
+        elif 'x' in overlay_data and (overlay.type == 'vline' or 'vline' in overlay.id.lower() or 'mean' in overlay.name.lower() or 'median' in overlay.name.lower()):
+            # Handle vline type overlays with {'x': [x1, x2, ...]} format
+            x_values = overlay_data['x']
+            if not isinstance(x_values, list):
+                x_values = [x_values]
+            
             for i, x_value in enumerate(x_values):
                 line_label = label if i == 0 else None
                 artist = self.current_axes.axvline(
                     x=x_value, color=color, linestyle=linestyle,
-                    linewidth=linewidth, alpha=alpha, label=line_label
+                    linewidth=linewidth, alpha=alpha, label=line_label, zorder=zorder
+                )
+                artists.append(artist)
+            print(f"[RenderPlotOp] Added {len(x_values)} vertical lines (vline type) at x={x_values}")
+        elif 'x_value' in overlay_data:
+            x_value = overlay_data['x_value']
+            artist = self.current_axes.axvline(
+                x=x_value, color=color, linestyle=linestyle,
+                linewidth=linewidth, alpha=alpha, label=label, zorder=zorder
+            )
+            artists.append(artist)
+            print(f"[RenderPlotOp] Added vertical line at x={x_value}")
+        elif 'y_values' in overlay_data:
+            y_values = overlay_data['y_values']
+            for i, y_value in enumerate(y_values):
+                line_label = label if i == 0 else None
+                artist = self.current_axes.axhline(
+                    y=y_value, color=color, linestyle=linestyle,
+                    linewidth=linewidth, alpha=alpha, label=line_label, zorder=zorder
+                )
+                artists.append(artist)
+            print(f"[RenderPlotOp] Added {len(y_values)} horizontal lines")
+        elif 'x_values' in overlay_data:
+            x_values = overlay_data['x_values']
+            for i, x_value in enumerate(x_values):
+                line_label = label if i == 0 else None
+                artist = self.current_axes.axvline(
+                    x=x_value, color=color, linestyle=linestyle,
+                    linewidth=linewidth, alpha=alpha, label=line_label, zorder=zorder
                 )
                 artists.append(artist)
             print(f"[RenderPlotOp] Added {len(x_values)} vertical lines")
-        
-        # General line (x, y coordinates)
-        elif 'x_data' in style and 'y_data' in style:
-            x_data = style['x_data']
-            y_data = style['y_data']
-            
-            # Special handling for regression lines - use actual data range
+        elif ('x' in overlay_data and 'y' in overlay_data) or ('x_data' in style and 'y_data' in style):
+            if 'x' in overlay_data and 'y' in overlay_data:
+                x_data = overlay_data['x']
+                y_data = overlay_data['y']
+            else:
+                x_data = style['x_data']
+                y_data = style['y_data']
             if label == 'Regression Line' and 'slope' in style and 'intercept' in style:
-                # Get actual data range from stored scatter data
                 x_min = float('inf')
                 x_max = float('-inf')
-                
                 for pair_data in self.current_scatter_data:
                     pair_x_data = pair_data.get('x_data', [])
                     if pair_x_data:
                         x_min = min(x_min, min(pair_x_data))
                         x_max = max(x_max, max(pair_x_data))
-                
-                # If no scatter data found, use a reasonable default
                 if x_min == float('inf') or x_max == float('-inf'):
                     x_min, x_max = -10, 10
-                
-                # Compute regression line with actual range
                 slope = style['slope']
                 intercept = style['intercept']
                 x_data = [x_min, x_max]
                 y_data = [slope * x_min + intercept, slope * x_max + intercept]
                 print(f"[RenderPlotOp] Computed regression line: y = {slope:.3f}x + {intercept:.3f} over range [{x_min:.3f}, {x_max:.3f}]")
-            
             artist = self.current_axes.plot(
                 x_data, y_data, color=color, linestyle=linestyle,
-                linewidth=linewidth, alpha=alpha, label=label
+                linewidth=linewidth, alpha=alpha, label=label, zorder=zorder
             )
-            # plot() returns a list of Line2D objects, get the first one
             artists.append(artist[0])
             print(f"[RenderPlotOp] Added general line with {len(x_data)} points")
-        
-        # Identity line (y = x) - special case for correlation plots
         elif label == 'y = x' or 'identity' in overlay.id.lower():
             x_min, x_max = self.current_axes.get_xlim()
             artist = self.current_axes.plot(
                 [x_min, x_max], [x_min, x_max], 
                 color=color, linestyle=linestyle,
-                linewidth=linewidth, alpha=alpha, label=label
+                linewidth=linewidth, alpha=alpha, label=label, zorder=zorder
             )
-            # plot() returns a list of Line2D objects, get the first one
             artists.append(artist[0])
             print(f"[RenderPlotOp] Added identity line")
-        
-        # Return single artist or list of artists
         if len(artists) == 0:
             return None
         elif len(artists) == 1:
@@ -975,80 +1088,122 @@ class RenderPlotOp:
     
     def _render_text_overlay(self, overlay: Overlay, style: Dict[str, Any]):
         """Render text-type overlays (statistical results, equations, etc.)."""
-        color = style.get('color')
-        fontsize = style.get('fontsize')
-        alpha = style.get('alpha')
-        position = style.get('position', (0.02, 0.98))
-        bbox = style.get('bbox')
-        
-        # Get text content
-        text_lines = style.get('text_lines', [])
-        if not text_lines:
-            # Fallback to overlay name if no text lines provided
-            text_lines = [overlay.name]
-        
-        # Join lines with newlines
-        text = '\n'.join(text_lines)
-        
-        # Render text and capture artist reference
-        artist = self.current_axes.text(
-            position[0], position[1], text,
-            transform=self.current_axes.transAxes,
-            fontsize=fontsize, color=color, alpha=alpha,
-            verticalalignment='top',
-            bbox=bbox
-        )
-        print(f"[RenderPlotOp] Added text overlay: {text[:50]}...")
-        
-        return artist
+        if not self.current_axes:
+            print("[RenderPlotOp] No axes available for text overlay")
+            return None
+            
+        try:
+            # Get text content from overlay data
+            overlay_data = overlay.data or {}
+            
+            # Try multiple ways to get text content
+            text = None
+            
+            # Method 1: Check for text_lines list
+            text_lines = overlay_data.get('text_lines', style.get('text_lines', []))
+            if text_lines:
+                text = '\n'.join(str(line) for line in text_lines if line)
+            
+            # Method 2: Check for raw text string
+            if not text and 'text' in overlay_data:
+                text = str(overlay_data['text'])
+            
+            # Method 3: Check for raw text in style
+            if not text and 'text' in style:
+                text = str(style['text'])
+            
+            # Method 4: Use overlay name as fallback
+            if not text:
+                text = overlay.name
+            
+            if not text.strip():
+                print(f"[RenderPlotOp] Empty text content for overlay {overlay.id}")
+                return None
+            
+            # Clean problematic characters that matplotlib might misinterpret
+            cleaned_text = text
+            cleaned_text = cleaned_text.replace('²', '^2')  # Replace superscript 2
+            cleaned_text = cleaned_text.replace('°', 'deg')  # Replace degree symbol
+            cleaned_text = cleaned_text.replace('±', '+/-')  # Replace plus-minus symbol
+            
+            # Use the overlay's built-in rendering method
+            overlay._render_text(self.current_axes)
+            
+            # Get the last text artist that was added (most recent one)
+            if self.current_axes.texts:
+                artist = self.current_axes.texts[-1]  # Get the most recently added text artist
+                print(f"[RenderPlotOp] Successfully created text artist for overlay {overlay.id}")
+                return artist
+            else:
+                print(f"[RenderPlotOp] No text artist found after rendering overlay {overlay.id}")
+                return None
+                
+        except Exception as e:
+            print(f"[RenderPlotOp] Error rendering text overlay '{overlay.id}': {e}")
+            import traceback
+            traceback.print_exc()
+            return None
     
     def _render_fill_overlay(self, overlay: Overlay, style: Dict[str, Any]):
         """Render fill-type overlays (confidence intervals, bands, etc.)."""
+        if not self.current_axes:
+            print("[RenderPlotOp] No axes available for fill overlay")
+            return None
         color = style.get('color')
         alpha = style.get('alpha')
         edgecolor = style.get('edgecolor')
         linewidth = style.get('linewidth')
         label = style.get('label', overlay.name)
-        
+        zorder = style.get('zorder', getattr(self, '_current_overlay_zorder', 10))
         artist = None
-        
-        # Confidence intervals
-        if 'confidence_intervals' in style:
-            ci_data = style['confidence_intervals']
-            artist = self._render_confidence_intervals(ci_data, color, alpha, label)
-        
-        # Fill between specific y values
-        elif 'y_lower' in style and 'y_upper' in style:
-            y_lower = style['y_lower']
-            y_upper = style['y_upper']
-            x_min, x_max = self.current_axes.get_xlim()
-            
-            artist = self.current_axes.fill_between(
-                [x_min, x_max], y_lower, y_upper,
-                alpha=alpha, color=color, edgecolor=edgecolor,
-                linewidth=linewidth, label=label
-            )
-            print(f"[RenderPlotOp] Added fill between y={y_lower} and y={y_upper}")
-        
-        # Fill between specific x values
-        elif 'x_lower' in style and 'x_upper' in style:
-            x_lower = style['x_lower']
-            x_upper = style['x_upper']
-            y_min, y_max = self.current_axes.get_ylim()
-            
-            artist = self.current_axes.fill_betweenx(
-                [y_min, y_max], x_lower, x_upper,
-                alpha=alpha, color=color, edgecolor=edgecolor,
-                linewidth=linewidth, label=label
-            )
-            print(f"[RenderPlotOp] Added fill between x={x_lower} and x={x_upper}")
-        
-        # Confidence bands around regression line
-        elif 'confidence_level' in style:
-            confidence_level = style['confidence_level']
-            # This would need regression data to implement properly
-            print(f"[RenderPlotOp] Confidence bands not implemented for level {confidence_level}")
-        
+        overlay_data = overlay.data or {}
+        try:
+            if 'confidence_intervals' in style:
+                ci_data = style['confidence_intervals']
+                artist = self._render_confidence_intervals(ci_data, color or '#ff69b4', alpha or 0.1, label)
+            elif ('y_lower' in overlay_data and 'y_upper' in overlay_data) or ('y_lower' in style and 'y_upper' in style):
+                if 'y_lower' in overlay_data and 'y_upper' in overlay_data:
+                    y_lower = overlay_data['y_lower']
+                    y_upper = overlay_data['y_upper']
+                    x_coords = overlay_data.get('x')
+                else:
+                    y_lower = style['y_lower']
+                    y_upper = style['y_upper']
+                    x_coords = style.get('x')
+                if x_coords is not None and len(x_coords) == len(y_lower) == len(y_upper):
+                    artist = self.current_axes.fill_between(
+                        x_coords, y_lower, y_upper,
+                        alpha=alpha, color=color, edgecolor=edgecolor,
+                        linewidth=linewidth, label=label, zorder=zorder
+                    )
+                else:
+                    x_min, x_max = self.current_axes.get_xlim()
+                    artist = self.current_axes.fill_between(
+                        [x_min, x_max], y_lower, y_upper,
+                        alpha=alpha, color=color, edgecolor=edgecolor,
+                        linewidth=linewidth, label=label, zorder=zorder
+                    )
+                print(f"[RenderPlotOp] Added confidence bands with {len(y_lower)} points")
+            elif ('x_lower' in overlay_data and 'x_upper' in overlay_data) or ('x_lower' in style and 'x_upper' in style):
+                if 'x_lower' in overlay_data and 'x_upper' in overlay_data:
+                    x_lower = overlay_data['x_lower']
+                    x_upper = overlay_data['x_upper']
+                else:
+                    x_lower = style['x_lower']
+                    x_upper = style['x_upper']
+                y_min, y_max = self.current_axes.get_ylim()
+                artist = self.current_axes.fill_betweenx(
+                    [y_min, y_max], x_lower, x_upper,
+                    alpha=alpha, color=color, edgecolor=edgecolor,
+                    linewidth=linewidth, label=label, zorder=zorder
+                )
+                print(f"[RenderPlotOp] Added fill between x={x_lower} and x={x_upper}")
+            elif 'confidence_level' in style:
+                confidence_level = style['confidence_level']
+                print(f"[RenderPlotOp] Confidence bands not implemented for level {confidence_level}")
+        except Exception as e:
+            print(f"[RenderPlotOp] Error rendering fill overlay '{overlay.id}': {e}")
+            return None
         return artist
     
     def _render_confidence_intervals(self, ci_data: Dict[str, Any], color: str, alpha: float, label: str):
@@ -1062,25 +1217,31 @@ class RenderPlotOp:
             for ci_name, ci_bounds in ci_data.items():
                 if isinstance(ci_bounds, (list, tuple)) and len(ci_bounds) == 2:
                     lower, upper = ci_bounds
-                    artist = self.current_axes.fill_between(
-                        [x_min, x_max], lower, upper,
-                        alpha=alpha, color=color, 
-                        label=f"{label} ({ci_name})" if ci_name != 'default' else label
-                    )
-                    artists.append(artist)
+                    try:
+                        artist = self.current_axes.fill_between(
+                            [x_min, x_max], lower, upper,
+                            alpha=alpha, color=color, 
+                            label=f"{label} ({ci_name})" if ci_name != 'default' else label
+                        )
+                        artists.append(artist)
+                    except Exception as e:
+                        print(f"[RenderPlotOp] Error adding CI for '{ci_name}': {e}")
                 elif isinstance(ci_bounds, dict):
                     # Nested structure like {'bias_ci': (lower, upper)}
                     for sub_name, sub_bounds in ci_bounds.items():
                         if isinstance(sub_bounds, (list, tuple)) and len(sub_bounds) == 2:
                             lower, upper = sub_bounds
-                            artist = self.current_axes.fill_between(
-                                [x_min, x_max], lower, upper,
-                                alpha=alpha, color=color,
-                                label=f"{label} ({sub_name})"
-                            )
-                            artists.append(artist)
+                            try:
+                                artist = self.current_axes.fill_between(
+                                    [x_min, x_max], lower, upper,
+                                    alpha=alpha, color=color,
+                                    label=f"{label} ({sub_name})"
+                                )
+                                artists.append(artist)
+                            except Exception as e:
+                                print(f"[RenderPlotOp] Error adding nested CI for '{sub_name}': {e}")
         
-        print(f"[RenderPlotOp] Added confidence intervals")
+        print(f"[RenderPlotOp] Added {len(artists)} confidence intervals")
         
         # Return single artist or list of artists
         if len(artists) == 0:
@@ -1117,11 +1278,11 @@ class RenderPlotOp:
             metadata = scatter_data[0].get('metadata', {})
             x_label = metadata.get('x_label', 'X Values')
             y_label = metadata.get('y_label', 'Y Values')
-            title = metadata.get('title', f'{method_name.title()} Analysis')
+            title = metadata.get('title', f'{method_name.title()}')
         else:
             x_label = 'X Values'
             y_label = 'Y Values'
-            title = f'{method_name.title()} Analysis'
+            title = f'{method_name.title()}'
         
         self.current_axes.set_xlabel(x_label)
         self.current_axes.set_ylabel(y_label)
@@ -1299,6 +1460,10 @@ class RenderPlotOp:
     
     def _render_scatter_points(self, pair_data: Dict[str, Any]):
         """Render traditional scatter points (existing logic)."""
+        if not self.current_axes:
+            print("[RenderPlotOp] No axes available for scatter points")
+            return
+            
         try:
             x_data = pair_data.get('x_data', [])
             y_data = pair_data.get('y_data', [])
@@ -1311,11 +1476,20 @@ class RenderPlotOp:
             pair_id = pair_data.get('pair_id', pair_name)
             n_points = pair_data.get('n_points', len(x_data))
             
+            # Get additional styling properties from pair data
+            marker_size = pair_data.get('marker_size', 50)
+            edge_color = pair_data.get('edge_color', '#000000')
+            edge_width = pair_data.get('edge_width', 1.0)
+            z_order = pair_data.get('z_order', 0)
+            
             # Create scatter plot and store artist reference
             artist = self.current_axes.scatter(
                 x_data, y_data,
                 c=color, marker=marker, alpha=alpha,
-                s=50, edgecolors='black', linewidth=0.5,
+                s=marker_size, 
+                edgecolors=edge_color if edge_width > 0 else 'none',
+                linewidths=edge_width,
+                zorder=z_order,
                 label=f"{pair_name} (n={n_points})"
             )
             
@@ -1323,12 +1497,19 @@ class RenderPlotOp:
             self.pair_artists[pair_id] = artist
             
             print(f"[RenderPlotOp] Rendered scatter points for pair '{pair_name}' with {n_points} points")
+            print(f"[RenderPlotOp] Styling: size={marker_size}, alpha={alpha}, edge={edge_color}@{edge_width}")
             
         except Exception as e:
             print(f"[RenderPlotOp] Error rendering scatter points: {e}")
+            import traceback
+            traceback.print_exc()
     
     def _render_hexbin_plot(self, pair_data: Dict[str, Any]):
         """Render hexbin density plot."""
+        if not self.current_axes:
+            print("[RenderPlotOp] No axes available for hexbin plot")
+            return
+            
         try:
             x_data = pair_data.get('x_data', [])
             y_data = pair_data.get('y_data', [])
@@ -1492,7 +1673,7 @@ class RenderPlotOp:
             print(f"[RenderPlotOp] Error rendering stacked area plot: {e}")
     
     def _render_histogram_plot(self, scatter_data: List[Dict[str, Any]], plot_config: Dict[str, Any]):
-        """Render histogram plot."""
+        """Render histogram plot with advanced styling and binning support."""
         try:
             print(f"[RenderPlotOp] Rendering histogram plot with {len(scatter_data)} data series")
             
@@ -1504,27 +1685,81 @@ class RenderPlotOp:
                 
                 pair_name = pair_data.get('pair_name', 'Unknown')
                 pair_id = pair_data.get('pair_id', pair_name)
-                color = pair_data.get('color', '#1f77b4')
-                alpha = pair_data.get('alpha', 0.7)
                 
-                # Get bins from pair data or use default
+                # Use histogram-specific styling from pair_analyzer.py
+                fill_color = pair_data.get('bar_fill_color', pair_data.get('color', '#1f77b4'))
+                edge_color = pair_data.get('bar_edge_color', '#000000')
+                edge_width = pair_data.get('bar_edge_width', 0.8)
+                alpha = pair_data.get('bar_alpha', pair_data.get('alpha', 0.7))
+                z_order = pair_data.get('bar_z_order', pair_data.get('z_order', 0))
+                
+                # Get histogram-specific parameters
                 bins = pair_data.get('bins', 30)
+                bin_edges = pair_data.get('bin_edges', None)
+                histogram_type = pair_data.get('histogram_type', 'counts')
                 
-                # Create histogram
+                # Determine binning strategy
+                if bin_edges is not None:
+                    # Use pre-computed bin edges from comparison class
+                    bins_param = bin_edges
+                    print(f"[RenderPlotOp] Using pre-computed bin edges: {len(bin_edges)} edges")
+                else:
+                    # Use bin count
+                    bins_param = bins
+                    print(f"[RenderPlotOp] Using bin count: {bins}")
+                
+                # Determine normalization (density parameter)
+                if histogram_type == 'density':
+                    density = True
+                    print(f"[RenderPlotOp] Using density normalization")
+                elif histogram_type == 'probability':
+                    # For probability, we'll normalize manually after hist() call
+                    density = False
+                    print(f"[RenderPlotOp] Using probability normalization")
+                else:
+                    # Default to counts
+                    density = False
+                    print(f"[RenderPlotOp] Using counts normalization")
+                
+                # Create histogram with advanced parameters
                 n, bins_edges, patches = self.current_axes.hist(
-                    x_data, bins=bins,
-                    color=color, alpha=alpha,
+                    x_data, 
+                    bins=bins_param,
+                    color=fill_color, 
+                    alpha=alpha,
+                    edgecolor=edge_color if edge_width > 0 else 'none',
+                    linewidth=edge_width,
                     label=pair_name,
-                    edgecolor='black', linewidth=0.5
+                    zorder=z_order,
+                    density=density
                 )
+                
+                # Handle probability normalization manually
+                if histogram_type == 'probability':
+                    # Convert counts to probabilities
+                    total_count = sum(n)
+                    if total_count > 0:
+                        # Update patch heights to show probabilities
+                        for patch, prob in zip(patches, n / total_count):
+                            patch.set_height(prob)
+                    print(f"[RenderPlotOp] Converted counts to probabilities (total: {total_count})")
                 
                 # Store artist reference for visibility toggling
                 self.pair_artists[pair_id] = patches
                 
-                print(f"[RenderPlotOp] Rendered histogram for pair '{pair_name}' with {bins} bins")
+                # Log detailed information
+                print(f"[RenderPlotOp] Rendered histogram for pair '{pair_name}':")
+                print(f"  - Bins: {len(bins_edges)-1 if hasattr(bins_edges, '__len__') else bins}")
+                print(f"  - Type: {histogram_type}")
+                print(f"  - Fill: {fill_color}, Edge: {edge_color}@{edge_width}")
+                print(f"  - Alpha: {alpha}, Z-order: {z_order}")
+                print(f"  - Data range: [{min(x_data):.3f}, {max(x_data):.3f}]")
+                print(f"  - Sample count: {len(x_data)}")
                 
         except Exception as e:
             print(f"[RenderPlotOp] Error rendering histogram plot: {e}")
+            import traceback
+            traceback.print_exc()
     
     def _render_line_plot(self, scatter_data: List[Dict[str, Any]], plot_config: Dict[str, Any]):
         """Render line plot."""
@@ -1841,30 +2076,20 @@ class ComparisonWizardManager(QMainWindow):
             print(f"Error updating file dropdowns: {e}")
             
     def _update_channel_dropdowns(self, channels):
-        """Update channel dropdowns in the wizard, storing channel objects as data"""
+        """Initialize channel dropdowns as empty - they will be populated when files are selected"""
         try:
             channel_combo_boxes = [self.comparison_wizard.ref_channel_combo, self.comparison_wizard.test_channel_combo]
             
             for combo in channel_combo_boxes:
-                # Store current selection
-                current_channel = combo.currentData() if combo.currentIndex() >= 0 else None
-                
-                # Clear and repopulate
+                # Clear the combo box - channels will be populated when files are selected
                 combo.clear()
-                for ch in channels:
-                    # Use legend_label if available, otherwise channel_id
-                    label = getattr(ch, 'legend_label', None) or getattr(ch, 'channel_id', str(ch))
-                    combo.addItem(label, ch)
+                combo.addItem("Select a file first...", None)
+                combo.setCurrentIndex(0)
                 
-                # Try to restore previous selection
-                if current_channel:
-                    for i in range(combo.count()):
-                        if combo.itemData(i) == current_channel:
-                            combo.setCurrentIndex(i)
-                            break
+            print(f"[ComparisonWizardManager] Initialized empty channel dropdowns - will be populated when files are selected")
                             
         except Exception as e:
-            print(f"Error updating channel dropdowns: {e}")
+            print(f"Error initializing channel dropdowns: {e}")
 
     def _autopopulate_intelligent_channels(self):
         """Auto-populate channels using intelligent selection"""
@@ -1879,11 +2104,14 @@ class ComparisonWizardManager(QMainWindow):
             ref_channel, test_channel = self.pair_selection_op.find_intelligent_channel_pairs()
             
             if ref_channel and test_channel:
-                # Set files
+                # Set files first
                 self._select_file_for_channel(ref_channel, self.comparison_wizard.ref_file_combo)
                 self._select_file_for_channel(test_channel, self.comparison_wizard.test_file_combo)
                 
-                # Set channels
+                # Trigger channel dropdown updates based on selected files
+                self._trigger_channel_dropdown_updates()
+                
+                # Set channels (now that channel dropdowns are filtered)
                 self._select_channel_in_combo(ref_channel, self.comparison_wizard.ref_channel_combo)
                 self._select_channel_in_combo(test_channel, self.comparison_wizard.test_channel_combo)
                 
@@ -1930,6 +2158,24 @@ class ComparisonWizardManager(QMainWindow):
             if channel_combo.itemText(i) == channel_name:
                 channel_combo.setCurrentIndex(i)
                 break
+    
+    def _trigger_channel_dropdown_updates(self):
+        """Trigger channel dropdown updates based on currently selected files"""
+        try:
+            # Update ref channel dropdown based on ref file selection
+            ref_file = self.comparison_wizard.ref_file_combo.currentData()
+            if ref_file and hasattr(self.comparison_wizard, '_update_channel_dropdown_for_file'):
+                self.comparison_wizard._update_channel_dropdown_for_file(ref_file, self.comparison_wizard.ref_channel_combo)
+                print(f"[ComparisonWizardManager] Triggered ref channel dropdown update for file: {ref_file.filename}")
+            
+            # Update test channel dropdown based on test file selection
+            test_file = self.comparison_wizard.test_file_combo.currentData()
+            if test_file and hasattr(self.comparison_wizard, '_update_channel_dropdown_for_file'):
+                self.comparison_wizard._update_channel_dropdown_for_file(test_file, self.comparison_wizard.test_channel_combo)
+                print(f"[ComparisonWizardManager] Triggered test channel dropdown update for file: {test_file.filename}")
+                
+        except Exception as e:
+            print(f"[ComparisonWizardManager] Error triggering channel dropdown updates: {e}")
             
     def _on_pair_added(self, pair_data):
         """Handle when a comparison pair is added"""
@@ -2094,20 +2340,66 @@ class ComparisonWizardManager(QMainWindow):
                 'error': str(e)
             })
             
-    def _on_pair_deleted(self):
+    def _on_pair_deleted(self, pair_data):
         """Handle when a comparison pair is deleted"""
         try:
-            # Log the deletion
-            if hasattr(self.comparison_wizard, 'info_output'):
-                self.comparison_wizard.info_output.append("🗑️ Comparison pair deleted")
+            # Extract pair name from the signal data
+            pair_name = pair_data.get('pair_name', 'Unknown') if isinstance(pair_data, dict) else str(pair_data)
+            
+            print(f"[ComparisonWizardManager] Pair deletion signal received for: {pair_name}")
+            
+            # Find and remove the pair from PairManager
+            if hasattr(self, 'pair_manager') and self.pair_manager:
+                # Find the pair by name
+                pair_to_remove = None
+                for pair in self.pair_manager.get_all_pairs():
+                    if getattr(pair, 'name', '') == pair_name:
+                        pair_to_remove = pair
+                        break
+                
+                if pair_to_remove:
+                    # Remove from PairManager
+                    success = self.pair_manager.remove_pair(pair_to_remove.pair_id)
+                    if success:
+                        print(f"[ComparisonWizardManager] Successfully removed pair '{pair_name}' from PairManager")
+                        
+                        # Remove from aligned_pairs if it exists there
+                        if hasattr(self, 'aligned_pairs') and pair_name in self.aligned_pairs:
+                            del self.aligned_pairs[pair_name]
+                            print(f"[ComparisonWizardManager] Removed pair '{pair_name}' from aligned_pairs")
+                        
+                        # Trigger analysis update to recompute plot with remaining pairs
+                        self._trigger_analysis_update()
+                        
+                        # Log the deletion
+                        if hasattr(self.comparison_wizard, 'info_output'):
+                            self.comparison_wizard.info_output.append(f"🗑️ Pair '{pair_name}' deleted - plot updated")
+                    else:
+                        print(f"[ComparisonWizardManager] Failed to remove pair '{pair_name}' from PairManager")
+                        if hasattr(self.comparison_wizard, 'info_output'):
+                            self.comparison_wizard.info_output.append(f"⚠️ Failed to delete pair '{pair_name}' from backend")
+                else:
+                    print(f"[ComparisonWizardManager] Could not find pair '{pair_name}' in PairManager")
+                    if hasattr(self.comparison_wizard, 'info_output'):
+                        self.comparison_wizard.info_output.append(f"⚠️ Pair '{pair_name}' not found in backend")
+            else:
+                print(f"[ComparisonWizardManager] No PairManager available for deletion")
+                if hasattr(self.comparison_wizard, 'info_output'):
+                    self.comparison_wizard.info_output.append(f"⚠️ No PairManager available for deletion")
                 
             # Emit signal to main window
             self.comparison_completed.emit({
-                'type': 'pair_deleted'
+                'type': 'pair_deleted',
+                'pair_name': pair_name
             })
             
         except Exception as e:
             print(f"Error handling pair deletion: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            if hasattr(self.comparison_wizard, 'info_output'):
+                self.comparison_wizard.info_output.append(f"❌ Error deleting pair: {e}")
             
     def _on_plot_generated(self, plot_data):
         """Handle when a plot is generated"""
@@ -2155,7 +2447,7 @@ class ComparisonWizardManager(QMainWindow):
             print(f"Error refreshing data: {e}")
 
     def perform_alignment(self, ref_channel, test_channel, alignment_params):
-        """Perform alignment using DataAligner with wizard parameters and validate results"""
+        """Perform alignment using enhanced DataAligner with comprehensive validation and fallback"""
         try:
             print(f"[DEBUG] perform_alignment: Starting alignment")
             print(f"[DEBUG] perform_alignment: ref_channel type={type(ref_channel)}")
@@ -2167,120 +2459,82 @@ class ComparisonWizardManager(QMainWindow):
             # Create data aligner instance
             aligner = DataAligner()
             
-            # Perform alignment
+            # Perform alignment with enhanced validation and fallback
             alignment_result = aligner.align_from_wizard_params(
                 ref_channel, test_channel, alignment_params
             )
             
-            # Validate the alignment result
-            validation_result = self._validate_alignment_result(alignment_result, ref_channel, test_channel)
+            # Get enhanced alignment statistics
+            alignment_stats = aligner.get_alignment_stats()
             
-            if not validation_result['valid']:
-                print(f"[ComparisonWizardManager] Alignment validation failed: {validation_result['error']}")
-                # Return error result with validation error
-                from data_aligner import AlignmentResult
-                return AlignmentResult(
-                    ref_data=np.array([]),
-                    test_data=np.array([]),
-                    success=False,
-                    error_message=validation_result['error']
-                )
-            
-            print(f"[ComparisonWizardManager] Alignment completed successfully")
-            print(f"[ComparisonWizardManager] Aligned data length: {len(alignment_result.ref_data)}")
-            print(f"[ComparisonWizardManager] Data quality: {validation_result['quality_info']}")
+            # Log enhanced statistics and feedback
+            if alignment_result.success:
+                print(f"[ComparisonWizardManager] Alignment completed successfully")
+                print(f"[ComparisonWizardManager] Aligned data length: {len(alignment_result.ref_data)}")
+                print(f"[ComparisonWizardManager] Alignment stats: {alignment_stats}")
+                
+                # Log datetime conversion if it happened
+                if alignment_stats.get('datetime_conversions', 0) > 0:
+                    print(f"[ComparisonWizardManager] Datetime conversion applied")
+                    if hasattr(self.comparison_wizard, 'info_output'):
+                        self.comparison_wizard.info_output.append("🕐 Applied datetime conversion to alignment")
+                
+                # Log fallback usage if it happened
+                if alignment_stats.get('fallback_usage', 0) > 0:
+                    print(f"[ComparisonWizardManager] Fallback strategies used")
+                    if hasattr(self.comparison_wizard, 'info_output'):
+                        self.comparison_wizard.info_output.append("⚠️ Used fallback alignment strategies")
+                
+                # Log quality metrics if available
+                if hasattr(alignment_result, 'quality_metrics') and alignment_result.quality_metrics:
+                    quality = alignment_result.quality_metrics
+                    print(f"[ComparisonWizardManager] Quality metrics: {quality}")
+                    if hasattr(self.comparison_wizard, 'info_output'):
+                        retention_ref = quality.get('ref_data_retention', 0) * 100
+                        retention_test = quality.get('test_data_retention', 0) * 100
+                        self.comparison_wizard.info_output.append(f"📊 Data retention: ref={retention_ref:.1f}%, test={retention_test:.1f}%")
+                
+                # Log warnings if available
+                if hasattr(alignment_result, 'warnings') and alignment_result.warnings:
+                    for warning in alignment_result.warnings:
+                        print(f"[ComparisonWizardManager] Alignment warning: {warning}")
+                        if hasattr(self.comparison_wizard, 'info_output'):
+                            self.comparison_wizard.info_output.append(f"⚠️ {warning}")
+            else:
+                # Enhanced error reporting
+                error_msg = alignment_result.error_message or "Unknown alignment error"
+                print(f"[ComparisonWizardManager] Alignment failed: {error_msg}")
+                
+                # Log fallback attempts
+                if alignment_stats.get('fallback_usage', 0) > 0:
+                    print(f"[ComparisonWizardManager] Fallback strategies attempted but failed")
+                    if hasattr(self.comparison_wizard, 'info_output'):
+                        self.comparison_wizard.info_output.append("❌ Fallback strategies attempted but failed")
+                
+                if hasattr(self.comparison_wizard, 'info_output'):
+                    self.comparison_wizard.info_output.append(f"❌ Alignment failed: {error_msg}")
             
             return alignment_result
             
         except Exception as e:
-            print(f"[ComparisonWizardManager] Error in perform_alignment: {e}")
+            print(f"[ComparisonWizardManager] Critical error in perform_alignment: {e}")
             # Return error result
             from data_aligner import AlignmentResult
             return AlignmentResult(
                 ref_data=np.array([]),
                 test_data=np.array([]),
                 success=False,
-                error_message=f"Alignment failed: {e}"
+                error_message=f"Critical alignment failure: {e}"
             )
 
     def _validate_alignment_result(self, alignment_result, ref_channel, test_channel):
-        """Validate the alignment result for quality and correctness"""
-        try:
-            # Check if alignment was successful
-            if not alignment_result.success:
-                return {
-                    'valid': False,
-                    'error': alignment_result.error_message or "Alignment failed"
-                }
-            
-            # Check if we have data
-            if alignment_result.ref_data is None or alignment_result.test_data is None:
-                return {
-                    'valid': False,
-                    'error': "Alignment result contains no data"
-                }
-            
-            # Check if data is numpy arrays
-            if not isinstance(alignment_result.ref_data, np.ndarray) or not isinstance(alignment_result.test_data, np.ndarray):
-                return {
-                    'valid': False,
-                    'error': "Alignment result data must be numpy arrays"
-                }
-            
-            # Check if arrays are empty
-            if len(alignment_result.ref_data) == 0 or len(alignment_result.test_data) == 0:
-                return {
-                    'valid': False,
-                    'error': "Aligned data arrays are empty"
-                }
-            
-            # Check if arrays have the same length
-            if len(alignment_result.ref_data) != len(alignment_result.test_data):
-                return {
-                    'valid': False,
-                    'error': f"Aligned data arrays have different lengths: ref={len(alignment_result.ref_data)}, test={len(alignment_result.test_data)}"
-                }
-            
-            # Check for reasonable data length (not too short)
-            min_length = 10  # Minimum reasonable length for comparison
-            if len(alignment_result.ref_data) < min_length:
-                return {
-                    'valid': False,
-                    'error': f"Aligned data is too short ({len(alignment_result.ref_data)} samples). Minimum required: {min_length}"
-                }
-            
-            # Check for NaN or infinite values
-            ref_has_nan = np.any(np.isnan(alignment_result.ref_data))
-            test_has_nan = np.any(np.isnan(alignment_result.test_data))
-            ref_has_inf = np.any(np.isinf(alignment_result.ref_data))
-            test_has_inf = np.any(np.isinf(alignment_result.test_data))
-            
-            if ref_has_nan or test_has_nan or ref_has_inf or test_has_inf:
-                return {
-                    'valid': False,
-                    'error': f"Aligned data contains invalid values: ref_nan={ref_has_nan}, test_nan={test_has_nan}, ref_inf={ref_has_inf}, test_inf={test_has_inf}"
-                }
-            
-            # Calculate quality metrics
-            quality_info = self._calculate_data_quality(alignment_result.ref_data, alignment_result.test_data)
-            
-            # Check if data quality is acceptable
-            if quality_info['ref_std'] == 0 or quality_info['test_std'] == 0:
-                return {
-                    'valid': False,
-                    'error': "One or both aligned datasets have zero variance (constant values)"
-                }
-            
-            return {
-                'valid': True,
-                'quality_info': quality_info
-            }
-            
-        except Exception as e:
-            return {
-                'valid': False,
-                'error': f"Error validating alignment result: {e}"
-            }
+        """DEPRECATED: DataAligner now has comprehensive validation built-in"""
+        # DataAligner now handles all validation internally with fallback strategies
+        # This method is kept for backward compatibility but not used
+        return {
+            'valid': True,
+            'quality_info': {'data_length': len(alignment_result.ref_data) if alignment_result.ref_data is not None else 0}
+        }
 
     def _calculate_data_quality(self, ref_data, test_data):
         """Calculate quality metrics for aligned data"""
@@ -2384,6 +2638,66 @@ class ComparisonWizardManager(QMainWindow):
         """Get capacity information from the PairManager"""
         return self.pair_manager.get_capacity_info()
     
+    def get_data_aligner_stats(self):
+        """Get DataAligner statistics for debugging/monitoring"""
+        try:
+            from data_aligner import DataAligner
+            aligner = DataAligner()
+            return aligner.get_alignment_stats()
+        except Exception as e:
+            print(f"Error getting DataAligner stats: {e}")
+            return {}
+    
+    def clear_data_aligner_cache(self):
+        """Clear DataAligner cache - useful for debugging"""
+        try:
+            from data_aligner import DataAligner
+            aligner = DataAligner()
+            aligner.clear_cache()
+            print("[ComparisonWizardManager] DataAligner cache cleared")
+            if hasattr(self.comparison_wizard, 'info_output'):
+                self.comparison_wizard.info_output.append("🧹 DataAligner cache cleared")
+        except Exception as e:
+            print(f"Error clearing DataAligner cache: {e}")
+    
+    def validate_alignment_compatibility(self, ref_channel, test_channel):
+        """Pre-validate if channels are compatible for alignment"""
+        try:
+            from data_aligner import DataAligner
+            aligner = DataAligner()
+            
+            # Use the enhanced DataAligner validation
+            ref_validation = aligner.data_validator.validate_channel_data(ref_channel)
+            test_validation = aligner.data_validator.validate_channel_data(test_channel)
+            
+            compatibility_info = {
+                'ref_valid': ref_validation.is_valid,
+                'test_valid': test_validation.is_valid,
+                'ref_issues': ref_validation.issues,
+                'test_issues': test_validation.issues,
+                'ref_warnings': ref_validation.warnings,
+                'test_warnings': test_validation.warnings,
+                'ref_quality_score': ref_validation.data_quality_score,
+                'test_quality_score': test_validation.data_quality_score,
+                'overall_compatible': ref_validation.is_valid and test_validation.is_valid
+            }
+            
+            return compatibility_info
+            
+        except Exception as e:
+            print(f"Error validating alignment compatibility: {e}")
+            return {
+                'ref_valid': False,
+                'test_valid': False,
+                'ref_issues': [f"Validation error: {e}"],
+                'test_issues': [f"Validation error: {e}"],
+                'ref_warnings': [],
+                'test_warnings': [],
+                'ref_quality_score': 0.0,
+                'test_quality_score': 0.0,
+                'overall_compatible': False
+            }
+    
     def _trigger_analysis_update(self):
         """Trigger debounced analysis update"""
         print("[ComparisonWizardManager] Triggering debounced analysis update...")
@@ -2412,6 +2726,9 @@ class ComparisonWizardManager(QMainWindow):
             # Run PairAnalyzer
             analysis_results = self.pair_analyzer.analyze(self.pair_manager, method_config)
             
+            # Store analysis results for export
+            self._last_analysis_results = analysis_results
+            
             # DEBUG: Check what we got from PairAnalyzer
             print(f"[ComparisonWizardManager] DEBUG: PairAnalyzer returned analysis_results keys: {list(analysis_results.keys())}")
             scatter_data = analysis_results.get('scatter_data', [])
@@ -2439,7 +2756,12 @@ class ComparisonWizardManager(QMainWindow):
                 # Get performance options from method config
                 performance_options = getattr(method_config, 'performance_options', {})
                 
-                success = self.render_plot_op.render(analysis_results, plot_config=performance_options)
+                # Use preserved overlays in the analysis results
+                analysis_results_with_preserved = analysis_results.copy()
+                preserved_overlays = self._preserve_custom_text_across_analysis(analysis_results.get('overlays', []))
+                analysis_results_with_preserved['overlays'] = preserved_overlays
+                
+                success = self.render_plot_op.render(analysis_results_with_preserved, plot_config=performance_options)
                 if success:
                     print("[ComparisonWizardManager] Plot rendered successfully")
                 else:
@@ -2447,10 +2769,14 @@ class ComparisonWizardManager(QMainWindow):
             
             # Update overlay table
             overlays = analysis_results.get('overlays', [])
-            self._update_overlay_table(overlays)
+            
+            # Preserve custom text from existing overlays
+            preserved_overlays = self._preserve_custom_text_across_analysis(overlays)
+            
+            self._update_overlay_table(preserved_overlays)
             
             # Store overlays for visibility toggle handling
-            self._last_overlays = overlays
+            self._last_overlays = preserved_overlays
             
             # Log completion
             n_pairs = analysis_results.get('n_pairs_processed', 0)
@@ -2669,24 +2995,30 @@ class ComparisonWizardManager(QMainWindow):
                 performance_options = self.comparison_wizard.get_performance_options()
                 print(f"[ComparisonWizardManager] Captured performance options: {performance_options}")
             
-            # Get scripts from wizard
+            # Get scripts from wizard - only capture if modified
             plot_script = None
             stats_script = None
             
             try:
-                if hasattr(self.comparison_wizard, 'plot_script_text'):
-                    plot_script = self.comparison_wizard.plot_script_text.toPlainText()
-                    if plot_script and plot_script.strip():
-                        print(f"[ComparisonWizardManager] Captured plot script ({len(plot_script)} chars)")
-                    else:
-                        plot_script = None
+                if hasattr(self.comparison_wizard, 'plot_script_text') and hasattr(self.comparison_wizard, 'script_tracker'):
+                    current_plot_script = self.comparison_wizard.plot_script_text.toPlainText()
+                    if current_plot_script and current_plot_script.strip():
+                        # Check if script has been modified using ScriptChangeTracker
+                        if self.comparison_wizard.script_tracker.is_plot_script_modified(current_plot_script):
+                            plot_script = current_plot_script
+                            print(f"[ComparisonWizardManager] Captured MODIFIED plot script ({len(plot_script)} chars)")
+                        else:
+                            print(f"[ComparisonWizardManager] Plot script present but not modified - using default")
                         
-                if hasattr(self.comparison_wizard, 'stats_script_text'):
-                    stats_script = self.comparison_wizard.stats_script_text.toPlainText()
-                    if stats_script and stats_script.strip():
-                        print(f"[ComparisonWizardManager] Captured stats script ({len(stats_script)} chars)")
-                    else:
-                        stats_script = None
+                if hasattr(self.comparison_wizard, 'stats_script_text') and hasattr(self.comparison_wizard, 'script_tracker'):
+                    current_stats_script = self.comparison_wizard.stats_script_text.toPlainText()
+                    if current_stats_script and current_stats_script.strip():
+                        # Check if script has been modified using ScriptChangeTracker
+                        if self.comparison_wizard.script_tracker.is_stats_script_modified(current_stats_script):
+                            stats_script = current_stats_script
+                            print(f"[ComparisonWizardManager] Captured MODIFIED stats script ({len(stats_script)} chars)")
+                        else:
+                            print(f"[ComparisonWizardManager] Stats script present but not modified - using default")
                         
             except Exception as e:
                 print(f"[ComparisonWizardManager] Error capturing scripts: {e}")
@@ -2702,7 +3034,9 @@ class ComparisonWizardManager(QMainWindow):
                 performance_options=performance_options
             )
             
-            print(f"[ComparisonWizardManager] Captured method config: {method_name} with {len(parameters)} parameters, plot_script: {'Yes' if plot_script else 'No'}, stats_script: {'Yes' if stats_script else 'No'}")
+            print(f"[ComparisonWizardManager] Captured method config: {method_name} with {len(parameters)} parameters")
+            print(f"[ComparisonWizardManager] Modified plot_script: {'Yes' if plot_script else 'No'}")
+            print(f"[ComparisonWizardManager] Modified stats_script: {'Yes' if stats_script else 'No'}")
             
             return method_config
             
@@ -2726,7 +3060,7 @@ class ComparisonWizardManager(QMainWindow):
     def _update_overlay_table(self, overlays: List[Overlay]):
         """Update the overlay table in the wizard with new overlays"""
         try:
-            print(f"[ComparisonWizardManager] Updating overlay table with {len(overlays)} overlays")
+            print(f"[ComparisonWizardManager] Updating overlay table with {len(overlays)} overlays - v2")
             
             # Get the overlay table from the wizard
             if not hasattr(self.comparison_wizard, 'overlay_table'):
@@ -2764,15 +3098,21 @@ class ComparisonWizardManager(QMainWindow):
                 
                 paint_btn = QPushButton("🎨")
                 paint_btn.setMaximumSize(24, 24)
+                paint_btn.setToolTip("Edit overlay style")
+                paint_btn.clicked.connect(self._create_paint_handler(overlay))
                 actions_layout.addWidget(paint_btn)
                 
                 info_btn = QPushButton("ℹ️")
                 info_btn.setMaximumSize(24, 24)
+                info_btn.clicked.connect(self._create_info_handler(overlay))
                 actions_layout.addWidget(info_btn)
                 
                 overlay_table.setCellWidget(i, 3, actions_widget)
                 
-                print(f"[ComparisonWizardManager] Overlay: {overlay.name} ({overlay.type}) - Show: {overlay.show}")
+                print(f"[ComparisonWizardManager] Overlay {i}: {overlay.name} (ID: {overlay.id}, type: {overlay.type}) - Show: {overlay.show}")
+            
+            # Store the overlays for reference
+            self._last_overlays = overlays
             
             if hasattr(self.comparison_wizard, 'info_output'):
                 self.comparison_wizard.info_output.append(f"📊 Overlay table updated with {len(overlays)} overlays")
@@ -2815,6 +3155,20 @@ class ComparisonWizardManager(QMainWindow):
                 pen.setStyle(self._get_qt_line_style(style.get('linestyle', '-')))
                 painter.setPen(pen)
                 painter.drawLine(10, 10, 50, 10)
+                
+            elif overlay_type == 'hline':
+                # Draw a horizontal line (same as line type)
+                pen = QPen(qcolor, style.get('linewidth', 2))
+                pen.setStyle(self._get_qt_line_style(style.get('linestyle', '-')))
+                painter.setPen(pen)
+                painter.drawLine(10, 10, 50, 10)
+                
+            elif overlay_type == 'vline':
+                # Draw a vertical line
+                pen = QPen(qcolor, style.get('linewidth', 2))
+                pen.setStyle(self._get_qt_line_style(style.get('linestyle', '-')))
+                painter.setPen(pen)
+                painter.drawLine(30, 5, 30, 15)
                 
             elif overlay_type == 'text':
                 # Draw a text icon
@@ -2919,3 +3273,373 @@ class ComparisonWizardManager(QMainWindow):
             
         except Exception as e:
             return f"Error creating tooltip: {e}"
+    
+    def _on_overlay_paint_clicked(self, overlay: Overlay):
+        """Handle paint button click for overlay styling"""
+        try:
+            print(f"[ComparisonWizardManager] Opening overlay wizard for: {overlay.name} (type: {overlay.type}) - ID: {overlay.id}")
+            print(f"[ComparisonWizardManager] Current overlay style: {overlay.style}")
+            print(f"[ComparisonWizardManager] Overlay data: {overlay.data}")
+            
+            # OverlayWizard is already imported at the top
+            
+            # Check if overlay type is supported
+            supported_types = ['line', 'text', 'fill', 'hline', 'vline']
+            if overlay.type not in supported_types:
+                print(f"[ComparisonWizardManager] Overlay type '{overlay.type}' not supported by wizard")
+                if hasattr(self.comparison_wizard, 'info_output'):
+                    self.comparison_wizard.info_output.append(f"⚠️ Overlay type '{overlay.type}' not supported for styling")
+                return
+            
+            # Store the overlay reference for the signal handler
+            self._current_editing_overlay = overlay
+            
+            # Open the overlay wizard with the correct overlay type
+            wizard_type = overlay.type
+            print(f"[ComparisonWizardManager] Opening wizard for overlay type: {wizard_type}")
+            wizard = OverlayWizard(wizard_type, overlay.style, self)
+            
+            # For text overlays, prefill the text content
+            if wizard_type == 'text':
+                # Get the current text content from overlay
+                current_text = overlay.display_text
+                if current_text:
+                    wizard.set_initial_text(current_text)
+                    print(f"[ComparisonWizardManager] Prefilled text overlay with {len(current_text)} characters")
+                else:
+                    print(f"[ComparisonWizardManager] No text content found for overlay {overlay.id}")
+            
+            wizard.style_updated.connect(self._on_overlay_style_updated)
+            result = wizard.exec()
+            
+            if result == QDialog.Accepted:
+                print(f"[ComparisonWizardManager] Overlay wizard accepted for: {overlay.name}")
+                print(f"[ComparisonWizardManager] New style from wizard: {wizard.overlay_style}")
+                # Final update and cleanup
+                self._update_overlay_style(overlay, wizard.overlay_style)
+                self._refresh_overlay_table()
+            else:
+                print(f"[ComparisonWizardManager] Overlay wizard cancelled for: {overlay.name}")
+            
+            # Clear the stored overlay reference
+            self._current_editing_overlay = None
+                
+        except Exception as e:
+            print(f"[ComparisonWizardManager] Error opening overlay wizard: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _on_overlay_style_updated(self, new_style: dict):
+        """Handle style update signal from overlay wizard"""
+        try:
+            print(f"[ComparisonWizardManager] Overlay style updated")
+            print(f"[ComparisonWizardManager] New style received: {new_style}")
+            
+            # Use the stored overlay reference if available
+            overlay = getattr(self, '_current_editing_overlay', None)
+            
+            if overlay:
+                print(f"[ComparisonWizardManager] Found overlay reference: {overlay.name} (ID: {overlay.id})")
+                print(f"[ComparisonWizardManager] Overlay type: {overlay.type}")
+                
+                # Handle custom text content for text overlays
+                if overlay.type == 'text' and 'text_content' in new_style:
+                    custom_text = new_style['text_content']
+                    overlay.set_custom_text(custom_text)
+                    print(f"[ComparisonWizardManager] Set custom text: {len(custom_text)} characters")
+                    
+                    # Remove text_content from style since it's handled separately
+                    new_style = new_style.copy()
+                    del new_style['text_content']
+                
+                # Update the overlay style
+                self._update_overlay_style(overlay, new_style)
+                # Refresh the table to show updated styling
+                self._refresh_overlay_table()
+                print(f"[ComparisonWizardManager] Applied style updates to overlay: {overlay.name}")
+            else:
+                print(f"[ComparisonWizardManager] No overlay reference available for style update")
+                
+        except Exception as e:
+            print(f"[ComparisonWizardManager] Error handling overlay style update: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _update_overlay_style(self, overlay: Overlay, new_style: dict):
+        """Update an overlay's style and refresh the plot"""
+        try:
+            print(f"[ComparisonWizardManager] _update_overlay_style called for: {overlay.name} (ID: {overlay.id})")
+            print(f"[ComparisonWizardManager] Old style: {overlay.style}")
+            print(f"[ComparisonWizardManager] New style: {new_style}")
+            
+            # Update the overlay's style
+            overlay.style.update(new_style)
+            print(f"[ComparisonWizardManager] Updated overlay style: {overlay.style}")
+            
+            # Update the artist in the renderer if it exists
+            if hasattr(self, 'render_plot_op') and self.render_plot_op:
+                print(f"[ComparisonWizardManager] Updating artist for overlay: {overlay.id}")
+                # Remove the old artist
+                if overlay.id in self.render_plot_op.overlay_artists:
+                    old_artist = self.render_plot_op.overlay_artists[overlay.id]
+                    if hasattr(old_artist, 'remove'):
+                        old_artist.remove()
+                    elif isinstance(old_artist, list):
+                        for a in old_artist:
+                            if hasattr(a, 'remove'):
+                                a.remove()
+                    del self.render_plot_op.overlay_artists[overlay.id]
+                    print(f"[ComparisonWizardManager] Removed old artist for: {overlay.id}")
+                
+                # Re-render the overlay with new style
+                new_artist = self.render_plot_op._render_single_overlay(overlay, {})
+                if new_artist:
+                    self.render_plot_op.overlay_artists[overlay.id] = new_artist
+                    # Set visibility
+                    if hasattr(new_artist, 'set_visible'):
+                        new_artist.set_visible(overlay.show)
+                    elif isinstance(new_artist, list):
+                        for a in new_artist:
+                            if hasattr(a, 'set_visible'):
+                                a.set_visible(overlay.show)
+                    print(f"[ComparisonWizardManager] Created new artist for: {overlay.id}")
+                else:
+                    print(f"[ComparisonWizardManager] Failed to create new artist for: {overlay.id}")
+                
+                # Refresh the plot widget to show the changes
+                self.render_plot_op._refresh_plot_widget()
+                print(f"[ComparisonWizardManager] Refreshed plot widget")
+            else:
+                print(f"[ComparisonWizardManager] No render_plot_op available")
+            
+            print(f"[ComparisonWizardManager] Updated overlay {overlay.name} with new style")
+            
+        except Exception as e:
+            print(f"[ComparisonWizardManager] Error updating overlay style: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _create_paint_handler(self, overlay: Overlay):
+        """Create a paint button handler for a specific overlay"""
+        def handler():
+            self._on_overlay_paint_clicked(overlay)
+        return handler
+    
+    def _create_info_handler(self, overlay: Overlay):
+        """Create an info button handler for a specific overlay"""
+        def handler():
+            self._show_overlay_info(overlay)
+        return handler
+    
+    def _show_overlay_info(self, overlay: Overlay):
+        """Show information about an overlay"""
+        try:
+            print(f"[ComparisonWizardManager] Showing info for overlay: {overlay.name}")
+            # TODO: Implement overlay info dialog
+        except Exception as e:
+            print(f"[ComparisonWizardManager] Error showing overlay info: {e}")
+    
+    def _refresh_overlay_table(self):
+        """Refresh the overlay table to show updated styling"""
+        try:
+            overlays = getattr(self, '_last_overlays', [])
+            if overlays:
+                self._update_overlay_table(overlays)
+                print(f"[ComparisonWizardManager] Refreshed overlay table")
+        except Exception as e:
+            print(f"[ComparisonWizardManager] Error refreshing overlay table: {e}")
+    
+    def _preserve_custom_text_across_analysis(self, new_overlays):
+        """Preserve custom text from existing overlays across analysis updates"""
+        try:
+            # Get existing overlays from the last analysis
+            existing_overlays = getattr(self, '_last_overlays', [])
+            
+            # Create a mapping of existing overlays by ID
+            existing_overlay_map = {overlay.id: overlay for overlay in existing_overlays}
+            
+            preserved_overlays = []
+            
+            for new_overlay in new_overlays:
+                # Check if there's an existing overlay with the same ID
+                if new_overlay.id in existing_overlay_map:
+                    existing_overlay = existing_overlay_map[new_overlay.id]
+                    
+                    # For text overlays, preserve custom text state
+                    if (new_overlay.type == 'text' and existing_overlay.type == 'text' and 
+                        existing_overlay.is_custom_text):
+                        
+                        # Transfer custom text state to new overlay
+                        new_overlay.set_custom_text(existing_overlay._custom_text)
+                        print(f"[ComparisonWizardManager] Preserved custom text for overlay {new_overlay.id}")
+                        
+                        # Also preserve other text-related state
+                        if hasattr(existing_overlay, '_original_text'):
+                            new_overlay._original_text = existing_overlay._original_text
+                
+                preserved_overlays.append(new_overlay)
+            
+            print(f"[ComparisonWizardManager] Preserved custom text for {len(preserved_overlays)} overlays")
+            return preserved_overlays
+            
+        except Exception as e:
+            print(f"[ComparisonWizardManager] Error preserving custom text: {e}")
+            import traceback
+            traceback.print_exc()
+            return new_overlays  # Return new overlays if preservation fails
+    
+    def _export_analysis_data(self):
+        """Export current analysis data to Excel format"""
+        try:
+            # Check if analysis results exist
+            if not hasattr(self, '_last_analysis_results') or not self._last_analysis_results:
+                if hasattr(self.comparison_wizard, 'info_output'):
+                    self.comparison_wizard.info_output.append("Export Data: Exports currently plotted data and statistics to Excel format")
+                    self.comparison_wizard.info_output.append("Run analysis first to generate data for export")
+                return
+            
+            # Get file save location
+            from PySide6.QtWidgets import QFileDialog
+            import datetime
+            
+            # Generate default filename with timestamp and method
+            method_name = self._get_current_method_name()
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            default_filename = f"comparison_data_{method_name}_{timestamp}.xlsx"
+            
+            filename, _ = QFileDialog.getSaveFileName(
+                self,
+                "Export Analysis Data",
+                default_filename,
+                "Excel Files (*.xlsx);;All Files (*)"
+            )
+            
+            if not filename:
+                return  # User cancelled
+            
+            # Export the data
+            self._write_excel_file(filename)
+            
+            # Success message
+            if hasattr(self.comparison_wizard, 'info_output'):
+                self.comparison_wizard.info_output.append(f"Data exported successfully to: {filename}")
+                
+        except Exception as e:
+            print(f"[ComparisonWizardManager] Error exporting analysis data: {e}")
+            if hasattr(self.comparison_wizard, 'info_output'):
+                self.comparison_wizard.info_output.append(f"Error exporting data: {e}")
+    
+    def _get_current_method_name(self):
+        """Get the current comparison method name"""
+        try:
+            method_config = self._capture_method_config()
+            if method_config:
+                return method_config.method_name
+            return "unknown"
+        except:
+            return "unknown"
+    
+    def _write_excel_file(self, filename):
+        """Write analysis data to Excel file"""
+        import pandas as pd
+        import openpyxl
+        from openpyxl import Workbook
+        
+        # Get current analysis results
+        analysis_results = self._last_analysis_results
+        
+        # Create Excel workbook
+        wb = Workbook()
+        wb.remove(wb.active)  # Remove default sheet
+        
+        # Sheet 1: Plot Data
+        self._create_plot_data_sheet(wb, analysis_results)
+        
+        # Sheet 2: Statistics
+        self._create_statistics_sheet(wb, analysis_results)
+        
+        # Sheet 3: Visible Pairs
+        self._create_pairs_sheet(wb)
+        
+        # Sheet 4: Analysis Config
+        self._create_config_sheet(wb)
+        
+        # Save the workbook
+        wb.save(filename)
+        print(f"[ComparisonWizardManager] Excel file saved: {filename}")
+    
+    def _create_plot_data_sheet(self, wb, analysis_results):
+        """Create the plot data sheet"""
+        ws = wb.create_sheet("Plot Data")
+        
+        # Headers
+        ws.append(["Pair_Name", "Pair_ID", "X_Data", "Y_Data", "Point_Index"])
+        
+        # Add data from scatter_data
+        scatter_data = analysis_results.get('scatter_data', [])
+        for scatter_item in scatter_data:
+            pair_name = scatter_item.get('pair_name', 'Unknown')
+            pair_id = scatter_item.get('pair_id', 'Unknown')
+            x_data = scatter_item.get('x_data', [])
+            y_data = scatter_item.get('y_data', [])
+            
+            # Write each data point as a row
+            for i, (x, y) in enumerate(zip(x_data, y_data)):
+                ws.append([pair_name, pair_id, x, y, i])
+    
+    def _create_statistics_sheet(self, wb, analysis_results):
+        """Create the statistics sheet"""
+        ws = wb.create_sheet("Statistics")
+        
+        # Headers
+        ws.append(["Statistic_Name", "Value", "Units"])
+        
+        # Add data from statistics
+        statistics = analysis_results.get('statistics', {})
+        for stat_name, stat_value in statistics.items():
+            if stat_name != 'error':
+                ws.append([stat_name, stat_value, ""])
+    
+    def _create_pairs_sheet(self, wb):
+        """Create the visible pairs sheet"""
+        ws = wb.create_sheet("Visible Pairs")
+        
+        # Headers
+        ws.append(["Pair_Name", "Pair_ID", "Ref_Channel", "Test_Channel", "Ref_File", "Test_File", "Show", "Description"])
+        
+        # Add data from visible pairs
+        if hasattr(self, 'pair_manager') and self.pair_manager:
+            visible_pairs = self.pair_manager.get_visible_pairs()
+            for pair in visible_pairs:
+                ws.append([
+                    pair.name,
+                    pair.pair_id,
+                    pair.ref_channel_name or "Unknown",
+                    pair.test_channel_name or "Unknown", 
+                    pair.ref_file_id or "Unknown",
+                    pair.test_file_id or "Unknown",
+                    pair.show,
+                    pair.description or ""
+                ])
+    
+    def _create_config_sheet(self, wb):
+        """Create the analysis config sheet"""
+        ws = wb.create_sheet("Analysis Config")
+        
+        # Headers
+        ws.append(["Parameter", "Value"])
+        
+        # Add configuration data
+        method_config = self._capture_method_config()
+        if method_config:
+            ws.append(["Method", method_config.method_name])
+            ws.append(["Parameters", str(method_config.parameters)])
+            
+        # Add timestamp
+        import datetime
+        ws.append(["Export_Timestamp", datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
+        
+        # Add pair count
+        if hasattr(self, 'pair_manager') and self.pair_manager:
+            ws.append(["Visible_Pairs_Count", len(self.pair_manager.get_visible_pairs())])
+            ws.append(["Total_Pairs_Count", len(self.pair_manager.get_all_pairs())])
