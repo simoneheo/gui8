@@ -1199,6 +1199,7 @@ class ProcessWizardWindow(QMainWindow):
                 # Check if script has been modified from default (contains user changes)
                 if script_text and self._is_script_customized(script_text):
                     print(f"[ProcessWizard] Attempting to use custom script...")
+                    print(f"[ProcessWizard] Script text: {script_text}")
                     
                     # Try to execute the custom script
                     try:
@@ -1302,6 +1303,13 @@ class ProcessWizardWindow(QMainWindow):
             if ('return' in script_text and 
                 ('y_new' in script_text or 'result_channel' in script_text or 'result_channels' in script_text)):
                 return True
+            
+            # Check for actual y_new assignments (not just comments)
+            lines = script_text.split('\n')
+            for line in lines:
+                stripped = line.strip()
+                if stripped.startswith('y_new') and '=' in stripped and not stripped.startswith('#'):
+                    return True
             
             return False
             
@@ -1503,11 +1511,30 @@ class ProcessWizardWindow(QMainWindow):
                 QMessageBox.Yes | QMessageBox.No
             )
             if reply == QMessageBox.Yes:
+                # Check if this was the currently selected input channel
+                was_current_input = (hasattr(self, 'input_ch') and 
+                                   self.input_ch and 
+                                   self.input_ch.channel_id == channel_id)
+                
+                # Store parent info before deletion for fallback selection
+                parent_channel_id = None
+                if hasattr(channel, 'parent_ids') and channel.parent_ids:
+                    parent_channel_id = channel.parent_ids[0]
+                
+                # Remove the channel
                 self.channel_manager.remove_channel(channel_id)
+                
                 # Clear cached lineage to force rebuild with updated channel list
                 self._cached_lineage = []
+                
+                # Update UI components
                 self._update_step_table()
+                self._update_input_channel_combobox()
                 self._update_plot()
+                
+                # If we deleted the current input channel, select a new one
+                if was_current_input:
+                    self._select_appropriate_input_channel(parent_channel_id)
 
 
     def _handle_channel_data_updated(self, channel_id: str):
@@ -1580,6 +1607,43 @@ class ProcessWizardWindow(QMainWindow):
         if selected_channel:
             self.input_ch = selected_channel
             self._update_plot()
+
+    def _select_appropriate_input_channel(self, deleted_parent_id: str = None):
+        """Select an appropriate input channel after deletion using priority order:
+        1. Most recent channel (highest step number)
+        2. Parent channel (if available)
+        3. First available channel
+        """
+        if not hasattr(self, '_cached_lineage') or not self._cached_lineage:
+            return
+        
+        # Priority 1: Most recent channel (highest step number)
+        most_recent = max(self._cached_lineage, key=lambda ch: ch.step)
+        if most_recent:
+            self._set_input_channel(most_recent)
+            return
+        
+        # Priority 2: Parent channel (if available and still exists)
+        if deleted_parent_id:
+            parent_channel = self.channel_manager.get_channel(deleted_parent_id)
+            if parent_channel and parent_channel in self._cached_lineage:
+                self._set_input_channel(parent_channel)
+                return
+        
+        # Priority 3: First available channel
+        if self._cached_lineage:
+            self._set_input_channel(self._cached_lineage[0])
+
+    def _set_input_channel(self, channel):
+        """Set the input channel and update the combobox selection"""
+        self.input_ch = channel
+        
+        # Update combobox selection
+        if hasattr(self, 'input_channel_combobox'):
+            for i, cached_channel in enumerate(self._cached_lineage):
+                if cached_channel.channel_id == channel.channel_id:
+                    self.input_channel_combobox.setCurrentIndex(i)
+                    break
 
     def showEvent(self, event):
         """Handle when the wizard window is shown."""
@@ -1842,18 +1906,34 @@ class ProcessWizardWindow(QMainWindow):
                 "    # Access input data",
                 "    input_data = parent_channel.ydata",
                 "    input_time = parent_channel.xdata",
+                "    fs = getattr(parent_channel, 'fs_median', 1.0)",
                 "    ",
                 "    # Example: Apply your custom processing here",
                 "    processed_data = input_data.copy()",
                 "    # processed_data = your_custom_function(input_data, **params)",
                 "    ",
-                "    # Create result channel",
-                "    result_channel = copy.deepcopy(parent_channel)",
-                "    result_channel.ydata = processed_data",
-                "    result_channel.xdata = input_time  # or modify if needed",
-                f"    result_channel.description = parent_channel.description + ' -> {step_name}'",
+                "    # NEW FORMAT: Return list of channel dictionaries",
+                "    # Each dictionary must have 'tags', 'x', 'y' fields",
+                "    result_channels_data = [",
+                "        {",
+                "            'tags': ['time-series'],",
+                "            'x': input_time,",
+                "            'y': processed_data",
+                "        }",
+                "    ]",
+                "    ",
+                "    # For spectrograms, add additional fields:",
+                "    # {",
+                "    #     'tags': ['spectrogram'],",
+                "    #     'x': time_axis,      # Time axis for plotting",
+                "    #     'y': freq_axis,      # Frequency axis for plotting", 
+                "    #     't': time_axis,      # Time data",
+                "    #     'f': freq_axis,      # Frequency data",
+                "    #     'z': spectrogram_data # 2D spectrogram data",
+                "    # }",
                 "",
-                "# IMPORTANT: The script must define 'result_channel' or 'result_channels'",
+                "# IMPORTANT: The script must define 'result_channels_data' (new format)",
+                "# or 'result_channel'/'result_channels' (legacy format)",
                 "# result_channel = your_single_processed_channel",
                 "# result_channels = [channel1, channel2, ...]  # for multiple outputs"
             ]
@@ -1968,26 +2048,20 @@ result_channel.description = parent_channel.description + ' -> {step_name}'
             # Add the actual method body with comments, converting return statements
             for line in adjusted_lines:
                 if line.strip():
-                    # Convert return statements to variable assignments
+                    # Convert return statements to result_channels_data assignment
                     if line.strip().startswith('return '):
-                        # Convert "return expression" to "y_new = expression"
+                        # Convert "return expression" to "result_channels_data = expression"
                         return_expr = line.strip()[7:]  # Remove "return "
-                        
-                        # Skip redundant "return y_new" since y_new is already assigned
-                        if return_expr.strip() == 'y_new':
-                            script_parts.append("# Result is already stored in y_new")
-                        else:
-                            script_parts.append(f"y_new = {return_expr}")
+                        script_parts.append(f"result_channels_data = {return_expr}")
                     else:
                         script_parts.append(line)
                 else:
                     script_parts.append("")
             
-            # Ensure script sets y_new variable (no return statement needed at module level)
-            if adjusted_lines and not any('y_new' in line for line in adjusted_lines[-3:]):
-                script_parts.append("")
-                script_parts.append("# Set y_new variable for the result")
-                script_parts.append("y_new = y  # Replace with your processed data")
+            # Add comment about the new format
+            script_parts.append("")
+            script_parts.append("# The result_channels_data contains structured channel data")
+            script_parts.append("# Each dictionary has 'tags', 'x', 'y' and optional fields like 't', 'f', 'z'")
             
             return "\n".join(script_parts)
             
@@ -2027,8 +2101,14 @@ result_channel.description = parent_channel.description + ' -> {step_name}'
                 "# Processing logic:",
                 processing_logic,
                 "",
-                "# Result must be stored in y_new variable",
-                "# y_new = your_processed_data"
+                "# Result must be stored in result_channels_data variable",
+                "result_channels_data = [",
+                "    {",
+                "        'tags': ['time-series'],",
+                "        'x': x,",
+                "        'y': y_new",
+                "    }",
+                "]"
             ]
             
             return "\n".join(script_parts)

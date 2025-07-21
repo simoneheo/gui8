@@ -1236,14 +1236,22 @@ class ProcessWizardManager:
         new_channels = None
         print(f"[ProcessWizardManager] Looking for result variables...")
         
-        # Format 1: Script returns result_channel or result_channels (complex format)
-        if 'result_channels' in safe_locals:
+        # Format 1: NEW - Script returns result_channels_data (new structured format)
+        if 'result_channels_data' in safe_locals:
+            channels_data = safe_locals['result_channels_data']
+            print(f"[ProcessWizardManager] Found result_channels_data: {type(channels_data)}, count: {len(channels_data) if hasattr(channels_data, '__len__') else 'unknown'}")
+            
+            # Process the new structured format using base step logic
+            new_channels = self._process_channels_data(channels_data, parent_channel, fallback_params)
+            
+        # Format 2: LEGACY - Script returns result_channel or result_channels (complex format)
+        elif 'result_channels' in safe_locals:
             new_channels = safe_locals['result_channels']
-            print(f"[ProcessWizardManager] Found result_channels: {type(new_channels)}, count: {len(new_channels) if hasattr(new_channels, '__len__') else 'unknown'}")
+            print(f"[ProcessWizardManager] Found result_channels (legacy): {type(new_channels)}, count: {len(new_channels) if hasattr(new_channels, '__len__') else 'unknown'}")
         elif 'result_channel' in safe_locals:
             new_channels = [safe_locals['result_channel']]
-            print(f"[ProcessWizardManager] Found result_channel: {type(safe_locals['result_channel'])}")
-        # Format 2: Script returns y_new directly (simple format)
+            print(f"[ProcessWizardManager] Found result_channel (legacy): {type(safe_locals['result_channel'])}")
+        # Format 3: LEGACY - Script returns y_new directly (simple format)
         elif 'y_new' in safe_locals:
             print(f"[ProcessWizardManager] Found y_new: {type(safe_locals['y_new'])}")
             # Create a new channel from y_new
@@ -1409,4 +1417,88 @@ class ProcessWizardManager:
             )
         
         return valid_channels[-1] if valid_channels else None
+
+    def _process_channels_data(self, channels_data, parent_channel, fallback_params):
+        """Process the new structured channels data format using base step logic"""
+        try:
+            print(f"[ProcessWizardManager] Processing {len(channels_data)} channel(s) with new structured format")
+            
+            # Validate the channels_data structure
+            if not isinstance(channels_data, list):
+                raise ValueError("result_channels_data must be a list")
+            
+            created_channels = []
+            
+            # Import the base step for validation and processing
+            from steps.base_step import BaseStep
+            
+            for i, channel_info in enumerate(channels_data):
+                print(f"[ProcessWizardManager] Processing channel {i+1}: {channel_info}")
+                
+                # Validate channel structure
+                BaseStep.validate_channel_structure(channel_info, i)
+                
+                # Extract channel data
+                tags = channel_info['tags']
+                channel_type = tags[0] if tags else 'main'
+                x_data = channel_info['x']
+                y_data = channel_info['y']
+                
+                # Validate output data based on channel type
+                allow_length_change = channel_type in ['time-series', 'spectrogram', 'reduced']
+                BaseStep.validate_output_data(parent_channel.ydata, y_data, channel_type=channel_type, allow_length_change=allow_length_change)
+                
+                # Generate channel suffix
+                suffix = f"CustomScript_{channel_type}" if len(channels_data) > 1 else "CustomScript"
+                
+                # Create the channel based on type
+                if channel_type == 'spectrogram':
+                    # Handle spectrogram-specific properties
+                    t_data = channel_info.get('t', x_data)
+                    f_data = channel_info.get('f', y_data)
+                    z_data = channel_info.get('z', None)
+                    
+                    new_channel = BaseStep.create_new_channel(
+                        parent=parent_channel,
+                        xdata=t_data,      # Time axis
+                        ydata=f_data,      # Frequency axis
+                        params=fallback_params,
+                        suffix=suffix,
+                        channel_tags=tags
+                    )
+                    
+                    # Add spectrogram data to metadata
+                    if z_data is not None:
+                        new_channel.metadata = {'Zxx': z_data}
+                    else:
+                        new_channel.metadata = {}
+                else:
+                    # Handle regular channels (time-series, etc.)
+                    new_channel = BaseStep.create_new_channel(
+                        parent=parent_channel,
+                        xdata=x_data,
+                        ydata=y_data,
+                        params=fallback_params,
+                        suffix=suffix,
+                        channel_tags=tags
+                    )
+                
+                # Update channel metadata for custom script
+                new_channel.description = parent_channel.description + f' -> custom_script_{channel_type}'
+                
+                created_channels.append(new_channel)
+                print(f"[ProcessWizardManager] Created channel {i+1}: {new_channel.channel_id}")
+            
+            # Add channels to the channel manager
+            for new_channel in created_channels:
+                self.ui.channel_manager.add_channel(new_channel)
+            
+            print(f"[ProcessWizardManager] Successfully processed {len(created_channels)} channels with new format")
+            return created_channels
+            
+        except Exception as e:
+            print(f"[ProcessWizardManager] Error processing channels data: {e}")
+            import traceback
+            traceback.print_exc()
+            raise ValueError(f"Failed to process channels data: {str(e)}")
 

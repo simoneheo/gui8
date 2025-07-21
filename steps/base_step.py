@@ -9,17 +9,227 @@ from typing import Optional, Dict, Any, List
 class BaseStep(ABC):
     """
     Abstract base class for all processing steps.
-    Each step must implement `apply()` and provide metadata like `name`, `category`, `description`, and `params`.
+    Each step must implement `script()` and provide metadata like `name`, `category`, `description`, and `params`.
     """
+    
+    # Class attributes that subclasses should override
+    name: str = "base_step"
+    category: str = "Base"
+    description: str = "Base processing step"
+    tags: List[str] = []
+    params: List[Dict[str, Any]] = []
+    
     def __init__(self, **kwargs):
         self.kwargs = kwargs  # Store parameters passed by user
 
     @abstractmethod
-    def apply(self, channel: Channel) -> Channel:
+    def script(self, x: np.ndarray, y: np.ndarray, fs: Optional[float], params: dict) -> list:
         """
-        Apply this step to the given channel. Must return a new ChannelInfo.
+        Core processing logic that subclasses must implement.
+        
+        Args:
+            x: Time/index data
+            y: Signal data
+            fs: Sampling frequency (may be None)
+            params: Validated parameters
+            
+        Returns:
+            list: List of dictionaries, each containing channel data with 'type', 'x', 'y' keys
+                 Example: [{'type': 'main', 'x': x_data, 'y': y_data}]
         """
         pass
+
+    @classmethod
+    def apply(cls, channel: Channel, params: dict) -> Channel | list[Channel]:
+        """
+        Standard apply method that handles all common processing steps.
+        Subclasses should not override this method.
+        """
+        try:
+            step_name = cls.name.replace('_', ' ').title()
+            print(f"[{step_name}] Starting apply with params: {params}")
+            
+            # 1. Validate channel input
+            cls.validate_channel_input(channel)
+            
+            # 2. Extract data
+            x = channel.xdata
+            y = channel.ydata
+            
+            # Validate that we have valid data arrays
+            if x is None or y is None:
+                raise ValueError("Channel must have valid xdata and ydata")
+            
+            # 3. Validate input data
+            cls.validate_signal_data(x, y)
+            
+            # 4. Get sampling frequency
+            fs = cls._get_channel_fs(channel)
+            
+            print(f"[{step_name}] Input data shape: {y.shape if hasattr(y, 'shape') else len(y)}")
+            
+            # 5. Validate parameters (declarative + custom)
+            try:
+                validate_method = getattr(cls, 'validate_parameters', None)
+                if validate_method and callable(validate_method):
+                    validate_method(params)
+            except AttributeError:
+                pass  # No custom validation method
+            
+            # 6. Call core processing logic
+            # Create a temporary instance to call the script method
+            temp_instance = cls()
+            channels_data = temp_instance.script(x, y, fs, params)
+            
+            # 7. Process each channel in the result
+            created_channels = []
+            for i, channel_info in enumerate(channels_data):
+                # Validate channel structure first
+                cls.validate_channel_structure(channel_info, i)
+                
+                tags = channel_info['tags']
+                # Use the first tag as the channel type, or 'main' as default
+                channel_type = tags[0] if tags else 'main'
+                x_data = channel_info['x']
+                y_data = channel_info['y']
+                
+                # Validate output data for this channel based on its type
+                # Allow length changes for time-series from STFT/spectrogram processing
+                allow_length_change = channel_type in ['time-series', 'spectrogram', 'reduced']
+                cls.validate_output_data(y, y_data, channel_type=channel_type, allow_length_change=allow_length_change)
+                
+                print(f"[{step_name}] Channel {i+1} ({channel_type}) data shape: {y_data.shape if hasattr(y_data, 'shape') else len(y_data)}")
+                
+                # 8. Generate channel suffix automatically
+                suffix = cls._generate_channel_suffix(params)
+                if len(channels_data) > 1:
+                    suffix = f"{suffix}_{channel_type}"
+                
+                print(f"[{step_name}] Creating {channel_type} channel with suffix: {suffix}")
+                
+                # 9. Create channel based on type
+                # Extract tags from channel_info if available
+                channel_tags = channel_info.get('tags', None)
+                
+                if channel_type == 'time-series':
+                    new_channel = cls.create_new_channel(
+                        parent=channel, 
+                        xdata=x_data, 
+                        ydata=y_data, 
+                        params=params,
+                        suffix=suffix,
+                        channel_tags=channel_tags
+                    )
+              
+                elif channel_type == 'spectrogram':
+                    # Handle spectrogram-specific properties
+                    # For spectrograms: t -> xdata (time axis), f -> ydata (frequency axis), z -> metadata['Zxx']
+                    t_data = channel_info.get('t', x_data)  # Use 't' if available, fallback to x_data
+                    f_data = channel_info.get('f', y_data)  # Use 'f' if available, fallback to y_data
+                    z_data = channel_info.get('z', None)    # Get spectrogram data
+                    
+                    new_channel = cls.create_new_channel(
+                        parent=channel, 
+                        xdata=t_data,      # Time axis
+                        ydata=f_data,      # Frequency axis
+                        params=params,
+                        suffix=suffix,
+                        channel_tags=channel_tags
+                    )
+                    
+                    # Add spectrogram data to metadata
+                    if z_data is not None:
+                        new_channel.metadata = {'Zxx': z_data}
+                    else:
+                        new_channel.metadata = {}
+                else:
+                    # Default channel creation
+                    new_channel = cls.create_new_channel(
+                        parent=channel, 
+                        xdata=x_data, 
+                        ydata=y_data, 
+                        params=params,
+                        suffix=suffix,
+                        channel_tags=channel_tags
+                    )
+                
+                created_channels.append(new_channel)
+            
+            # Return single channel if only one, otherwise return list
+            if len(created_channels) == 1:
+                return created_channels[0]
+            else:
+                return created_channels
+            
+        except Exception as e:
+            step_name = cls.name.replace('_', ' ').title()
+            print(f"[{step_name}] Error in apply: {e}")
+            if isinstance(e, ValueError):
+                raise e
+            else:
+                raise ValueError(f"{step_name} processing failed: {str(e)}")
+
+    @classmethod
+    def _generate_channel_suffix(cls, params: dict) -> str:
+        """
+        Generate an appropriate suffix for the new channel based on parameters.
+        Subclasses can override this for custom naming.
+        """
+        # Try to generate smart suffix based on common parameter patterns
+        
+        # Handle constant addition/subtraction
+        if 'constant' in params and params['constant'] is not None:
+            constant = float(params['constant'])
+            if constant >= 0:
+                return f"Plus{constant:g}"
+            else:
+                return f"Minus{abs(constant):g}"
+        
+        # Handle window-based operations
+        if 'window' in params and params['window'] is not None:
+            window = params['window']
+            # Handle both numeric and string window types
+            try:
+                window_int = int(window)
+                if cls.name.startswith('moving_'):
+                    operation = cls.name.replace('moving_', '').upper()
+                    return f"{operation}{window_int}"
+                else:
+                    return f"Win{window_int}"
+            except (ValueError, TypeError):
+                # Handle string window types (like 'hann', 'hamming', etc.)
+                if cls.name.startswith('moving_'):
+                    operation = cls.name.replace('moving_', '').upper()
+                    return f"{operation}{window.capitalize()}"
+                else:
+                    return f"Win{window.capitalize()}"
+        
+        # Handle frequency-based operations
+        if 'low_freq' in params and 'high_freq' in params and params['low_freq'] is not None and params['high_freq'] is not None:
+            low = float(params['low_freq'])
+            high = float(params['high_freq'])
+            return f"BP{low:g}-{high:g}Hz"
+        elif 'frequency' in params and params['frequency'] is not None:
+            freq = float(params['frequency'])
+            if 'lowpass' in cls.name:
+                return f"LP{freq:g}Hz"
+            elif 'highpass' in cls.name:
+                return f"HP{freq:g}Hz"
+            else:
+                return f"F{freq:g}Hz"
+        
+        # Handle threshold operations
+        if 'threshold' in params and params['threshold'] is not None:
+            thresh = float(params['threshold'])
+            return f"Thresh{thresh:g}"
+        
+        # Handle method-based operations
+        if 'method' in params and params['method'] is not None:
+            method = str(params['method'])
+            return f"{method.capitalize()}"
+        
+        # Default: use step name
+        return cls.name.replace('_step', '').replace('_', ' ').title()
 
     def get_info(self) -> Dict[str, Any]:
         """
@@ -35,6 +245,14 @@ class BaseStep(ABC):
         }
 
     @classmethod
+    def get_prompt(cls) -> Dict[str, Any]:
+        """
+        Return prompt information for GUI parameter collection.
+        Standard method used by ProcessWizardManager.
+        """
+        return {"info": cls.description, "params": cls.params}
+
+    @classmethod
     def parse_input(cls, user_input: dict) -> dict:
         parsed = {}
         for param in cls.params:
@@ -48,9 +266,9 @@ class BaseStep(ABC):
             param_type = param.get("type", "str")
             try:
                 if param_type == "float":
-                    parsed[name] = float(value)
+                    parsed[name] = float(value) if value is not None else None
                 elif param_type == "int":
-                    parsed[name] = int(value)
+                    parsed[name] = int(value) if value is not None else None
                 elif param_type in ["bool", "boolean"]:
                     if isinstance(value, bool):
                         parsed[name] = value
@@ -121,7 +339,7 @@ class BaseStep(ABC):
         return None
 
     @classmethod
-    def create_new_channel(cls, parent: Channel, xdata: np.ndarray, ydata: np.ndarray, params: dict, suffix: str = None) -> Channel:
+    def create_new_channel(cls, parent: Channel, xdata: np.ndarray, ydata: np.ndarray, params: dict, suffix: Optional[str] = None, channel_tags: Optional[list] = None) -> Channel:
         """
         Helper method to create a new channel with consistent parameter handling.
         
@@ -131,9 +349,13 @@ class BaseStep(ABC):
             ydata: Signal data for the new channel
             params: Parameters used for processing
             suffix: Optional suffix for the channel name (defaults to step name)
+            channel_tags: Optional tags for this specific channel (overrides cls.tags)
         """
         # Use provided suffix or default to step name
         name_suffix = suffix if suffix else cls.name
+        
+        # Use channel-specific tags if provided, otherwise use step class tags
+        tags_to_use = channel_tags if channel_tags is not None else cls.tags
         
         return Channel.from_parent(
             parent=parent,
@@ -141,7 +363,7 @@ class BaseStep(ABC):
             ydata=ydata,
             legend_label=f"{parent.legend_label} - {name_suffix}",
             description=cls.description,
-            tags=cls.tags,
+            tags=tags_to_use,
             params=params  # Pass the parameters to the new channel
         )
 
@@ -339,7 +561,7 @@ class BaseStep(ABC):
 
     @classmethod
     def validate_output_data(cls, y_input: np.ndarray, y_output: np.ndarray,
-                           allow_length_change: bool = False) -> None:
+                           allow_length_change: bool = False, channel_type: str = "main") -> None:
         """
         Validate output data from processing.
         
@@ -347,6 +569,7 @@ class BaseStep(ABC):
             y_input: Original input signal
             y_output: Processed output signal
             allow_length_change: Whether to allow output length to differ from input
+            channel_type: Type of channel being validated (e.g., 'time-series', 'spectrogram')
             
         Raises:
             ValueError: If output data is invalid
@@ -359,16 +582,83 @@ class BaseStep(ABC):
         if len(y_output) == 0:
             raise ValueError("Processing produced empty output")
         
-        if not allow_length_change and len(y_output) != len(y_input):
-            raise ValueError(f"Processing changed signal length: {len(y_input)} -> {len(y_output)}")
+        # Channel-type specific validation
+        if channel_type == "time-series":
+            # Time-series should maintain same length as input unless explicitly allowed
+            if not allow_length_change and len(y_output) != len(y_input):
+                raise ValueError(f"Time-series processing changed signal length: {len(y_input)} -> {len(y_output)}")
+        elif channel_type == "spectrogram":
+            # Spectrograms can have different time resolution
+            # Just ensure it's not empty and has reasonable dimensions
+            if y_output.ndim == 1:
+                if len(y_output) == 0:
+                    raise ValueError("Spectrogram frequency axis is empty")
+            elif y_output.ndim == 2:
+                if y_output.shape[0] == 0 or y_output.shape[1] == 0:
+                    raise ValueError("Spectrogram data has zero dimensions")
+            else:
+                raise ValueError(f"Spectrogram data has unexpected dimensions: {y_output.shape}")
+        elif channel_type == "reduced":
+            # Reduced data (like envelope, peaks) can be shorter
+            if len(y_output) == 0:
+                raise ValueError("Reduced data is empty")
+            if len(y_output) > len(y_input):
+                raise ValueError(f"Reduced data cannot be longer than input: {len(y_input)} -> {len(y_output)}")
+        else:
+            # Default validation for unknown channel types
+            if not allow_length_change and len(y_output) != len(y_input):
+                raise ValueError(f"Processing changed signal length: {len(y_input)} -> {len(y_output)}")
         
-        # Check for unexpected NaN values
-        if np.any(np.isnan(y_output)) and not np.any(np.isnan(y_input)):
+        # Check for unexpected NaN values (skip for spectrograms as they may have NaN regions)
+        if channel_type != "spectrogram" and np.any(np.isnan(y_output)) and not np.any(np.isnan(y_input)):
             raise ValueError("Processing produced unexpected NaN values")
         
         # Check for unexpected infinite values
         if np.any(np.isinf(y_output)) and not np.any(np.isinf(y_input)):
             raise ValueError("Processing produced unexpected infinite values")
+
+    @classmethod
+    def validate_channel_structure(cls, channel_info: dict, channel_index: int) -> None:
+        """
+        Validate the structure of a channel info dictionary.
+        
+        Args:
+            channel_info: Dictionary containing channel data
+            channel_index: Index of the channel for error messages
+            
+        Raises:
+            ValueError: If channel structure is invalid
+        """
+        # Check required fields
+        required_fields = ['tags', 'x', 'y']
+        for field in required_fields:
+            if field not in channel_info:
+                raise ValueError(f"Channel {channel_index + 1} missing required field '{field}'")
+        
+        # Validate tags field
+        tags = channel_info['tags']
+        if not isinstance(tags, list):
+            raise ValueError(f"Channel {channel_index + 1} 'tags' must be a list, got {type(tags)}")
+        if len(tags) == 0:
+            raise ValueError(f"Channel {channel_index + 1} 'tags' cannot be empty")
+        
+        # Validate data fields
+        x_data = channel_info['x']
+        y_data = channel_info['y']
+        
+        if x_data is None:
+            raise ValueError(f"Channel {channel_index + 1} 'x' data cannot be None")
+        if y_data is None:
+            raise ValueError(f"Channel {channel_index + 1} 'y' data cannot be None")
+        
+        # Validate spectrogram-specific fields if present
+        if 'spectrogram' in tags:
+            if 't' not in channel_info:
+                raise ValueError(f"Spectrogram channel {channel_index + 1} missing 't' field")
+            if 'f' not in channel_info:
+                raise ValueError(f"Spectrogram channel {channel_index + 1} missing 'f' field")
+            if 'z' not in channel_info:
+                raise ValueError(f"Spectrogram channel {channel_index + 1} missing 'z' field")
 
     @classmethod
     def validate_window_parameter(cls, window: int, signal_length: int,

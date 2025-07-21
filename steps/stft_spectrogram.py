@@ -22,14 +22,9 @@ Reduction methods:
 • **max_frequency**: Frequency with the highest power
 • **centroid_freq**: Weighted average frequency
 • **threshold_count**: Number of frequencies above a threshold
-• **band_power**: Power in a user-defined frequency band
+• **band_power**: Power in a user-defined frequency band"""
 
-Useful for:
-• **Time-frequency analysis**: Visualize how frequency content changes over time
-• **Signal characterization**: Identify dominant frequencies and their temporal evolution
-• **Feature extraction**: Extract time-varying spectral features
-• **Pattern recognition**: Detect recurring frequency patterns"""
-    tags = ["spectrogram", "time-frequency", "stft", "scipy", "frequency", "window", "fft"]
+    tags = ["stft", "scipy", "frequency", "window", "fft"]
     params = [
         {
             "name": "fs", 
@@ -77,42 +72,47 @@ Useful for:
         }
     ]
 
-    @classmethod
-    def get_info(cls):
-        return f"{cls.name} — Compute STFT spectrogram with time-frequency analysis (Category: {cls.category})"
 
     @classmethod
-    def get_prompt(cls):
-        return {"info": cls.description, "params": cls.params}
-
-    @classmethod
-    def _validate_input_data(cls, y: np.ndarray) -> None:
-        """Validate input signal data"""
-        if len(y) < 10:
-            raise ValueError("Signal too short for STFT computation (minimum 10 samples)")
-        if np.all(np.isnan(y)):
-            raise ValueError("Signal contains only NaN values")
-
-    @classmethod
-    def _validate_parameters(cls, params: dict) -> None:
+    def validate_parameters(cls, params: dict) -> None:
         """Validate parameters and business rules"""
-        nperseg = params.get("nperseg")
-        noverlap = params.get("noverlap")
-        reduction = params.get("reduction", "max_intensity")
-        threshold = params.get("threshold", 0.1)
-        band_str = params.get("band", "0.1-0.5")
+        # Validate nperseg parameter
+        nperseg = cls.validate_integer_parameter(
+            "nperseg", 
+            params.get("nperseg"), 
+            min_val=1
+        )
         
-        if nperseg <= 0:
-            raise ValueError("nperseg must be positive")
-        if noverlap < 0 or noverlap >= nperseg:
-            raise ValueError("noverlap must be non-negative and less than nperseg")
+        # Validate noverlap parameter
+        noverlap = cls.validate_integer_parameter(
+            "noverlap", 
+            params.get("noverlap"), 
+            min_val=0,
+            max_val=nperseg-1
+        )
+        
+        # Validate reduction method
+        reduction = cls.validate_string_parameter(
+            "reduction",
+            params.get("reduction", "max_intensity"),
+            valid_options=["max_intensity", "sum_intensity", "mean_intensity", "max_frequency", "centroid_freq", "threshold_count", "band_power"]
+        )
         
         # Validate threshold for threshold_count method
-        if reduction == "threshold_count" and threshold < 0:
-            raise ValueError("Threshold must be non-negative")
+        if reduction == "threshold_count":
+            threshold = cls.validate_numeric_parameter(
+                "threshold",
+                params.get("threshold", 0.1),
+                min_val=0.0
+            )
         
         # Validate band format for band_power method
         if reduction == "band_power":
+            band_str = cls.validate_string_parameter(
+                "band",
+                params.get("band", "0.1-0.5")
+            )
+            
             try:
                 band_parts = band_str.split('-')
                 if len(band_parts) != 2:
@@ -125,126 +125,10 @@ Useful for:
                     raise ValueError("Band low frequency must be non-negative")
             except (ValueError, IndexError) as e:
                 raise ValueError(f"Invalid band specification '{band_str}': {str(e)}")
+  
 
     @classmethod
-    def _validate_output_data(cls, y_original: np.ndarray, spectrogram_data: np.ndarray, timeseries_data: np.ndarray) -> None:
-        """Validate output data"""
-        if spectrogram_data.size == 0:
-            raise ValueError("STFT computation produced empty spectrogram")
-        if timeseries_data.size == 0:
-            raise ValueError("Reduction method produced empty time-series")
-        if np.any(np.isnan(spectrogram_data)) and not np.any(np.isnan(y_original)):
-            raise ValueError("STFT computation produced unexpected NaN values")
-
-    @classmethod
-    def parse_input(cls, user_input: dict) -> dict:
-        """Parse and validate user input parameters"""
-        parsed = {}
-        for param in cls.params:
-            name = param["name"]
-            val = user_input.get(name, param.get("default"))
-            try:
-                if val == "":
-                    parsed[name] = None
-                elif name == "fs" and val == "auto":
-                    # Keep "auto" as string for fs parameter
-                    parsed[name] = val
-                elif param["type"] == "float":
-                    parsed[name] = float(val)
-                elif param["type"] == "int":
-                    parsed[name] = int(val)
-                else:
-                    parsed[name] = val
-            except ValueError as e:
-                if "could not convert" in str(e) or "invalid literal" in str(e):
-                    raise ValueError(f"{name} must be a valid {param['type']}")
-                raise e
-        return parsed
-
-    @classmethod
-    def apply(cls, channel: Channel, params: dict) -> list:
-        """Apply STFT spectrogram computation to the channel data."""
-        try:
-            x = channel.xdata
-            y = channel.ydata
-            
-            # Auto-calculate sampling rate from channel data if needed
-            fs_param = params.get("fs", "auto")
-            if fs_param == "auto" or fs_param is None:
-                if x is not None and len(x) > 1:
-                    # Calculate sampling rate from time data
-                    time_diffs = np.diff(x)
-                    avg_time_step = np.mean(time_diffs)
-                    fs = 1.0 / avg_time_step if avg_time_step > 0 else 1.0
-                else:
-                    # Fallback to channel attribute or default
-                    fs = getattr(channel, 'fs', 1.0)
-            else:
-                fs = float(fs_param)
-            
-            # Validate input data and parameters
-            cls._validate_input_data(y)
-            cls._validate_parameters(params)
-            
-            # Adjust nperseg if needed
-            nperseg = params.get("nperseg", 256)
-            if nperseg > len(y):
-                nperseg = len(y) // 2
-                params["nperseg"] = nperseg
-                params["noverlap"] = nperseg // 2
-            
-            # Process the data
-            spectrogram_data, timeseries_data, t_aligned, f, ylabel = cls.script(x, y, fs, params)
-            
-            # Validate output data
-            cls._validate_output_data(y, spectrogram_data, timeseries_data)
-            
-            # Create spectrogram channel
-            spectrogram_channel = cls.create_new_channel(
-                parent=channel,
-                xdata=t_aligned,
-                ydata=f,
-                params=params,
-                suffix="STFTSpectrogram"
-            )
-            
-            # Set spectrogram-specific properties
-            spectrogram_channel.tags = ["spectrogram"]
-            spectrogram_channel.xlabel = "Time (s)"
-            spectrogram_channel.ylabel = "Frequency (Hz)"
-            spectrogram_channel.legend_label = f"{channel.legend_label} - STFT Spectrogram"
-            
-            # Store spectrogram data in metadata
-            spectrogram_channel.metadata = {
-                'Zxx': spectrogram_data,
-                'colormap': 'viridis'
-            }
-            
-            # Create time-series channel
-            timeseries_channel = cls.create_new_channel(
-                parent=channel,
-                xdata=t_aligned,
-                ydata=timeseries_data,
-                params=params,
-                suffix="STFTTimeSeries"
-            )
-            
-            # Set time-series specific properties
-            timeseries_channel.tags = ["time-series"]
-            timeseries_channel.xlabel = "Time (s)"
-            timeseries_channel.ylabel = ylabel
-            timeseries_channel.legend_label = f"{channel.legend_label} - {params.get('reduction', 'max_intensity').replace('_', ' ').title()}"
-            
-            return [spectrogram_channel, timeseries_channel]
-            
-        except Exception as e:
-            if isinstance(e, ValueError):
-                raise e
-            else:
-                raise ValueError(f"STFT spectrogram computation failed: {str(e)}")
-
-    @classmethod
-    def script(cls, x: np.ndarray, y: np.ndarray, fs: float, params: dict) -> tuple:
+    def script(cls, x: np.ndarray, y: np.ndarray, fs: float, params: dict) -> list:
         """Core processing logic for STFT spectrogram computation"""
         window = params.get("window", "hann")
         nperseg = params.get("nperseg", 256)
@@ -311,4 +195,18 @@ Useful for:
         else:
             raise ValueError(f"Unknown reduction method: {reduction}")
         
-        return Pxx, reduced_data, t_aligned, f, ylabel
+        return [
+            {
+                'tags': ['time-series'],
+                'x': t_aligned,
+                'y': reduced_data
+            },
+            {
+                'tags': ['spectrogram'],
+                'x': t_aligned,
+                'y': f,
+                't': t_aligned,
+                'f': f,
+                'z': Pxx
+            }
+        ]
