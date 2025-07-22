@@ -1,5 +1,4 @@
 import numpy as np
-from sklearn.preprocessing import MinMaxScaler
 from steps.process_registry import register_step
 from steps.base_step import BaseStep
 from channel import Channel
@@ -7,25 +6,30 @@ from channel import Channel
 @register_step
 class minmax_scaler_step(BaseStep):
     name = "minmax_scaler"
-    category = "scikit-learn"
-    description = "Rescale signal to the [0, 1] range using MinMaxScaler."
-    tags = ["scaling", "normalization", "minmax", "scikit-learn"]
+    category = "ML"
+    description = """Rescale signal to the [0, 1] range using MinMaxScaler."""
+    tags = ["time-series", "scaling", "normalization", "minmax"]
     params = []
 
     @classmethod
-    def get_info(cls):
-        return f"{cls.name} — {cls.description} (Category: {cls.category})"
+    def validate_parameters(cls, params: dict) -> None:
+        pass
 
     @classmethod
-    def get_prompt(cls):
-        return {"info": cls.description, "params": cls.params}
-
-    @classmethod
-    def apply(cls, channel: Channel, params: dict) -> list:
-        x = channel.xdata
-        y = channel.ydata.reshape(-1, 1)
+    def script(cls, x: np.ndarray, y: np.ndarray, fs: float, params: dict) -> list:
+        from sklearn.preprocessing import MinMaxScaler
+        
+        # Reshape for sklearn
+        y_reshaped = y.reshape(-1, 1)
+        
+        # Apply MinMaxScaler
         scaler = MinMaxScaler()
-        y_scaled = scaler.fit_transform(y).flatten()
-        new_channel = cls.create_new_channel(parent=channel, xdata=x, ydata=y_scaled, params=params, suffix="MinMaxScaled")
-        new_channel.legend_label = f"{channel.legend_label} (MinMax Scaled)"
-        return [new_channel]
+        y_scaled = scaler.fit_transform(y_reshaped).flatten()
+        
+        return [
+            {
+                'tags': ['time-series'],
+                'x': x,
+                'y': y_scaled
+            }
+        ]

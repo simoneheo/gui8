@@ -6,90 +6,53 @@ from channel import Channel
 @register_step
 class zscore_global_step(BaseStep):
     name = "zscore_global"
-    category = "Normalization"
-    description = """Standardize signal to zero mean and unit standard deviation using global statistics across the entire signal."""
-    tags = ["time-series", "normalization", "standardization", "zscore", "global", "mean", "std"]
-    params = []
+    category = "Transform"
+    description = """Standardize signal using global z-score normalization.
+Centers data around mean with unit standard deviation."""
+    tags = ["time-series", "zscore", "standardize", "normalize", "global"]
+    params = [
+        {"name": "with_mean", "type": "bool", "default": "True", "help": "Center data around mean"},
+        {"name": "with_std", "type": "bool", "default": "True", "help": "Scale to unit standard deviation"}
+    ]
 
     @classmethod
-    def get_info(cls): 
-        return f"{cls.name} — Standardize signal to zero mean and unit standard deviation (Category: {cls.category})"
-    
-    @classmethod
-    def get_prompt(cls): 
-        return {"info": cls.description, "params": cls.params}
-    
-    @classmethod
-    def _validate_input_data(cls, y: np.ndarray) -> None:
-        """Validate input signal data"""
-        if len(y) == 0:
-            raise ValueError("Input signal is empty")
-        if np.all(np.isnan(y)):
-            raise ValueError("Signal contains only NaN values")
-        if np.all(np.isinf(y)):
-            raise ValueError("Signal contains only infinite values")
-
-    @classmethod
-    def _validate_parameters(cls, params: dict) -> None:
+    def validate_parameters(cls, params: dict) -> None:
         """Validate cross-field logic and business rules"""
-        # No parameters to validate for z-score normalization
-        pass
+        with_mean = params.get("with_mean", True)
+        with_std = params.get("with_std", True)
 
     @classmethod
-    def _validate_output_data(cls, y_original: np.ndarray, y_new: np.ndarray) -> None:
-        """Validate output signal data"""
-        if np.any(np.isnan(y_new)) and not np.any(np.isnan(y_original)):
-            raise ValueError("Z-score normalization produced unexpected NaN values")
-        if np.any(np.isinf(y_new)) and not np.any(np.isinf(y_original)):
-            raise ValueError("Z-score normalization produced unexpected infinite values")
-
-    @classmethod
-    def parse_input(cls, user_input: dict) -> dict:
-        # No parameters to parse for z-score normalization
-        return {}
-
-    @classmethod
-    def apply(cls, channel: Channel, params: dict) -> Channel:
-        """Apply z-score normalization to the channel data."""
-        try:
-            x = channel.xdata
-            y = channel.ydata
-            
-            # Validate input data and parameters
-            cls._validate_input_data(y)
-            cls._validate_parameters(params)
-            
-            # Process the data
-            y_new = cls.script(x, y, params)
-            
-            # Validate output data
-            cls._validate_output_data(y, y_new)
-            
-            return cls.create_new_channel(
-                parent=channel, 
-                xdata=x, 
-                ydata=y_new, 
-                params=params,
-                suffix="ZScore"
-            )
-            
-        except Exception as e:
-            if isinstance(e, ValueError):
-                raise e
-            else:
-                raise ValueError(f"Z-score normalization failed: {str(e)}")
-
-    @classmethod
-    def script(cls, x: np.ndarray, y: np.ndarray, params: dict) -> np.ndarray:
-        """Core processing logic for z-score normalization"""
-        mean = np.mean(y)
-        std = np.std(y)
+    def script(cls, x: np.ndarray, y: np.ndarray, fs: float, params: dict) -> list:
+        with_mean = params["with_mean"]
+        with_std = params["with_std"]
         
-        if std == 0:
-            raise ValueError("Standard deviation is zero. Cannot normalize constant signal.")
+        # Check if signal has enough variation
+        if len(y) < 2:
+            raise ValueError("Signal too short for z-score normalization (minimum 2 samples)")
         
-        if np.isnan(std) or np.isinf(std):
-            raise ValueError("Failed to compute standard deviation")
-            
-        y_new = (y - mean) / std
-        return y_new
+        # Calculate global statistics
+        y_mean = np.mean(y)
+        y_std = np.std(y)
+        
+        # Handle edge cases
+        if y_std == 0:
+            if with_std:
+                raise ValueError("Cannot standardize: signal has zero standard deviation")
+            y_std = 1.0  # Avoid division by zero
+        
+        # Apply z-score normalization
+        y_standardized = y.copy()
+        
+        if with_mean:
+            y_standardized = y_standardized - y_mean
+        
+        if with_std:
+            y_standardized = y_standardized / y_std
+        
+        return [
+            {
+                'tags': ['time-series'],
+                'x': x,
+                'y': y_standardized
+            }
+        ]

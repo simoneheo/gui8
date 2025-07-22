@@ -7,187 +7,52 @@ from channel import Channel
 class highpass_fir_step(BaseStep):
     name = "highpass_fir"
     category = "Filter"
-    description = "Apply highpass FIR filter using window method to remove low frequencies below the cutoff."
-    tags = ["time-series", "filter", "highpass", "scipy", "fir", "finite", "frequency", "cutoff"]
+    description = "Apply highpass FIR filter with linear phase response and precise frequency control to remove low frequencies below the cutoff."
+    tags = ["time-series", "filter", "highpass", "scipy", "fir", "linear-phase", "frequency", "cutoff"]
     params = [
         {"name": "cutoff", "type": "float", "default": "0.5", "help": "Cutoff frequency in Hz"},
-        {"name": "numtaps", "type": "int", "default": "101", "help": "Number of filter taps (kernel size)"},
-        {"name": "window", "type": "str", "default": "hamming", "options": ["hamming", "hann", "blackman", "bartlett"], "help": "Window function to use"},
-        {"name": "fs", "type": "float", "default": "", "help": "Sampling frequency (injected from parent channel)"}
+        {"name": "numtaps", "type": "int", "default": "101", "help": "Filter length (odd number, higher = sharper cutoff)"}
     ]
 
     @classmethod
-    def get_info(cls): 
-        return f"{cls.name} — {cls.description} (Category: {cls.category})"
-
-    @classmethod
-    def get_prompt(cls): 
-        return {"info": cls.description, "params": cls.params}
-
-    @classmethod
-    def _validate_input_data(cls, y: np.ndarray) -> None:
-        """Validate input signal data"""
-        if len(y) == 0:
-            raise ValueError("Input signal is empty")
-        if np.all(np.isnan(y)):
-            raise ValueError("Signal contains only NaN values")
-        if np.all(np.isinf(y)):
-            raise ValueError("Signal contains only infinite values")
-
-    @classmethod
-    def _validate_parameters(cls, params: dict) -> None:
+    def validate_parameters(cls, params: dict) -> None:
         """Validate parameters and business rules"""
-        fs = params.get("fs")
-        numtaps = params.get("numtaps")
-        cutoff = params.get("cutoff")
-        window = params.get("window")
+        numtaps = cls.validate_integer_parameter("numtaps", params.get("numtaps"), min_val=3)
+        cutoff = cls.validate_numeric_parameter("cutoff", params.get("cutoff"), min_val=0.0)
         
-        if fs is None or fs <= 0:
-            raise ValueError("Sampling frequency must be positive")
-        if numtaps is None or numtaps <= 0:
-            raise ValueError("Number of taps must be positive")
         if numtaps % 2 == 0:
-            raise ValueError("Number of taps must be odd for highpass FIR filter")
-        if cutoff is None or cutoff <= 0:
-            raise ValueError("Cutoff frequency must be positive")
-        
-        nyq = 0.5 * fs
-        if cutoff >= nyq:
-            raise ValueError(f"Cutoff frequency ({cutoff} Hz) must be less than Nyquist frequency ({nyq:.1f} Hz)")
-        
-        # Validate filter design parameters
-        normal_cutoff = cutoff / nyq
-        if normal_cutoff >= 1.0:
-            raise ValueError("Cutoff frequency too high relative to sampling rate")
-        
-        # Validate window parameter
-        valid_windows = ["hamming", "hann", "blackman", "bartlett"]
-        if window not in valid_windows:
-            raise ValueError(f"Window must be one of {valid_windows}")
+            raise ValueError("numtaps must be odd for FIR filter")
 
     @classmethod
-    def _validate_filter_design(cls, params: dict, y: np.ndarray) -> None:
-        """Validate filter design and signal compatibility"""
-        from scipy.signal import firwin
-        
-        numtaps = params["numtaps"]
-        cutoff = params["cutoff"]
-        window = params["window"]
-        fs = params["fs"]
-        
-        nyq = 0.5 * fs
-        normal_cutoff = cutoff / nyq
-        
-        try:
-            b = firwin(numtaps, normal_cutoff, window=window, pass_zero=False)
-        except ValueError as e:
-            raise ValueError(f"Highpass FIR filter design failed: {str(e)}")
-        
-        # Check if signal is long enough for the filter
-        padlen = 3 * len(b)
-        if len(y) <= padlen:
-            raise ValueError(
-                f"Signal too short for highpass FIR filter: "
-                f"requires signal length > {padlen} but got {len(y)}. "
-                f"Try reducing 'numtaps' (currently {numtaps})."
-            )
-
-    @classmethod
-    def _validate_output_data(cls, y_original: np.ndarray, y_new: np.ndarray) -> None:
-        """Validate output signal data"""
-        if len(y_new) != len(y_original):
-            raise ValueError("Output signal length differs from input")
-        if np.any(np.isnan(y_new)) and not np.any(np.isnan(y_original)):
-            raise ValueError("Processing produced unexpected NaN values")
-        if np.any(np.isinf(y_new)) and not np.any(np.isinf(y_original)):
-            raise ValueError("Processing produced unexpected infinite values")
-        if np.all(np.isnan(y_new)):
-            raise ValueError("Processing produced only NaN values")
-        if np.all(np.isinf(y_new)):
-            raise ValueError("Processing produced only infinite values")
-
-    @classmethod
-    def parse_input(cls, user_input: dict) -> dict:
-        """Parse and validate user input parameters"""
-        parsed = {}
-        for param in cls.params:
-            name = param["name"]
-            if name == "fs": 
-                continue
-            val = user_input.get(name, param.get("default"))
-            try:
-                if val == "":
-                    parsed[name] = None
-                elif param["type"] == "float":
-                    parsed[name] = float(val)
-                elif param["type"] == "int":
-                    parsed[name] = int(val)
-                elif param["type"] == "bool":
-                    parsed[name] = bool(val)
-                else:
-                    parsed[name] = val
-            except ValueError as e:
-                if "could not convert" in str(e) or "invalid literal" in str(e):
-                    raise ValueError(f"{name} must be a valid {param['type']}")
-                raise e
-        return parsed
-
-    @classmethod
-    def apply(cls, channel: Channel, params: dict) -> Channel:
-        """Apply the processing step to a channel"""
-        try:
-            x = channel.xdata
-            y = channel.ydata
-            
-            # Get sampling frequency from channel using the helper method
-            fs = cls._get_channel_fs(channel)
-            
-            # Inject sampling frequency if not provided in params
-            if fs is not None and "fs" not in params:
-                params["fs"] = fs
-                print(f"[{cls.name}] Injected fs={fs:.2f} from channel")
-            elif "fs" not in params:
-                # If no fs available from channel, raise an error
-                raise ValueError("No sampling frequency available from channel. Please provide 'fs' parameter.")
-            
-            # Validate input data and parameters
-            cls._validate_input_data(y)
-            cls._validate_parameters(params)
-            cls._validate_filter_design(params, y)
-            
-            # Process the data
-            y_final = cls.script(x, y, fs, params)
-            
-            # Validate output data
-            cls._validate_output_data(y, y_final)
-            
-            return cls.create_new_channel(
-                parent=channel,
-                xdata=x,
-                ydata=y_final,
-                params=params,
-                suffix="HighpassFIR"
-            )
-        except Exception as e:
-            if isinstance(e, ValueError):
-                raise e
-            else:
-                raise ValueError(f"FIR highpass filter processing failed: {str(e)}")
-
-    @classmethod
-    def script(cls, x: np.ndarray, y: np.ndarray, fs: float, params: dict) -> np.ndarray:
+    def script(cls, x: np.ndarray, y: np.ndarray, fs: float, params: dict) -> list:
         """Core processing logic"""
         from scipy.signal import firwin, filtfilt
         
         cutoff = params["cutoff"]
         numtaps = params["numtaps"]
-        window = params["window"]
-        fs = params["fs"]
         
+        # Validate frequency against sampling rate
         nyq = 0.5 * fs
-        normal_cutoff = cutoff / nyq
+        if cutoff >= nyq:
+            raise ValueError(f"Cutoff frequency ({cutoff} Hz) must be less than Nyquist frequency ({nyq:.1f} Hz)")
         
-        b = firwin(numtaps, normal_cutoff, window=window, pass_zero=False)
-        y_new = filtfilt(b, [1.0], y)
+        # Validate filter length vs signal length
+        if numtaps > len(y):
+            raise ValueError(f"Filter length ({numtaps}) cannot be longer than signal length ({len(y)})")
         
-        return y_new
+        # Design FIR highpass filter
+        try:
+            b = firwin(numtaps, cutoff, pass_zero=False, fs=fs)
+        except ValueError as e:
+            raise ValueError(f"FIR highpass filter design failed: {str(e)}")
+        
+        # Apply filter
+        y_new = filtfilt(b, 1.0, y)
+        
+        return [
+            {
+                'tags': ['time-series'],
+                'x': x,
+                'y': y_new
+            }
+        ]

@@ -203,8 +203,6 @@ Reduction methods:
             },
             {
                 'tags': ['spectrogram'],
-                'x': t_aligned,
-                'y': f,
                 't': t_aligned,
                 'f': f,
                 'z': Pxx

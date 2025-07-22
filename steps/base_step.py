@@ -90,8 +90,18 @@ class BaseStep(ABC):
                 tags = channel_info['tags']
                 # Use the first tag as the channel type, or 'main' as default
                 channel_type = tags[0] if tags else 'main'
-                x_data = channel_info['x']
-                y_data = channel_info['y']
+                
+                # Extract data based on channel type
+                if channel_type == 'spectrogram':
+                    # Spectrogram channels use 't', 'f', 'z' fields
+                    x_data = channel_info['t']  # Time axis
+                    y_data = channel_info['f']  # Frequency axis
+                    z_data = channel_info['z']  # Spectrogram data
+                else:
+                    # Regular channels use 'x', 'y' fields
+                    x_data = channel_info['x']
+                    y_data = channel_info['y']
+                    z_data = None
                 
                 # Validate output data for this channel based on its type
                 # Allow length changes for time-series from STFT/spectrogram processing
@@ -123,15 +133,10 @@ class BaseStep(ABC):
               
                 elif channel_type == 'spectrogram':
                     # Handle spectrogram-specific properties
-                    # For spectrograms: t -> xdata (time axis), f -> ydata (frequency axis), z -> metadata['Zxx']
-                    t_data = channel_info.get('t', x_data)  # Use 't' if available, fallback to x_data
-                    f_data = channel_info.get('f', y_data)  # Use 'f' if available, fallback to y_data
-                    z_data = channel_info.get('z', None)    # Get spectrogram data
-                    
                     new_channel = cls.create_new_channel(
                         parent=channel, 
-                        xdata=t_data,      # Time axis
-                        ydata=f_data,      # Frequency axis
+                        xdata=x_data,      # Time axis (t)
+                        ydata=y_data,      # Frequency axis (f)
                         params=params,
                         suffix=suffix,
                         channel_tags=channel_tags
@@ -154,6 +159,14 @@ class BaseStep(ABC):
                     )
                 
                 created_channels.append(new_channel)
+            
+            # Configure marker properties for detection steps
+            if 'marker' in cls.tags:
+                for new_channel in created_channels:
+                    # Set marker properties for detection steps
+                    new_channel.marker = 'o'  # Circle marker
+                    new_channel.style = 'none'  # No line connecting points (matplotlib expects 'none')
+                    new_channel.color = '#ff4444'  # Red color for detection points
             
             # Return single channel if only one, otherwise return list
             if len(created_channels) == 1:
@@ -630,7 +643,7 @@ class BaseStep(ABC):
             ValueError: If channel structure is invalid
         """
         # Check required fields
-        required_fields = ['tags', 'x', 'y']
+        required_fields = ['tags']
         for field in required_fields:
             if field not in channel_info:
                 raise ValueError(f"Channel {channel_index + 1} missing required field '{field}'")
@@ -642,23 +655,42 @@ class BaseStep(ABC):
         if len(tags) == 0:
             raise ValueError(f"Channel {channel_index + 1} 'tags' cannot be empty")
         
-        # Validate data fields
-        x_data = channel_info['x']
-        y_data = channel_info['y']
+        # Check if this is a spectrogram channel
+        is_spectrogram = 'spectrogram' in tags
         
-        if x_data is None:
-            raise ValueError(f"Channel {channel_index + 1} 'x' data cannot be None")
-        if y_data is None:
-            raise ValueError(f"Channel {channel_index + 1} 'y' data cannot be None")
-        
-        # Validate spectrogram-specific fields if present
-        if 'spectrogram' in tags:
-            if 't' not in channel_info:
-                raise ValueError(f"Spectrogram channel {channel_index + 1} missing 't' field")
-            if 'f' not in channel_info:
-                raise ValueError(f"Spectrogram channel {channel_index + 1} missing 'f' field")
-            if 'z' not in channel_info:
-                raise ValueError(f"Spectrogram channel {channel_index + 1} missing 'z' field")
+        if is_spectrogram:
+            # Spectrogram channels require 't', 'f', and 'z' fields
+            spectrogram_fields = ['t', 'f', 'z']
+            for field in spectrogram_fields:
+                if field not in channel_info:
+                    raise ValueError(f"Spectrogram channel {channel_index + 1} missing '{field}' field")
+            
+            # Validate spectrogram data fields
+            t_data = channel_info['t']
+            f_data = channel_info['f']
+            z_data = channel_info['z']
+            
+            if t_data is None:
+                raise ValueError(f"Spectrogram channel {channel_index + 1} 't' data cannot be None")
+            if f_data is None:
+                raise ValueError(f"Spectrogram channel {channel_index + 1} 'f' data cannot be None")
+            if z_data is None:
+                raise ValueError(f"Spectrogram channel {channel_index + 1} 'z' data cannot be None")
+        else:
+            # Regular channels require 'x' and 'y' fields
+            regular_fields = ['x', 'y']
+            for field in regular_fields:
+                if field not in channel_info:
+                    raise ValueError(f"Channel {channel_index + 1} missing required field '{field}'")
+            
+            # Validate regular data fields
+            x_data = channel_info['x']
+            y_data = channel_info['y']
+            
+            if x_data is None:
+                raise ValueError(f"Channel {channel_index + 1} 'x' data cannot be None")
+            if y_data is None:
+                raise ValueError(f"Channel {channel_index + 1} 'y' data cannot be None")
 
     @classmethod
     def validate_window_parameter(cls, window: int, signal_length: int,

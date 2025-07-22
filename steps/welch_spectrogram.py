@@ -50,153 +50,33 @@ Useful for:
             "type": "str", 
             "default": "max_intensity", 
             "options": ["max_intensity", "sum_intensity", "mean_intensity"], 
-            "help": "How to reduce PSD into a 1D series"
+            "help": "Reduction method for producing 1D time-series"
         }
     ]
 
     @classmethod
-    def get_info(cls): 
-        return f"{cls.name} — Compute sliding Welch PSD spectrogram (Category: {cls.category})"
-
-    @classmethod
-    def get_prompt(cls): 
-        return {"info": cls.description, "params": cls.params}
-
-    @classmethod
-    def _validate_input_data(cls, y: np.ndarray) -> None:
-        """Validate input signal data"""
-        if len(y) < 10:
-            raise ValueError("Signal too short for Welch spectrogram (minimum 10 samples)")
-        if np.all(np.isnan(y)):
-            raise ValueError("Signal contains only NaN values")
-
-    @classmethod
-    def _validate_parameters(cls, params: dict, fs: float = 1.0) -> None:
+    def validate_parameters(cls, params: dict) -> None:
         """Validate parameters and business rules"""
-        window_duration = params.get("window_duration")
-        overlap = params.get("overlap")
-        nperseg = params.get("nperseg")
-        
-        if window_duration <= 0:
-            raise ValueError("Window duration must be positive")
-        
-        window_samples = int(window_duration * fs)
-        if overlap < 0 or overlap >= window_samples:
-            raise ValueError("Overlap must be non-negative and less than window size")
-        if nperseg <= 0:
-            raise ValueError("nperseg must be positive")
+        window_duration = cls.validate_numeric_parameter("window_duration", params.get("window_duration"), min_val=0.1)
+        overlap = cls.validate_integer_parameter("overlap", params.get("overlap"), min_val=0)
+        nperseg = cls.validate_integer_parameter("nperseg", params.get("nperseg"), min_val=4)
+        reduction = cls.validate_string_parameter("reduction", params.get("reduction"), 
+                                                valid_options=["max_intensity", "sum_intensity", "mean_intensity"])
 
     @classmethod
-    def _validate_output_data(cls, y_original: np.ndarray, spectrogram_data: np.ndarray, timeseries_data: np.ndarray) -> None:
-        """Validate output data"""
-        if spectrogram_data.size == 0:
-            raise ValueError("Welch computation produced empty spectrogram")
-        if timeseries_data.size == 0:
-            raise ValueError("Reduction method produced empty time-series")
-        if np.any(np.isnan(spectrogram_data)) and not np.any(np.isnan(y_original)):
-            raise ValueError("Welch computation produced unexpected NaN values")
-
-    @classmethod
-    def parse_input(cls, user_input: dict) -> dict:
-        """Parse and validate user input parameters"""
-        parsed = {}
-        for param in cls.params:
-            name = param["name"]
-            val = user_input.get(name, param.get("default"))
-            try:
-                if val == "":
-                    parsed[name] = None
-                elif param["type"] == "float":
-                    parsed[name] = float(val)
-                elif param["type"] == "int":
-                    parsed[name] = int(val)
-                else:
-                    parsed[name] = val
-            except ValueError as e:
-                if "could not convert" in str(e) or "invalid literal" in str(e):
-                    raise ValueError(f"{name} must be a valid {param['type']}")
-                raise e
-        return parsed
-
-    @classmethod
-    def apply(cls, channel: Channel, params: dict) -> list:
-        """Apply Welch spectrogram computation to the channel data."""
-        try:
-            x = channel.xdata
-            y = channel.ydata
-            fs = getattr(channel, 'fs', 1.0)
-            
-            # Validate input data and parameters
-            cls._validate_input_data(y)
-            cls._validate_parameters(params, fs)
-            
-            # Validate window duration vs signal length
-            window_duration = params.get("window_duration", 2.0)
-            window_samples = int(window_duration * fs)
-            if window_samples > len(y):
-                raise ValueError(f"Window duration ({window_duration}s) is larger than signal duration")
-            
-            # Process the data
-            spectrogram_data, timeseries_data, time_centers, frequencies, ylabel = cls.script(x, y, fs, params)
-            
-            # Validate output data
-            cls._validate_output_data(y, spectrogram_data, timeseries_data)
-            
-            # Create spectrogram channel
-            spectrogram_channel = cls.create_new_channel(
-                parent=channel,
-                xdata=time_centers,
-                ydata=frequencies,
-                params=params,
-                suffix="WelchSpectrogram"
-            )
-            
-            # Set spectrogram-specific properties
-            spectrogram_channel.tags = ["spectrogram"]
-            spectrogram_channel.xlabel = "Time (s)"
-            spectrogram_channel.ylabel = "Frequency (Hz)"
-            spectrogram_channel.legend_label = f"{channel.legend_label} - Welch Spectrogram"
-            
-            # Store spectrogram data in metadata
-            spectrogram_channel.metadata = {
-                'Zxx': spectrogram_data,
-                'colormap': 'viridis'
-            }
-            
-            # Create time-series channel
-            timeseries_channel = cls.create_new_channel(
-                parent=channel,
-                xdata=time_centers,
-                ydata=timeseries_data,
-                params=params,
-                suffix="WelchTimeSeries"
-            )
-            
-            # Set time-series specific properties
-            timeseries_channel.tags = ["time-series"]
-            timeseries_channel.xlabel = "Time (s)"
-            timeseries_channel.ylabel = ylabel
-            timeseries_channel.legend_label = f"{channel.legend_label} - Welch {params.get('reduction', 'max_intensity').replace('_', ' ').title()}"
-            
-            return [spectrogram_channel, timeseries_channel]
-            
-        except Exception as e:
-            if isinstance(e, ValueError):
-                raise e
-            else:
-                raise ValueError(f"Welch spectrogram computation failed: {str(e)}")
-
-    @classmethod
-    def script(cls, x: np.ndarray, y: np.ndarray, fs: float, params: dict) -> tuple:
+    def script(cls, x: np.ndarray, y: np.ndarray, fs: float, params: dict) -> list:
         """Core processing logic for Welch spectrogram computation"""
         window_duration = params.get("window_duration", 2.0)
-        overlap = params.get("overlap", 0.5)
+        overlap = params.get("overlap", 128)
         nperseg = params.get("nperseg", 256)
         reduction = params.get("reduction", "max_intensity")
         
         # Calculate window parameters
         window_samples = int(window_duration * fs)
         step_samples = window_samples - overlap
+        
+        if step_samples <= 0:
+            raise ValueError("Overlap must be less than window size")
         
         # Adjust nperseg if needed
         if nperseg > window_samples:
@@ -244,14 +124,23 @@ Useful for:
         # Apply reduction method
         if reduction == "max_intensity":
             reduced_data = np.max(psd_matrix, axis=0)
-            ylabel = "Max PSD"
         elif reduction == "sum_intensity":
             reduced_data = np.sum(psd_matrix, axis=0)
-            ylabel = "Total PSD"
         elif reduction == "mean_intensity":
             reduced_data = np.mean(psd_matrix, axis=0)
-            ylabel = "Mean PSD"
         else:
             raise ValueError(f"Unknown reduction method: {reduction}")
         
-        return psd_matrix, reduced_data, time_centers, frequencies, ylabel 
+        return [
+            {
+                'tags': ['time-series'],
+                'x': time_centers,
+                'y': reduced_data
+            },
+            {
+                'tags': ['spectrogram'],
+                't': time_centers,
+                'f': frequencies,
+                'z': psd_matrix
+            }
+        ] 

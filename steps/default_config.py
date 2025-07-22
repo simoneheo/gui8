@@ -63,262 +63,12 @@ def get_intelligent_defaults(step_name, channel):
             print(f"[DefaultConfig] Error validating ydata: {y_e}")
             # Don't return None here, some steps might not need ydata
         
-        # Step-specific intelligent defaults
-        if step_name == "count_samples":
-            return _get_count_samples_defaults(fs, total_samples)
-        elif step_name == "area_envelope":
-            return _get_area_envelope_defaults(fs, total_samples)
-        elif step_name == "moving_average":
-            return _get_moving_average_defaults(fs, total_samples)
-        elif step_name == "moving_mean":
-            return _get_moving_mean_defaults(fs, total_samples)
-        elif step_name == "moving_mean_windowed":
-            return _get_moving_mean_windowed_defaults(fs, total_samples)
-        elif step_name == "gaussian_smooth":
-            return _get_gaussian_smooth_defaults(fs, total_samples)
-        elif step_name == "median_smooth":
-            return _get_median_smooth_defaults(fs, total_samples)
-        elif step_name == "resample":
-            return _get_resample_defaults(fs, total_samples)
-        elif step_name == "bandpass_butter":
-            return _get_bandpass_butter_defaults(fs, total_samples)
-        elif step_name == "lowpass_butter":
-            return _get_lowpass_butter_defaults(fs, total_samples)
-        elif step_name == "highpass_butter":
-            return _get_highpass_butter_defaults(fs, total_samples)
-        elif step_name == "detect_peaks":
-            return _get_detect_peaks_defaults(fs, total_samples, channel)
-        elif step_name == "detect_valleys":
-            return _get_detect_valleys_defaults(fs, total_samples, channel)
-        elif step_name == "envelope_peaks":
-            return _get_envelope_peaks_defaults(fs, total_samples)
-        elif step_name == "hilbert_envelope":
-            return _get_hilbert_envelope_defaults(fs, total_samples)
-        elif step_name == "welch_spectrogram":
-            return _get_welch_spectrogram_defaults(fs, total_samples)
-        elif step_name == "stft_spectrogram":
-            return _get_stft_spectrogram_defaults(fs, total_samples)
-        elif step_name == "cwt_spectrogram":
-            return _get_cwt_spectrogram_defaults(fs, total_samples)
-        elif step_name == "windowed_energy":
-            return _get_windowed_energy_defaults(fs, total_samples)
-        elif step_name == "moving_rms":
-            return _get_moving_rms_defaults(fs, total_samples)
-        elif step_name == "cumulative_max":
-            return _get_cumulative_max_defaults(fs, total_samples)
-        elif step_name == "cumulative_sum":
-            return _get_cumulative_sum_defaults(fs, total_samples)
-        elif step_name == "derivative":
-            return _get_derivative_defaults(fs, total_samples)
-        elif step_name == "detect_extrema":
-            return _get_detect_extrema_defaults(fs, total_samples, channel)
-        elif step_name == "energy_sliding":
-            return _get_energy_sliding_defaults(fs, total_samples)
-        elif step_name == "zscore_sliding":
-            return _get_zscore_sliding_defaults(fs, total_samples)
-        elif step_name == "percentile_clip_sliding":
-            return _get_percentile_clip_sliding_defaults(fs, total_samples)
-        elif step_name == "top_percentile_sliding":
-            return _get_top_percentile_sliding_defaults(fs, total_samples)
-        elif step_name == "median_sliding":
-            return _get_median_sliding_defaults(fs, total_samples)
-        elif step_name == "moving_absmax":
-            return _get_moving_absmax_defaults(fs, total_samples)
-        elif step_name == "savitzky_golay":
-            return _get_savitzky_golay_defaults(fs, total_samples)
-        elif step_name == "exp_smooth":
-            return _get_exp_smooth_defaults(fs, total_samples)
-        elif step_name == "loess_smooth":
-            return _get_loess_smooth_defaults(fs, total_samples)
-        elif step_name == "moving_skewness":
-            return _get_moving_skewness_defaults(fs, total_samples)
-        elif step_name == "moving_kurtosis":
-            return _get_moving_kurtosis_defaults(fs, total_samples)
-        # Add more steps as needed
-        
-        # Add comprehensive intelligent defaults for all missing steps
-        elif step_name == "abs_transform":
-            return {}  # No parameters needed
-        elif step_name == "add_constant":
-            return _get_add_constant_defaults(fs, total_samples, channel)
-        elif step_name == "bandpass_bessel":
-            return _get_bandpass_bessel_defaults(fs, total_samples, channel)
-        elif step_name == "bandpass_fir":
-            return _get_bandpass_fir_defaults(fs, total_samples, channel)
-        elif step_name == "boxcox_transform":
-            return _get_boxcox_transform_defaults(fs, total_samples, channel)
-        elif step_name == "clip_values":
-            return _get_clip_values_defaults(fs, total_samples, channel)
-        elif step_name == "count_samples":
-            return _get_count_samples_defaults(fs, total_samples, channel)
-        elif step_name == "detrend_polynomial":
-            return _get_detrend_polynomial_defaults(fs, total_samples, channel)
-        elif step_name == "envelope_peaks":
-            return _get_envelope_peaks_defaults(fs, total_samples, channel)
-        elif step_name == "exp_transform":
-            return {}  # No parameters needed
-        elif step_name == "highpass_bessel":
-            return _get_highpass_bessel_defaults(fs, total_samples, channel)
-        elif step_name == "highpass_fir":
-            return _get_highpass_fir_defaults(fs, total_samples, channel)
-        elif step_name == "impute_missing":
-            return _get_impute_missing_defaults(fs, total_samples, channel)
-        elif step_name == "linear_detrend":
-            return {}  # No parameters needed
-        elif step_name == "lowpass_bessel":
-            return _get_lowpass_bessel_defaults(fs, total_samples, channel)
-        elif step_name == "lowpass_fir":
-            return _get_lowpass_fir_defaults(fs, total_samples, channel)
-        elif step_name == "median_subtract":
-            return {}  # No parameters needed
-        elif step_name == "modulo":
-            return _get_modulo_defaults(fs, total_samples, channel)
-        elif step_name == "multiply_constant":
-            return _get_multiply_constant_defaults(fs, total_samples, channel)
-        elif step_name == "normalize":
-            return _get_normalize_defaults(fs, total_samples, channel)
-        elif step_name == "percentile_clip":
-            return _get_percentile_clip_defaults(fs, total_samples, channel)
-        elif step_name == "power":
-            return _get_power_defaults(fs, total_samples, channel)
-        elif step_name == "quantize":
-            return _get_quantize_defaults(fs, total_samples, channel)
-        elif step_name == "rank_transform":
-            return {}  # No parameters needed
-        elif step_name == "reciprocal":
-            return _get_reciprocal_defaults(fs, total_samples, channel)
-        elif step_name == "rolling_mean_subtract":
-            return _get_rolling_mean_subtract_defaults(fs, total_samples, channel)
-        elif step_name == "sign_only":
-            return {}  # No parameters needed
-        elif step_name == "standardize":
-            return _get_standardize_defaults(fs, total_samples, channel)
-        elif step_name == "threshold_binary":
-            return _get_threshold_binary_defaults(fs, total_samples, channel)
-        elif step_name == "threshold_clip":
-            return _get_threshold_clip_defaults(fs, total_samples, channel)
-        elif step_name == "detect_zero_crossings":
-            return _get_detect_zero_crossings_defaults(fs, total_samples, channel)
-        elif step_name == "log_transform":
-            return _get_log_transform_defaults(fs, total_samples, channel)
-        elif step_name == "standard_scaler":
-            return _get_standard_scaler_defaults(fs, total_samples, channel)
-        elif step_name == "robust_scaler":
-            return _get_robust_scaler_defaults(fs, total_samples, channel)
-        elif step_name == "quantile_transformer":
-            return _get_quantile_transformer_defaults(fs, total_samples, channel)
-        elif step_name == "agglomerative_clustering":
-            return _get_agglomerative_clustering_defaults(fs, total_samples, channel)
-        elif step_name == "dbscan":
-            return _get_dbscan_defaults(fs, total_samples, channel)
-        elif step_name == "kmeans":
-            return _get_kmeans_defaults(fs, total_samples, channel)
-        elif step_name == "pca":
-            return _get_pca_defaults(fs, total_samples, channel)
-        elif step_name == "power_transformer":
-            return _get_power_transformer_defaults(fs, total_samples, channel)
-        elif step_name == "select_kbest":
-            return _get_select_kbest_defaults(fs, total_samples, channel)
-        elif step_name == "tsne":
-            return _get_tsne_defaults(fs, total_samples, channel)
-        elif step_name == "variance_threshold":
-            return _get_variance_threshold_defaults(fs, total_samples, channel)
-        elif step_name == "minmax_normalize":
-            return _get_minmax_normalize_defaults(fs, total_samples, channel)
-        elif step_name == "zscore_global":
-            return _get_zscore_global_defaults(fs, total_samples, channel)
-        elif step_name == "custom":
-            return _get_custom_defaults(fs, total_samples, channel)
-        elif step_name == "wavelet_decompose":
-            return _get_wavelet_decompose_defaults(fs, total_samples, channel)
-        elif step_name == "wavelet_denoise":
-            return _get_wavelet_denoise_defaults(fs, total_samples, channel)
-        elif step_name == "wavelet_filter_band":
-            return _get_wavelet_filter_band_defaults(fs, total_samples, channel)
-        elif step_name == "wavelet_reconstruct":
-            return _get_wavelet_reconstruct_defaults(fs, total_samples, channel)
-        
-        # New BioSPPy steps
-        elif step_name == "hamilton_segmenter":
-            return _get_hamilton_segmenter_defaults(fs, total_samples, channel)
-        elif step_name == "ecg_processing":
-            return _get_ecg_processing_defaults(fs, total_samples, channel)
-        elif step_name == "emg_processing":
-            return _get_emg_processing_defaults(fs, total_samples, channel)
-        elif step_name == "eda_processing":
-            return _get_eda_processing_defaults(fs, total_samples, channel)
-        elif step_name == "resp_processing":
-            return _get_resp_processing_defaults(fs, total_samples, channel)
-        elif step_name == "bandpower":
-            return _get_bandpower_defaults(fs, total_samples, channel)
-        elif step_name == "signal_stats":
-            return _get_signal_stats_defaults(fs, total_samples, channel)
-        elif step_name == "smoother":
-            return _get_smoother_defaults(fs, total_samples, channel)
-        elif step_name == "ppg_processing":
-            return _get_ppg_processing_defaults(fs, total_samples, channel)
-        
-        # New PPG steps
-        elif step_name == "ppg_cleaned_baseline":
-            return _get_ppg_cleaned_baseline_defaults(fs, total_samples, channel)
-        elif step_name == "ppg_filtered_bandpass":
-            return _get_ppg_filtered_bandpass_defaults(fs, total_samples, channel)
-        elif step_name == "ppg_hrv_features":
-            return _get_ppg_hrv_features_defaults(fs, total_samples, channel)
-        elif step_name == "ppg_nn_intervals":
-            return _get_ppg_nn_intervals_defaults(fs, total_samples, channel)
-        elif step_name == "ppg_rr_intervals":
-            return _get_ppg_rr_intervals_defaults(fs, total_samples, channel)
-        elif step_name == "ppg_scaled_signal":
-            return _get_ppg_scaled_signal_defaults(fs, total_samples, channel)
-        elif step_name == "ppg_smoothed_signal":
-            return _get_ppg_smoothed_signal_defaults(fs, total_samples, channel)
-        
-        # New spectral analysis steps
-        elif step_name == "power_spectral_density":
-            return _get_power_spectral_density_defaults(fs, total_samples, channel)
-        
-        # New envelope steps
-        elif step_name == "cumulative_max":
-            return _get_cumulative_max_defaults(fs, total_samples, channel)
-        elif step_name == "area_envelope":
-            return _get_area_envelope_defaults(fs, total_samples, channel)
-        
-        # New financial and statistical steps
-        elif step_name == "bollinger_bands":
-            return _get_bollinger_bands_defaults(fs, total_samples, channel)
-        elif step_name == "garch_forecast":
-            return _get_garch_forecast_defaults(fs, total_samples, channel)
-        elif step_name == "ruptures_changepoint":
-            return _get_ruptures_changepoint_defaults(fs, total_samples, channel)
-        elif step_name == "volatility_estimation":
-            return _get_volatility_estimation_defaults(fs, total_samples, channel)
-        
-        # New machine learning and feature analysis steps
-        elif step_name == "autocorrelation":
-            return _get_autocorrelation_defaults(fs, total_samples, channel)
-        elif step_name == "isolation_forest":
-            return _get_isolation_forest_defaults(fs, total_samples, channel)
-        elif step_name == "random_forest_feature_importance":
-            return _get_random_forest_feature_importance_defaults(fs, total_samples, channel)
-        elif step_name == "svc_classifier":
-            return _get_svc_classifier_defaults(fs, total_samples, channel)
-        elif step_name == "minmax_scaler":
-            return _get_minmax_scaler_defaults(fs, total_samples, channel)
-        elif step_name == "tsfresh_features":
-            return _get_tsfresh_features_defaults(fs, total_samples, channel)
-        elif step_name == "tsfresh_features_heatmap":
-            return _get_tsfresh_features_heatmap_defaults(fs, total_samples, channel)
-        
-        else:
-            # Unknown step, return None
-            return None
+        # Use the new comprehensive step defaults function
+        return get_step_defaults(step_name, fs, total_samples, channel)
         
     except Exception as e:
         print(f"[DefaultConfig] Failed to calculate defaults for {step_name}: {e}")
         return None
-    
-    return None
 
 def _get_detect_extrema_defaults(fs, total_samples, channel):
     """Generate intelligent defaults for DetectExtremaStep (sample-based window)"""
@@ -365,19 +115,26 @@ def _get_cumulative_sum_defaults(fs, total_samples):
     return {}
 
 
-def _get_count_samples_defaults(fs, total_samples):
-    """Calculate defaults for count_samples step"""
-    # Window: 2 seconds worth of samples, but not more than 1/10 of signal
-    window = min(int(2 * fs), total_samples // 10)
-    window = max(window, 100)  # Minimum window size
-    
-    # Overlap: 50% of window
-    overlap = window // 2
-    
-    return {
-        "window": str(window),
-        "overlap": str(overlap)
-    }
+def _get_count_samples_defaults(fs, total_samples, channel):
+    """Calculate intelligent defaults for count_samples step."""
+    try:
+        # Calculate reasonable window size (1 second of data)
+        window_samples = min(int(fs)*3, total_samples // 4) if fs > 0 else min(1000, total_samples // 4)
+        window_samples = max(window_samples, 100)  # Minimum 100 samples
+        
+        # Ensure overlap is less than window size
+        # Use 50% overlap but ensure it's valid
+        overlap_samples = window_samples // 2
+        overlap_samples = min(overlap_samples, window_samples - 1)  # Must be less than window
+        overlap_samples = max(overlap_samples, 1)  # At least 1 sample overlap
+        
+        return {
+            "window": str(window_samples),
+            "overlap": str(overlap_samples),
+            "unit": "count/window"
+        }
+    except Exception as e:
+        return {"window": "1000", "overlap": "500", "unit": "count/window"}
 
 def _get_area_envelope_defaults(fs, total_samples):
     """Calculate defaults for area_envelope step"""
@@ -881,7 +638,7 @@ def _get_savitzky_golay_defaults(fs, total_samples):
         window += 1
     
     return {
-        "window_size": str(window),
+        "window": str(window),
         "polyorder": "3"  # Cubic polynomial is common
     }
 
@@ -932,6 +689,344 @@ def _get_moving_kurtosis_defaults(fs, total_samples):
         "window": str(window),
         "overlap": str(overlap)
     }
+
+def get_step_defaults(step_name, fs, total_samples, channel):
+    """
+    Get intelligent defaults for any step based on its parameters.
+    
+    Args:
+        step_name: Name of the step
+        fs: Sampling frequency
+        total_samples: Total number of samples
+        channel: Channel object for additional context
+        
+    Returns:
+        dict: Parameter defaults
+    """
+    # Import step registry to get step class
+    try:
+        from steps.process_registry import ProcessRegistry
+        step_cls = ProcessRegistry.get(step_name)
+        params = step_cls.params
+    except (ImportError, KeyError, AttributeError):
+        # Fallback to old step-specific functions
+        return _get_legacy_step_defaults(step_name, fs, total_samples, channel)
+    
+    defaults = {}
+    
+    for param in params:
+        param_name = param["name"]
+        param_type = param.get("type", "str")
+        param_default = param.get("default")
+        
+        # Generate intelligent default based on parameter name and type
+        intelligent_default = _generate_param_default(
+            param_name, param_type, param_default, fs, total_samples, channel
+        )
+        
+        if intelligent_default is not None:
+            defaults[param_name] = intelligent_default
+    
+    return defaults
+
+def _generate_param_default(param_name, param_type, param_default, fs, total_samples, channel):
+    """
+    Generate intelligent default for a parameter based on its name, type, and context.
+    """
+    # Window-based parameters (computation time optimized)
+    if param_name in ["window", "window_size"]:
+        return _get_window_default(fs, total_samples, param_name)
+    
+    # Overlap parameters
+    elif param_name in ["overlap", "noverlap"]:
+        return _get_overlap_default(fs, total_samples)
+    
+    # Spectrogram parameters
+    elif param_name in ["nperseg", "nfft"]:
+        return _get_spectrogram_window_default(fs, total_samples)
+    
+    # FIR filter parameters
+    elif param_name == "numtaps":
+        return _get_fir_numtaps_default(fs, total_samples)
+    
+    # Frequency cutoff parameters
+    elif param_name in ["cutoff", "low_cutoff", "high_cutoff"]:
+        return _get_frequency_cutoff_default(param_name, fs)
+    
+    # Clustering/ML parameters
+    elif param_name == "n_clusters":
+        return _get_n_clusters_default(total_samples)
+    elif param_name == "n_components":
+        return _get_n_components_default(total_samples)
+    elif param_name == "random_state":
+        return "42"
+    
+    # Threshold parameters
+    elif param_name == "threshold":
+        return _get_threshold_default(channel)
+    elif param_name == "eps":
+        return _get_eps_default(channel)
+    
+    # Percentile parameters
+    elif param_name in ["lower_percentile", "lower"]:
+        return "5.0"
+    elif param_name in ["upper_percentile", "upper"]:
+        return "95.0"
+    elif param_name == "percentile":
+        return "90.0"
+    
+    # Boolean parameters
+    elif param_type in ["bool", "boolean"]:
+        return "True" if param_default is None else str(param_default)
+    
+    # Numeric parameters with defaults
+    elif param_type in ["int", "float"] and param_default is not None:
+        return str(param_default)
+    
+    # String parameters with options
+    elif param_type == "str" and param_default is not None:
+        return str(param_default)
+    
+    # Fallback to original default
+    return str(param_default) if param_default is not None else None
+
+def _get_window_default(fs, total_samples, param_name):
+    """Generate intelligent window size based on step type and signal properties."""
+    # Base window time (seconds) - optimized for computation time
+    if "smooth" in param_name or "filter" in param_name:
+        target_time = 0.2  # 200ms for smoothing
+        max_factor = 10    # 10% of signal length max
+    elif "feature" in param_name or "energy" in param_name:
+        target_time = 0.5  # 500ms for feature extraction
+        max_factor = 5     # 20% of signal length max
+    elif "spectrogram" in param_name:
+        target_time = 1.0  # 1s for spectrograms
+        max_factor = 4     # 25% of signal length max
+    elif "sliding" in param_name:
+        target_time = 0.5  # 500ms for sliding operations
+        max_factor = 8     # 12.5% of signal length max
+    else:
+        target_time = 0.3  # 300ms default
+        max_factor = 8     # 12.5% of signal length max
+    
+    # Calculate window size
+    window_samples = int(target_time * fs)
+    max_window = total_samples // max_factor
+    
+    # Apply limits
+    window_samples = min(window_samples, max_window, 10000)  # Max 10k samples
+    window_samples = max(window_samples, 3)  # Min 3 samples
+    
+    # Ensure odd for median filters
+    if "median" in param_name and window_samples % 2 == 0:
+        window_samples += 1
+    
+    return str(window_samples)
+
+def _get_overlap_default(fs, total_samples):
+    """Generate intelligent overlap based on signal properties."""
+    # Calculate a reasonable window size first
+    target_time = 0.3  # 300ms default window
+    window_samples = int(target_time * fs)
+    max_window = total_samples // 8
+    window_samples = min(window_samples, max_window, 10000)
+    window_samples = max(window_samples, 3)
+    
+    # Base overlap is 50% of window
+    overlap_samples = window_samples // 2
+    
+    # Reduce overlap for high-frequency signals to save computation
+    if fs > 1000:
+        overlap_samples = window_samples // 4  # 25% overlap for high-frequency signals
+    
+    # Reduce overlap for very long signals
+    if total_samples > 100000:
+        overlap_samples = window_samples // 5  # 20% overlap for very long signals
+    
+    # Ensure overlap is less than window
+    overlap_samples = min(overlap_samples, window_samples - 1)
+    overlap_samples = max(overlap_samples, 1)  # At least 1 sample overlap
+    
+    return str(overlap_samples)
+
+def _get_spectrogram_window_default(fs, total_samples):
+    """Generate intelligent spectrogram window size."""
+    # Target 1-2 seconds for good frequency resolution
+    target_time = 1.0
+    window_samples = int(target_time * fs)
+    
+    # Ensure power of 2 for FFT efficiency
+    window_samples = 2 ** int(np.log2(window_samples))
+    
+    # Apply limits
+    window_samples = min(window_samples, total_samples // 4, 4096)  # Max 4k samples
+    window_samples = max(window_samples, 64)  # Min 64 samples
+    
+    return str(window_samples)
+
+def _get_fir_numtaps_default(fs, total_samples):
+    """Generate intelligent FIR filter length."""
+    # Base: 50ms of data minimum
+    base_taps = max(51, int(fs * 0.05))
+    
+    # Ensure odd
+    if base_taps % 2 == 0:
+        base_taps += 1
+    
+    # Limit based on signal length
+    max_taps = total_samples // 6
+    numtaps = min(base_taps, max_taps)
+    
+    # Apply bounds
+    numtaps = max(21, numtaps)  # Min 21 taps
+    numtaps = min(501, numtaps)  # Max 501 taps
+    
+    # Ensure odd
+    if numtaps % 2 == 0:
+        numtaps -= 1
+    
+    return str(numtaps)
+
+def _get_frequency_cutoff_default(param_name, fs):
+    """Generate intelligent frequency cutoff based on parameter name."""
+    nyquist = fs / 2
+    
+    if param_name == "low_cutoff":
+        # Low cutoff: 5% of Nyquist (remove very low frequencies)
+        cutoff = nyquist * 0.05
+    elif param_name == "high_cutoff":
+        # High cutoff: 80% of Nyquist (preserve most signal)
+        cutoff = nyquist * 0.8
+    elif param_name == "cutoff":
+        # Single cutoff: 40% of Nyquist (middle ground)
+        cutoff = nyquist * 0.4
+    else:
+        cutoff = nyquist * 0.1  # Default 10% of Nyquist
+    
+    # Ensure reasonable bounds
+    cutoff = max(cutoff, 0.1)  # Min 0.1 Hz
+    cutoff = min(cutoff, nyquist * 0.95)  # Max 95% of Nyquist
+    
+    return str(round(cutoff, 2))
+
+def _get_n_clusters_default(total_samples):
+    """Generate intelligent number of clusters."""
+    # Base on signal length, but keep reasonable
+    n_clusters = min(3, total_samples // 100)
+    n_clusters = max(n_clusters, 2)  # Min 2 clusters
+    return str(n_clusters)
+
+def _get_n_components_default(total_samples):
+    """Generate intelligent number of components."""
+    # Base on signal length, but keep reasonable
+    n_components = min(2, total_samples // 1000)
+    n_components = max(n_components, 1)  # Min 1 component
+    return str(n_components)
+
+def _get_threshold_default(channel):
+    """Generate intelligent threshold based on signal statistics."""
+    try:
+        if hasattr(channel, 'ydata') and channel.ydata is not None:
+            y = channel.ydata
+            if len(y) > 0 and np.any(np.isfinite(y)):
+                # Use median as threshold
+                threshold = np.median(y)
+                return str(round(threshold, 6))
+    except:
+        pass
+    return "0.0"
+
+def _get_eps_default(channel):
+    """Generate intelligent eps for DBSCAN."""
+    try:
+        if hasattr(channel, 'ydata') and channel.ydata is not None:
+            y = channel.ydata
+            if len(y) > 1:
+                # Use 10% of signal range as default eps
+                signal_range = np.nanmax(y) - np.nanmin(y)
+                eps = signal_range * 0.1
+                eps = max(eps, 0.01)  # Minimum eps
+                return str(round(eps, 3))
+    except:
+        pass
+    return "0.5"
+
+def _get_legacy_step_defaults(step_name, fs, total_samples, channel):
+    """Fallback to old step-specific default functions."""
+    # Step-specific intelligent defaults (legacy support)
+    if step_name == "count_samples":
+        return _get_count_samples_defaults(fs, total_samples, channel)
+    elif step_name == "area_envelope":
+        return _get_area_envelope_defaults(fs, total_samples)
+    elif step_name == "moving_average":
+        return _get_moving_average_defaults(fs, total_samples)
+    elif step_name == "moving_mean":
+        return _get_moving_mean_defaults(fs, total_samples)
+    elif step_name == "moving_mean_windowed":
+        return _get_moving_mean_windowed_defaults(fs, total_samples)
+    elif step_name == "gaussian_smooth":
+        return _get_gaussian_smooth_defaults(fs, total_samples)
+    elif step_name == "median_smooth":
+        return _get_median_smooth_defaults(fs, total_samples)
+    elif step_name == "resample":
+        return _get_resample_defaults(fs, total_samples)
+    elif step_name == "bandpass_butter":
+        return _get_bandpass_butter_defaults(fs, total_samples)
+    elif step_name == "lowpass_butter":
+        return _get_lowpass_butter_defaults(fs, total_samples)
+    elif step_name == "highpass_butter":
+        return _get_highpass_butter_defaults(fs, total_samples)
+    elif step_name == "detect_peaks":
+        return _get_detect_peaks_defaults(fs, total_samples, channel)
+    elif step_name == "detect_valleys":
+        return _get_detect_valleys_defaults(fs, total_samples, channel)
+    elif step_name == "envelope_peaks":
+        return _get_envelope_peaks_defaults(fs, total_samples)
+    elif step_name == "hilbert_envelope":
+        return _get_hilbert_envelope_defaults(fs, total_samples)
+    elif step_name == "welch_spectrogram":
+        return _get_welch_spectrogram_defaults(fs, total_samples)
+    elif step_name == "stft_spectrogram":
+        return _get_stft_spectrogram_defaults(fs, total_samples)
+    elif step_name == "cwt_spectrogram":
+        return _get_cwt_spectrogram_defaults(fs, total_samples)
+    elif step_name == "windowed_energy":
+        return _get_windowed_energy_defaults(fs, total_samples)
+    elif step_name == "moving_rms":
+        return _get_moving_rms_defaults(fs, total_samples)
+    elif step_name == "cumulative_max":
+        return _get_cumulative_max_defaults(fs, total_samples)
+    elif step_name == "cumulative_sum":
+        return _get_cumulative_sum_defaults(fs, total_samples)
+    elif step_name == "derivative":
+        return _get_derivative_defaults(fs, total_samples)
+    elif step_name == "detect_extrema":
+        return _get_detect_extrema_defaults(fs, total_samples, channel)
+    elif step_name == "energy_sliding":
+        return _get_energy_sliding_defaults(fs, total_samples)
+    elif step_name == "zscore_sliding":
+        return _get_zscore_sliding_defaults(fs, total_samples)
+    elif step_name == "percentile_clip_sliding":
+        return _get_percentile_clip_sliding_defaults(fs, total_samples)
+    elif step_name == "top_percentile_sliding":
+        return _get_top_percentile_sliding_defaults(fs, total_samples)
+    elif step_name == "median_sliding":
+        return _get_median_sliding_defaults(fs, total_samples)
+    elif step_name == "moving_absmax":
+        return _get_moving_absmax_defaults(fs, total_samples)
+    elif step_name == "savitzky_golay":
+        return _get_savitzky_golay_defaults(fs, total_samples)
+    elif step_name == "exp_smooth":
+        return _get_exp_smooth_defaults(fs, total_samples)
+    elif step_name == "loess_smooth":
+        return _get_loess_smooth_defaults(fs, total_samples)
+    elif step_name == "moving_skewness":
+        return _get_moving_skewness_defaults(fs, total_samples)
+    elif step_name == "moving_kurtosis":
+        return _get_moving_kurtosis_defaults(fs, total_samples)
+    # Add more legacy steps as needed
+    else:
+        return {}  # Return empty dict for unknown steps
 
 def format_intelligent_default_info(step_name, channel, defaults):
     """
@@ -1081,8 +1176,11 @@ def _get_count_samples_defaults(fs, total_samples, channel):
         window_samples = min(int(fs), total_samples // 4) if fs > 0 else min(1000, total_samples // 4)
         window_samples = max(window_samples, 100)  # Minimum 100 samples
         
-        # Default overlap is 50% of window
+        # Ensure overlap is less than window size
+        # Use 50% overlap but ensure it's valid
         overlap_samples = window_samples // 2
+        overlap_samples = min(overlap_samples, window_samples - 1)  # Must be less than window
+        overlap_samples = max(overlap_samples, 1)  # At least 1 sample overlap
         
         return {
             "window": str(window_samples),

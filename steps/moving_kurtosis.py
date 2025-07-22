@@ -1,137 +1,68 @@
 
 import numpy as np
-import scipy.signal
-import scipy.stats
-from steps.base_step import BaseStep
 from steps.process_registry import register_step
+from steps.base_step import BaseStep
 from channel import Channel
 
 @register_step
-class MovingKurtosisStep(BaseStep):
+class moving_kurtosis_step(BaseStep):
     name = "moving_kurtosis"
     category = "Features"
-    description = """Compute kurtosis values over sliding windows to analyze signal distribution characteristics.
-    
-This step applies a sliding window approach where each window computes the kurtosis (fourth moment)
-of its samples. Kurtosis measures the "tailedness" of the distribution relative to a normal distribution.
-
-• **Window size**: Number of samples in each sliding window
-• **Overlap**: Number of overlapping samples between consecutive windows (0 = no overlap)
-
-Useful for:
-• **Distribution analysis**: Identify regions with different statistical properties
-• **Outlier detection**: High kurtosis indicates heavy tails or outliers
-• **Signal segmentation**: Detect changes in signal characteristics
-• **Feature extraction**: Extract statistical features for machine learning"""
-    tags = ["time-series", "feature-extraction", "statistics", "window", "sliding", "kurtosis", "distribution"]
+    description = """Compute moving kurtosis over a sliding window.
+Measures the 'tailedness' of the signal distribution in each window."""
+    tags = ["time-series", "kurtosis", "statistics", "distribution", "sliding-window", "moments"]
     params = [
-        {"name": "window", "type": "int", "default": "100", "help": "Window size in samples (must be >= 4)"},
-        {"name": "overlap", "type": "int", "default": "50", "help": "Overlap in samples (must be < window size)"}
+        {"name": "window", "type": "int", "default": "50", "help": "Window size in samples for kurtosis computation"},
+        {"name": "overlap", "type": "int", "default": "25", "help": "Overlap between consecutive windows in samples"}
     ]
 
     @classmethod
-    def get_info(cls): 
-        return f"{cls.name} — Compute kurtosis values over sliding windows (Category: {cls.category})"
+    def validate_parameters(cls, params: dict) -> None:
+        """Validate cross-field logic and business rules"""
+        window = cls.validate_integer_parameter("window", params.get("window"), min_val=4)
+        overlap = cls.validate_integer_parameter("overlap", params.get("overlap"), min_val=0, max_val=window-1)
 
     @classmethod
-    def get_prompt(cls): 
-        return {"info": cls.description, "params": cls.params}
-
-    @classmethod
-    def _validate_input_data(cls, y: np.ndarray) -> None:
-        """Validate input signal data"""
-        if len(y) == 0:
-            raise ValueError("Input signal is empty")
-        if np.all(np.isnan(y)):
-            raise ValueError("Signal contains only NaN values")
-
-    @classmethod
-    def _validate_parameters(cls, params: dict) -> None:
-        """Validate parameters and business rules"""
-        window = params.get("window")
-        overlap = params.get("overlap")
-        
-        if window < 4:
-            raise ValueError("Window size must be at least 4 samples for kurtosis calculation")
-        if overlap < 0 or overlap >= window:
-            raise ValueError("Overlap must be non-negative and less than window size")
-
-    @classmethod
-    def _validate_output_data(cls, y_original: np.ndarray, x_new: np.ndarray, y_new: np.ndarray) -> None:
-        """Validate output signal data"""
-        if len(x_new) == 0 or len(y_new) == 0:
-            raise ValueError("No valid windows found - output is empty")
-        if len(x_new) != len(y_new):
-            raise ValueError("Output x and y arrays have different lengths")
-
-    @classmethod
-    def parse_input(cls, user_input: dict) -> dict:
-        """Parse and validate user input parameters"""
-        parsed = {}
-        for param in cls.params:
-            name = param["name"]
-            val = user_input.get(name, param.get("default"))
-            try:
-                if val == "":
-                    parsed[name] = None
-                elif param["type"] == "int":
-                    parsed[name] = int(val)
-                elif param["type"] == "float":
-                    parsed[name] = float(val)
-                else:
-                    parsed[name] = val
-            except ValueError as e:
-                if "could not convert" in str(e) or "invalid literal" in str(e):
-                    raise ValueError(f"{name} must be a valid {param['type']}")
-                raise e
-        return parsed
-
-    @classmethod
-    def apply(cls, channel: Channel, params: dict) -> Channel:
-        """Apply moving kurtosis processing to the channel data."""
-        try:
-            x = channel.xdata
-            y = channel.ydata
-            
-            # Validate input data and parameters
-            cls._validate_input_data(y)
-            cls._validate_parameters(params)
-            
-            # Process the data
-            x_new, y_new = cls.script(x, y, params)
-            
-            # Validate output data
-            cls._validate_output_data(y, x_new, y_new)
-            
-            return cls.create_new_channel(
-                parent=channel, 
-                xdata=x_new, 
-                ydata=y_new, 
-                params=params,
-                suffix="MovingKurtosis"
-            )
-            
-        except Exception as e:
-            if isinstance(e, ValueError):
-                raise e
-            else:
-                raise ValueError(f"Moving kurtosis processing failed: {str(e)}")
-
-    @classmethod
-    def script(cls, x: np.ndarray, y: np.ndarray, params: dict) -> tuple[np.ndarray, np.ndarray]:
-        """Core processing logic for moving kurtosis"""
+    def script(cls, x: np.ndarray, y: np.ndarray, fs: float, params: dict) -> list:
         window = params["window"]
         overlap = params["overlap"]
+        
+        # Check if signal is long enough for the window
+        if len(y) < window:
+            raise ValueError(f"Signal too short: requires at least {window} samples")
+        
+        # Calculate step size
         step = window - overlap
         
-        if window <= 1 or step < 1:
-            raise ValueError(f"Invalid window/overlap settings: window={window}, step={step}")
+        # Compute moving kurtosis with overlap
+        y_kurtosis = np.zeros_like(y)
         
-        indices = range(0, len(y) - window + 1, step)
-        x_new = [x[i + window // 2] for i in indices]
-        y_new = [scipy.stats.kurtosis(y[i:i+window]) for i in indices]
-
-        x_new = np.array(x_new)
-        y_new = np.array(y_new)
-
-        return x_new, y_new
+        for i in range(0, len(y), step):
+            start_idx = i
+            end_idx = min(i + window, len(y))
+            window_data = y[start_idx:end_idx]
+            
+            if len(window_data) >= 4:  # Need at least 4 points for kurtosis
+                # Compute kurtosis directly
+                mean = np.mean(window_data)
+                std = np.std(window_data, ddof=1)
+                
+                if std == 0:
+                    kurtosis = np.nan
+                else:
+                    # Fisher's kurtosis (excess kurtosis)
+                    kurtosis = np.mean(((window_data - mean) / std) ** 4) - 3
+                
+                # Assign kurtosis to all samples in this window
+                y_kurtosis[start_idx:end_idx] = kurtosis
+            else:
+                # Assign NaN to samples in this window
+                y_kurtosis[start_idx:end_idx] = np.nan
+        
+        return [
+            {
+                'tags': ['time-series'],
+                'x': x,
+                'y': y_kurtosis
+            }
+        ]

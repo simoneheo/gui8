@@ -8,7 +8,7 @@ class count_samples_step(BaseStep):
     name = "count_samples"
     category = "Features"
     description = "Count samples within sliding windows and report counts in various units (count/window, count/s, count/min)"
-    tags = ["time-series", "feature", "peak", "count", "threshold", "detection", "events"]
+    tags = ["feature", "peak", "count", "threshold", "detection", "events"]
     params = [
         {
             "name": "window", 
@@ -31,167 +31,35 @@ class count_samples_step(BaseStep):
         }
     ]
 
-    @classmethod
-    def get_info(cls): 
-        return f"{cls.name} — {cls.description} (Category: {cls.category})"
-    
-    @classmethod
-    def get_prompt(cls): 
-        return {"info": cls.description, "params": cls.params}
 
     @classmethod
-    def _validate_input_data(cls, x: np.ndarray, y: np.ndarray) -> None:
-        """Validate input signal data"""
-        if len(x) == 0 or len(y) == 0:
-            raise ValueError("Input signal is empty")
-        if len(x) != len(y):
-            raise ValueError(f"Time and signal data length mismatch: {len(x)} vs {len(y)}")
-        if len(x) < 2:
-            raise ValueError("Channel must have at least 2 data points for sample counting")
-        if np.any(np.isnan(x)):
-            raise ValueError("Time data contains NaN values")
-        if np.any(np.isinf(x)):
-            raise ValueError("Time data contains infinite values")
-        if not np.all(np.diff(x) > 0):
-            raise ValueError("Time data must be monotonically increasing")
-
-    @classmethod
-    def _validate_parameters(cls, params: dict, total_samples: int) -> None:
+    def validate_parameters(cls, params: dict) -> None:
         """Validate parameters and business rules"""
-        window_samples = params.get("window")
-        overlap_samples = params.get("overlap")
-        unit = params.get("unit")
+        # Validate window parameter
+        window_samples = cls.validate_integer_parameter(
+            "window", 
+            params.get("window"), 
+            min_val=1,
+            max_val=1000000
+        )
         
-        if window_samples is None or window_samples <= 0:
-            raise ValueError("Window size must be positive")
-        if window_samples > 1000000:
-            raise ValueError(f"Window size seems too large ({window_samples} samples). Maximum allowed is 1,000,000 samples")
-        if window_samples > total_samples:
-            raise ValueError(
-                f"Window size ({window_samples} samples) is larger than signal length ({total_samples} samples). "
-                f"Try a smaller window or use a longer signal."
-            )
+        # Validate overlap parameter
+        overlap_samples = cls.validate_integer_parameter(
+            "overlap", 
+            params.get("overlap"), 
+            min_val=0,
+            max_val=window_samples-1
+        )
         
-        if overlap_samples is None or overlap_samples < 0:
-            raise ValueError("Overlap must be non-negative")
-        if overlap_samples >= window_samples:
-            raise ValueError(f"Overlap ({overlap_samples}) must be less than window size ({window_samples})")
-        
-        valid_units = ["count/window", "count/min", "count/s"]
-        if unit not in valid_units:
-            raise ValueError(f"Unit must be one of {valid_units}")
-        
-        # Check if we'll have enough windows
-        step_samples = window_samples - overlap_samples
-        if step_samples <= 0:
-            raise ValueError(f"Step size must be positive (window_samples - overlap_samples = {step_samples})")
-        
-        estimated_windows = int((total_samples - window_samples) / step_samples) + 1
-        if estimated_windows < 1:
-            raise ValueError(
-                f"Configuration would produce no valid windows. "
-                f"Window: {window_samples} samples, Overlap: {overlap_samples} samples, Signal: {total_samples} samples"
-            )
-        if estimated_windows > 100000:
-            raise ValueError(
-                f"Configuration would produce too many windows ({estimated_windows}). "
-                f"Consider using a larger window or less overlap."
-            )
+        # Validate unit parameter
+        cls.validate_string_parameter(
+            "unit",
+            params.get("unit", "count/window"),
+            valid_options=["count/window", "count/min", "count/s"]
+        )
 
     @classmethod
-    def _validate_output_data(cls, x_output: np.ndarray, y_output: np.ndarray) -> None:
-        """Validate output signal data"""
-        if len(x_output) == 0 or len(y_output) == 0:
-            raise ValueError("No output data generated")
-        if len(x_output) != len(y_output):
-            raise ValueError("Output time and signal data length mismatch")
-        if np.any(np.isnan(y_output)):
-            raise ValueError("Output contains NaN values")
-        if np.any(np.isinf(y_output)):
-            raise ValueError("Output contains infinite values")
-
-    @classmethod
-    def parse_input(cls, user_input: dict) -> dict:
-        """Parse and validate user input parameters"""
-        parsed = {}
-        for param in cls.params:
-            name = param["name"]
-            val = user_input.get(name, param.get("default"))
-            try:
-                if val == "":
-                    parsed[name] = None
-                elif param["type"] == "int":
-                    parsed[name] = int(val)
-                elif param["type"] == "float":
-                    parsed[name] = float(val)
-                else:
-                    parsed[name] = val
-            except ValueError as e:
-                if "could not convert" in str(e) or "invalid literal" in str(e):
-                    raise ValueError(f"{name} must be a valid {param['type']}")
-                raise e
-        return parsed
-
-    @classmethod
-    def apply(cls, channel: Channel, params: dict) -> Channel:
-        """Apply sample counting to the channel data."""
-        try:
-            x = channel.xdata
-            y = channel.ydata
-            
-            # Validate input data and parameters
-            cls._validate_input_data(x, y)
-            cls._validate_parameters(params, len(x))
-            
-            # Process the data
-            x_output, y_output = cls.script(x, y, params)
-            
-            # Validate output data
-            cls._validate_output_data(x_output, y_output)
-            
-            # Determine appropriate ylabel based on unit
-            unit = params["unit"]
-            ylabel_map = {
-                "count/window": "Sample Count",
-                "count/s": "Samples/Second",
-                "count/min": "Samples/Minute"
-            }
-            ylabel = ylabel_map.get(unit, "Sample Count")
-            
-            # Create new channel
-            new_channel = cls.create_new_channel(
-                parent=channel, 
-                xdata=x_output, 
-                ydata=y_output, 
-                params=params
-            )
-            
-            # Set channel properties
-            new_channel.xlabel = "Time (s)"
-            new_channel.ylabel = ylabel
-            new_channel.legend_label = f"{channel.legend_label} - Sample Count ({unit})"
-            
-            # Add metadata for debugging/analysis
-            new_channel.metadata = {
-                'original_samples': len(channel.xdata),
-                'window_samples': params["window"],
-                'overlap_samples': params["overlap"],
-                'num_windows': len(x_output),
-                'unit': unit,
-                'mean_count': float(np.mean(y_output)),
-                'std_count': float(np.std(y_output))
-            }
-            
-            return new_channel
-            
-        except Exception as e:
-            if isinstance(e, ValueError):
-                raise e
-            else:
-                raise ValueError(f"Sample counting failed: {str(e)}")
-
-    @classmethod
-    def script(cls, x: np.ndarray, y: np.ndarray, params: dict) -> tuple[np.ndarray, np.ndarray]:
+    def script(cls, x: np.ndarray, y: np.ndarray, fs: float, params: dict) -> list:
         """Core processing logic for sample counting"""
         window_samples = params["window"]
         overlap_samples = params["overlap"]
@@ -250,4 +118,10 @@ class count_samples_step(BaseStep):
         x_new = np.array(x_new)
         y_new = np.array(y_new)
         
-        return x_new, y_new 
+        return [
+            {
+                'tags': ['time-series'],
+                'x': x_new,
+                'y': y_new
+            }
+        ] 

@@ -399,8 +399,6 @@ class ProcessWizardWindow(QMainWindow):
         # Spectrogram plot area
         self.spectrogram_figure = plt.figure(figsize=(8, 6), dpi=100)
         self.spectrogram_ax = self.spectrogram_figure.add_subplot(111)
-        # Initialize colorbar list for spectrogram figure
-        self.spectrogram_figure._colorbar_list = []
         # Set initial layout with space for right colorbar
         self.spectrogram_figure.subplots_adjust(right=0.85, left=0.1, top=0.9, bottom=0.1)
         self.spectrogram_canvas = FigureCanvas(self.spectrogram_figure)
@@ -941,9 +939,8 @@ class ProcessWizardWindow(QMainWindow):
         self.spectrogram_figure.clf()
         self.spectrogram_ax = self.spectrogram_figure.add_subplot(111)
 
-        # Remove any colorbar references
-        if hasattr(self.spectrogram_figure, '_colorbar_list'):
-            self.spectrogram_figure._colorbar_list = []
+        # Track colorbars to prevent duplication
+        colorbar_added = False
 
         for channel in channels:
             if channel.show and hasattr(channel, 'metadata') and 'Zxx' in channel.metadata:
@@ -1033,13 +1030,12 @@ class ProcessWizardWindow(QMainWindow):
                     x_max = x_max + (x_max - x_min) * 0.02
                     self.spectrogram_ax.set_xlim(x_min, x_max)
                 
-                # Add colorbar on the right side
-                cbar = self.spectrogram_figure.colorbar(im, ax=self.spectrogram_ax, 
-                                                      orientation='vertical', pad=0.05, aspect=20)
-                cbar.set_label(cbar_label)
-                
-                if hasattr(self.spectrogram_figure, '_colorbar_list'):
-                    self.spectrogram_figure._colorbar_list.append(cbar)
+                # Add colorbar on the right side (only once per plot)
+                if not colorbar_added:
+                    cbar = self.spectrogram_figure.colorbar(im, ax=self.spectrogram_ax, 
+                                                          orientation='vertical', pad=0.05, aspect=20)
+                    cbar.set_label(cbar_label)
+                    colorbar_added = True
                     
         self.spectrogram_ax.set_title(f"File: {active_channel.filename}")
         self.spectrogram_figure.tight_layout(rect=[0, 0.1, 0.85, 1])  # leave space for colorbar on right

@@ -6,27 +6,25 @@ from channel import Channel
 @register_step
 class add_constant_step(BaseStep):
     name = "add_constant"
-    category = "Arithmetic"
-    description = "Add a constant value to all signal values for baseline adjustment"
-    tags = ["time-series", "arithmetic", "offset", "bias", "constant", "add"]
+    category = "Transform"
+    description = """Add a constant value to the signal."""
+    tags = ["time-series", "add", "constant", "transform"]
     params = [
-        {
-            "name": "constant", 
-            "type": "float", 
-            "default": "0.0", 
-            "help": "Constant value to add to all signal values. Positive values shift up, negative values shift down."
-        }
+        {"name": "constant", "type": "float", "default": "1.0", "help": "Constant value to add"}
     ]
 
     @classmethod
     def validate_parameters(cls, params: dict) -> None:
-        """Validate parameters and business rules"""
-        cls.validate_numeric_parameter("constant", params.get("constant"), 
-                                     min_val=-1000, max_val=1000, 
-                                     allow_nan=False, allow_inf=False)
+        constant = cls.validate_numeric_parameter("constant", params.get("constant"))
 
-    def script(self, x: np.ndarray, y: np.ndarray, fs: float, params: dict) -> np.ndarray:
-    
+    @classmethod
+    def script(cls, x: np.ndarray, y: np.ndarray, fs: float, params: dict) -> list:
         constant = params["constant"]
-        y_new = y + constant
-        return y_new
+        y_added = y + constant
+        return [
+            {
+                'tags': ['time-series'],
+                'x': x,
+                'y': y_added
+            }
+        ]

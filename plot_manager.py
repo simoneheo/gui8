@@ -57,9 +57,11 @@ class StylePreviewWidget(QLabel):
         
         painter.setPen(pen)
         
+        # Calculate center position (always needed for markers)
+        y_center = self.height() // 2
+        
         # Draw the line across the widget (only if not "None")
         if self.line_style != "None":
-            y_center = self.height() // 2
             margin = 5
             painter.drawLine(margin, y_center, self.width() - margin, y_center)
         
@@ -207,6 +209,9 @@ class PlotCanvas(FigureCanvas):
         # Get line properties
         color = channel.color or next(self.default_colors)
         style = channel.style if channel.style and channel.style != "None" else next(self.default_styles)
+        # Convert 'None' to 'none' for matplotlib compatibility
+        if style == "None":
+            style = "none"
         marker = channel.marker if channel.marker != "None" else None
         label = channel.legend_label or channel.ylabel or "Unnamed"
         
@@ -257,10 +262,10 @@ class PlotCanvas(FigureCanvas):
         # Update line properties
         if channel.color:
             line.set_color(channel.color)
-        if channel.style and channel.style != "None":
+        if channel.style and channel.style not in ["None", "none"]:
             line.set_linestyle(channel.style)
         else:
-            line.set_linestyle('')  # No line
+            line.set_linestyle('none')  # No line (matplotlib expects 'none')
         if channel.marker and channel.marker != "None":
             line.set_marker(channel.marker)
         else:

@@ -2468,6 +2468,8 @@ class PlotWizardManager(QObject):
                         # Plot based on type
                         color = item['color']
                         line_style = item['line_style']
+                        if line_style == 'None':
+                            line_style = 'none'  # Convert to matplotlib format
                         marker = item['marker'] if item['marker'] != 'None' else None
                         label = item['legend_name']
                         

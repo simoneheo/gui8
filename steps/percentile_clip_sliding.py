@@ -1,143 +1,64 @@
 import numpy as np
-from steps.base_step import BaseStep
 from steps.process_registry import register_step
+from steps.base_step import BaseStep
 from channel import Channel
 
 @register_step
 class percentile_clip_sliding_step(BaseStep):
     name = "percentile_clip_sliding"
-    category = "General"
-    description = """Apply percentile-based clipping within sliding windows to remove outliers.
-    
-This step applies percentile clipping within overlapping sliding windows, where each window
-defines its own clipping bounds based on the specified percentiles. This provides adaptive
-outlier removal that adjusts to local signal characteristics.
-
-• **Lower/Upper percentiles**: Percentile bounds for clipping (0-100)
-• **Window size**: Number of samples in each clipping window
-• **Overlap**: Number of overlapping samples between windows (must be < window size)
-
-Useful for:
-• **Adaptive outlier removal**: Remove outliers based on local statistics
-• **Noise reduction**: Clip extreme values that vary by region
-• **Signal cleaning**: Remove artifacts while preserving local structure
-• **Data quality improvement**: Handle non-stationary noise patterns"""
-    tags = ["time-series", "outlier-removal", "data-cleaning", "window", "sliding", "percentile", "robust"]
+    category = "Transform"
+    description = """Clip signal values based on sliding window percentiles.
+Removes outliers dynamically based on local statistics."""
+    tags = ["time-series", "percentile", "clip", "outliers", "sliding", "robust"]
     params = [
-        {'name': 'lower', 'type': 'float', 'default': '1.0', 'help': 'Lower percentile (0–100)'},
-        {'name': 'upper', 'type': 'float', 'default': '99.0', 'help': 'Upper percentile (0–100)'},
-        {'name': 'window', 'type': 'int', 'default': '100', 'help': 'Window size in samples (must be >= 2)'},
-        {'name': 'overlap', 'type': 'int', 'default': '50', 'help': 'Overlap in samples (must be < window size)'}
+        {"name": "window", "type": "int", "default": "100", "help": "Window size for percentile calculation"},
+        {"name": "lower_percentile", "type": "float", "default": "5.0", "help": "Lower percentile threshold (0-50)"},
+        {"name": "upper_percentile", "type": "float", "default": "95.0", "help": "Upper percentile threshold (50-100)"}
     ]
 
     @classmethod
-    def get_info(cls): 
-        return f"{cls.name} — Apply percentile clipping within sliding windows (Category: {cls.category})"
-
-    @classmethod
-    def get_prompt(cls): 
-        return {"info": cls.description, "params": cls.params}
-
-    @classmethod
-    def _validate_input_data(cls, y: np.ndarray) -> None:
-        """Validate input signal data"""
-        if len(y) == 0:
-            raise ValueError("Input signal is empty")
-        if np.all(np.isnan(y)):
-            raise ValueError("Signal contains only NaN values")
-
-    @classmethod
-    def _validate_parameters(cls, params: dict) -> None:
-        """Validate parameters and business rules"""
-        lower = params.get("lower")
-        upper = params.get("upper")
-        window = params.get("window")
-        overlap = params.get("overlap")
+    def validate_parameters(cls, params: dict) -> None:
+        """Validate cross-field logic and business rules"""
+        window = cls.validate_integer_parameter("window", params.get("window"), min_val=10)
+        lower_percentile = cls.validate_numeric_parameter("lower_percentile", params.get("lower_percentile"), min_val=0.0, max_val=50.0)
+        upper_percentile = cls.validate_numeric_parameter("upper_percentile", params.get("upper_percentile"), min_val=50.0, max_val=100.0)
         
-        if not (0 <= lower < upper <= 100):
-            raise ValueError(f"Invalid percentile range: {lower}–{upper}")
-        if window < 2:
-            raise ValueError("Window size must be >= 2")
-        if overlap < 0 or overlap >= window:
-            raise ValueError("Overlap must be non-negative and less than window size")
+        # Validate percentile relationship
+        if lower_percentile >= upper_percentile:
+            raise ValueError("lower_percentile must be less than upper_percentile")
 
     @classmethod
-    def _validate_output_data(cls, y_original: np.ndarray, y_new: np.ndarray) -> None:
-        """Validate output signal data"""
-        if len(y_new) != len(y_original):
-            raise ValueError("Output signal length differs from input")
-        if np.any(np.isnan(y_new)) and not np.any(np.isnan(y_original)):
-            raise ValueError("Percentile clipping produced unexpected NaN values")
-
-    @classmethod
-    def parse_input(cls, user_input: dict) -> dict:
-        """Parse and validate user input parameters"""
-        parsed = {}
-        for param in cls.params:
-            name = param["name"]
-            val = user_input.get(name, param.get("default"))
-            try:
-                if val == "":
-                    parsed[name] = None
-                elif param["type"] == "int":
-                    parsed[name] = int(val)
-                elif param["type"] == "float":
-                    parsed[name] = float(val)
-                else:
-                    parsed[name] = val
-            except ValueError as e:
-                if "could not convert" in str(e) or "invalid literal" in str(e):
-                    raise ValueError(f"{name} must be a valid {param['type']}")
-                raise e
-        return parsed
-
-    @classmethod
-    def apply(cls, channel: Channel, params: dict) -> Channel:
-        """Apply percentile clipping within sliding windows to the channel data."""
-        try:
-            x = channel.xdata
-            y = channel.ydata
-            
-            # Validate input data and parameters
-            cls._validate_input_data(y)
-            cls._validate_parameters(params)
-            
-            # Process the data
-            y_new = cls.script(x, y, params)
-            
-            # Validate output data
-            cls._validate_output_data(y, y_new)
-            
-            return cls.create_new_channel(
-                parent=channel,
-                xdata=x,
-                ydata=y_new,
-                params=params,
-                suffix="PercentileClip"
-            )
-            
-        except Exception as e:
-            if isinstance(e, ValueError):
-                raise e
-            else:
-                raise ValueError(f"Percentile clipping failed: {str(e)}")
-
-    @classmethod
-    def script(cls, x: np.ndarray, y: np.ndarray, params: dict) -> np.ndarray:
-        """Core processing logic for percentile clipping within sliding windows"""
-        lower = params['lower']
-        upper = params['upper']
-        window = params['window']
-        overlap = params['overlap']
+    def script(cls, x: np.ndarray, y: np.ndarray, fs: float, params: dict) -> list:
+        window = params["window"]
+        lower_percentile = params["lower_percentile"]
+        upper_percentile = params["upper_percentile"]
         
-        step = max(1, window - overlap)
-        y_new = np.copy(y)
+        # Check if signal is long enough
+        if len(y) < window:
+            raise ValueError(f"Signal too short: requires at least {window} samples")
         
-        for start in range(0, len(y) - window + 1, step):
-            end = start + window
-            segment = y[start:end]
-            lo = np.percentile(segment, lower)
-            hi = np.percentile(segment, upper)
-            y_new[start:end] = np.clip(segment, lo, hi)
-
-        return y_new
+        # Apply sliding percentile clipping
+        y_clipped = np.zeros_like(y)
+        
+        for i in range(len(y)):
+            # Define window boundaries
+            start_idx = max(0, i - window // 2)
+            end_idx = min(len(y), i + window // 2 + 1)
+            
+            # Extract window data
+            window_data = y[start_idx:end_idx]
+            
+            # Calculate percentiles for this window
+            lower_thresh = np.percentile(window_data, lower_percentile)
+            upper_thresh = np.percentile(window_data, upper_percentile)
+            
+            # Clip the current value
+            y_clipped[i] = np.clip(y[i], lower_thresh, upper_thresh)
+        
+        return [
+            {
+                'tags': ['time-series'],
+                'x': x,
+                'y': y_clipped
+            }
+        ]

@@ -1,6 +1,6 @@
 import numpy as np
-from steps.base_step import BaseStep
 from steps.process_registry import register_step
+from steps.base_step import BaseStep
 from channel import Channel
 from scipy.signal import find_peaks
 
@@ -8,143 +8,62 @@ from scipy.signal import find_peaks
 class detect_valleys_step(BaseStep):
     name = "detect_valleys"
     category = "Features"
-    description = """Detects valley (minimum) points in the signal using inverted peak detection.
-Valleys are local minima that represent significant downward excursions in the signal."""
-    tags = ["time-series", "event", "valleys", "scipy", "find_peaks", "minima", "detection"]
+    description = """Detect valleys (minima) in the signal by inverting and finding peaks.
+Creates a binary signal marking valley locations."""
+    tags = ["valley", "detection", "events", "feature", "marker"]
     params = [
-        {
-            "name": "height", 
-            "type": "float", 
-            "default": "", 
-            "help": "Maximum valley depth (negative amplitude). Leave blank for auto-detection based on signal statistics."
-        },
-        {
-            "name": "distance", 
-            "type": "int", 
-            "default": "1", 
-            "help": "Minimum distance between valleys in samples. Use larger values to avoid detecting multiple valleys in noisy regions."
-        },
-        {
-            "name": "prominence", 
-            "type": "float", 
-            "default": "", 
-            "help": "Minimum valley prominence (how much a valley stands out from surrounding baseline). Leave blank for auto-detection."
-        }
+        {"name": "height", "type": "float", "default": "", "help": "Minimum valley depth (leave blank for auto)"},
+        {"name": "distance", "type": "int", "default": "1", "help": "Minimum distance between valleys in samples"},
+        {"name": "prominence", "type": "float", "default": "", "help": "Minimum valley prominence (leave blank for auto)"}
     ]
 
     @classmethod
-    def get_info(cls): 
-        return f"{cls.name} — {cls.description} (Category: {cls.category})"
-    
-    @classmethod
-    def get_prompt(cls): 
-        return {"info": cls.description, "params": cls.params}
+    def validate_parameters(cls, params: dict) -> None:
+        """Validate cross-field logic and business rules"""
+        # Height can be empty (auto-detection) or a numeric value
+        if params.get("height") not in [None, "", "auto"]:
+            cls.validate_numeric_parameter("height", params.get("height"))
+        
+        distance = cls.validate_integer_parameter("distance", params.get("distance"), min_val=1)
+        
+        # Prominence can be empty (auto-detection) or a positive number
+        if params.get("prominence") not in [None, "", "auto"]:
+            cls.validate_numeric_parameter("prominence", params.get("prominence"), min_val=0.0)
 
     @classmethod
-    def _validate_input_data(cls, y: np.ndarray) -> None:
-        """Validate input signal data"""
-        if len(y) == 0:
-            raise ValueError("Input signal is empty")
-        if np.all(np.isnan(y)):
-            raise ValueError("Signal contains only NaN values")
-        if np.all(np.isinf(y)):
-            raise ValueError("Signal contains only infinite values")
-        if len(y) < 3:
-            raise ValueError("Signal too short for valley detection (minimum 3 samples)")
+    def script(cls, x: np.ndarray, y: np.ndarray, fs: float, params: dict) -> list:
+        height = params.get("height", "")
+        distance = params["distance"]
+        prominence = params.get("prominence", "")
 
-    @classmethod
-    def _validate_parameters(cls, params: dict) -> None:
-        """Validate parameters and business rules"""
-        distance = params.get("distance")
-        
-        if distance is not None and distance < 1:
-            raise ValueError("Distance must be at least 1")
-        
-        # Height and prominence can be None (auto-detection)
-        height = params.get("height")
-        if height is not None and np.isnan(height):
-            raise ValueError("Height cannot be NaN")
-        
-        prominence = params.get("prominence")
-        if prominence is not None and prominence < 0:
-            raise ValueError("Prominence must be non-negative")
+        # Invert signal to find valleys as peaks
+        y_inverted = -y
 
-    @classmethod
-    def _validate_output_data(cls, x_output: np.ndarray, y_output: np.ndarray) -> None:
-        """Validate output signal data"""
-        if len(x_output) != len(y_output):
-            raise ValueError("Output time and signal data length mismatch")
+        # Auto-detect height if not specified
+        if height in [None, "", "auto"]:
+            height = np.mean(y_inverted) + 0.5 * np.std(y_inverted)
+        else:
+            height = -float(height)  # Invert because we inverted the signal
 
-    @classmethod
-    def parse_input(cls, user_input: dict) -> dict:
-        """Parse and validate user input parameters"""
-        parsed = {}
-        for param in cls.params:
-            name = param["name"]
-            val = user_input.get(name, param.get("default"))
-            try:
-                if val == "":
-                    parsed[name] = None
-                elif param["type"] == "int":
-                    parsed[name] = int(val)
-                elif param["type"] == "float":
-                    parsed[name] = float(val)
-                else:
-                    parsed[name] = val
-            except ValueError as e:
-                if "could not convert" in str(e) or "invalid literal" in str(e):
-                    raise ValueError(f"{name} must be a valid {param['type']}")
-                raise e
-        return parsed
+        # Auto-detect prominence if not specified
+        if prominence in [None, "", "auto"]:
+            prominence = 0.1 * np.ptp(y_inverted)  # 10% of peak-to-peak range
+        else:
+            prominence = float(prominence)
 
-    @classmethod
-    def apply(cls, channel: Channel, params: dict) -> Channel:
-        """Apply valley detection to the channel data."""
-        try:
-            x = channel.xdata
-            y = channel.ydata
-            
-            # Validate input data and parameters
-            cls._validate_input_data(y)
-            cls._validate_parameters(params)
-            
-            # Process the data
-            x_output, y_output = cls.script(x, y, params)
-            
-            # Validate output data
-            cls._validate_output_data(x_output, y_output)
-            
-            return cls.create_new_channel(
-                parent=channel, 
-                xdata=x_output, 
-                ydata=y_output, 
-                params=params,
-                suffix="Valleys"
-            )
-            
-        except Exception as e:
-            if isinstance(e, ValueError):
-                raise e
-            else:
-                raise ValueError(f"Valley detection failed: {str(e)}")
+        # Find valleys as peaks in inverted signal
+        valleys, properties = find_peaks(
+            y_inverted,
+            height=height,
+            distance=distance,
+            prominence=prominence
+        )
 
-    @classmethod
-    def script(cls, x: np.ndarray, y: np.ndarray, params: dict) -> tuple[np.ndarray, np.ndarray]:
-        """Core processing logic for valley detection"""
-        # Prepare parameters for find_peaks (only include non-None parameters)
-        kwargs = {}
-        if params.get("height") is not None:
-            kwargs["height"] = params["height"]
-        if params.get("distance") is not None:
-            kwargs["distance"] = params["distance"]
-        if params.get("prominence") is not None:
-            kwargs["prominence"] = params["prominence"]
-        
-        indices, _ = find_peaks(-y, **kwargs)
-        
-        if len(indices) == 0:
-            raise ValueError("No valleys detected. Try adjusting height, distance, or prominence parameters.")
-        
-        x_new = x[indices]
-        y_new = y[indices]
-        return x_new, y_new
+        # Return actual valley positions and amplitudes
+        return [
+            {
+                'tags': ['time-series'],
+                'x': x[valleys],
+                'y': y[valleys]
+            }
+        ]

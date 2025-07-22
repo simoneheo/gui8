@@ -10,7 +10,7 @@ class detect_peaks_step(BaseStep):
     category = "Features"
     description = """Detects peaks in the signal using height, distance, and prominence criteria.
 Automatically adjusts parameters if not specified to ensure robust peak detection."""
-    tags = ["time-series", "event", "peaks", "scipy", "find_peaks", "maxima", "detection"]
+    tags = ["peak", "detection", "events", "feature", "marker"]
     params = [
         {
             "name": "height", 
@@ -33,118 +33,50 @@ Automatically adjusts parameters if not specified to ensure robust peak detectio
     ]
 
     @classmethod
-    def get_info(cls): 
-        return f"{cls.name} — {cls.description} (Category: {cls.category})"
-    
-    @classmethod
-    def get_prompt(cls): 
-        return {"info": cls.description, "params": cls.params}
-
-    @classmethod
-    def _validate_input_data(cls, y: np.ndarray) -> None:
-        """Validate input signal data"""
-        if len(y) == 0:
-            raise ValueError("Input signal is empty")
-        if np.all(np.isnan(y)):
-            raise ValueError("Signal contains only NaN values")
-        if np.all(np.isinf(y)):
-            raise ValueError("Signal contains only infinite values")
-        if len(y) < 3:
-            raise ValueError("Signal too short for peak detection (minimum 3 samples)")
-
-    @classmethod
-    def _validate_parameters(cls, params: dict) -> None:
+    def validate_parameters(cls, params: dict) -> None:
         """Validate parameters and business rules"""
-        distance = params.get("distance")
+        # Height can be empty (auto-detection) or a positive number
+        if params.get("height") not in [None, "", "auto"]:
+            cls.validate_numeric_parameter("height", params.get("height"), min_val=0.0)
         
-        if distance is not None and distance < 1:
-            raise ValueError("Distance must be at least 1")
+        distance = cls.validate_integer_parameter("distance", params.get("distance"), min_val=1)
         
-        # Height and prominence can be None (auto-detection)
-        height = params.get("height")
-        if height is not None and np.isnan(height):
-            raise ValueError("Height cannot be NaN")
-        
-        prominence = params.get("prominence")
-        if prominence is not None and prominence < 0:
-            raise ValueError("Prominence must be non-negative")
+        # Prominence can be empty (auto-detection) or a positive number
+        if params.get("prominence") not in [None, "", "auto"]:
+            cls.validate_numeric_parameter("prominence", params.get("prominence"), min_val=0.0)
 
     @classmethod
-    def _validate_output_data(cls, x_output: np.ndarray, y_output: np.ndarray) -> None:
-        """Validate output signal data"""
-        if len(x_output) != len(y_output):
-            raise ValueError("Output time and signal data length mismatch")
-
-    @classmethod
-    def parse_input(cls, user_input: dict) -> dict:
-        """Parse and validate user input parameters"""
-        parsed = {}
-        for param in cls.params:
-            name = param["name"]
-            val = user_input.get(name, param.get("default"))
-            try:
-                if val == "":
-                    parsed[name] = None
-                elif param["type"] == "int":
-                    parsed[name] = int(val)
-                elif param["type"] == "float":
-                    parsed[name] = float(val)
-                else:
-                    parsed[name] = val
-            except ValueError as e:
-                if "could not convert" in str(e) or "invalid literal" in str(e):
-                    raise ValueError(f"{name} must be a valid {param['type']}")
-                raise e
-        return parsed
-
-    @classmethod
-    def apply(cls, channel: Channel, params: dict) -> Channel:
-        """Apply peak detection to the channel data."""
-        try:
-            x = channel.xdata
-            y = channel.ydata
-            
-            # Validate input data and parameters
-            cls._validate_input_data(y)
-            cls._validate_parameters(params)
-            
-            # Process the data
-            x_output, y_output = cls.script(x, y, params)
-            
-            # Validate output data
-            cls._validate_output_data(x_output, y_output)
-            
-            return cls.create_new_channel(
-                parent=channel, 
-                xdata=x_output, 
-                ydata=y_output, 
-                params=params,
-                suffix="Peaks"
-            )
-            
-        except Exception as e:
-            if isinstance(e, ValueError):
-                raise e
-            else:
-                raise ValueError(f"Peak detection failed: {str(e)}")
-
-    @classmethod
-    def script(cls, x: np.ndarray, y: np.ndarray, params: dict) -> tuple[np.ndarray, np.ndarray]:
+    def script(cls, x: np.ndarray, y: np.ndarray, fs: float, params: dict) -> list:
         """Core processing logic for peak detection"""
-        # Prepare parameters for find_peaks (only include non-None parameters)
-        kwargs = {}
-        if params.get("height") is not None:
-            kwargs["height"] = params["height"]
-        if params.get("distance") is not None:
-            kwargs["distance"] = params["distance"]
-        if params.get("prominence") is not None:
-            kwargs["prominence"] = params["prominence"]
+        height = params.get("height", "")
+        distance = params["distance"]
+        prominence = params.get("prominence", "")
         
-        indices, _ = find_peaks(y, **kwargs)
+        # Auto-detect height if not specified
+        if height in [None, "", "auto"]:
+            height = np.mean(y) + 0.5 * np.std(y)
+        else:
+            height = float(height)
+            
+        # Auto-detect prominence if not specified
+        if prominence in [None, "", "auto"]:
+            prominence = 0.1 * np.ptp(y)  # 10% of peak-to-peak range
+        else:
+            prominence = float(prominence)
         
-        if len(indices) == 0:
-            raise ValueError("No peaks detected. Try adjusting height, distance, or prominence parameters.")
-        
-        x_new = x[indices]
-        y_new = y[indices] 
-        return x_new, y_new
+        # Find peaks using scipy
+        peaks, properties = find_peaks(
+            y, 
+            height=height, 
+            distance=distance, 
+            prominence=prominence
+        )
+
+        # Return actual peak positions and amplitudes
+        return [
+            {
+                'tags': ['time-series'],
+                'x': x[peaks],
+                'y': y[peaks]
+            }
+        ]
