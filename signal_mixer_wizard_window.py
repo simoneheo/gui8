@@ -1252,32 +1252,45 @@ class SignalMixerWizardWindow(QMainWindow):
         # Check if we should use x-axis data or indices for index-based alignment
         use_x_axis_data = self._should_use_x_axis_for_index_mode(channel_a, channel_b)
         
+        # Check if we have mixed channels that were created with index-based alignment
+        mixed_channels = self.manager.get_mixed_channels()
+        has_index_based_mixed_channels = False
+        for i, channel in enumerate(mixed_channels):
+            if channel.ydata is not None:
+                channel_label = getattr(channel, 'step_table_label', f"Mixed_{i + 1}")
+                is_visible = self._is_channel_visible_in_table(channel_label)
+                if is_visible:
+                    # Check if this mixed channel was created with index-based alignment
+                    # by comparing its length with the input channels
+                    if channel_a and channel_a.ydata is not None and channel_b and channel_b.ydata is not None:
+                        a_len = len(channel_a.ydata)
+                        b_len = len(channel_b.ydata)
+                        mixed_len = len(channel.ydata)
+                        # If mixed channel length doesn't match either input channel, it was likely index-aligned
+                        if mixed_len != a_len and mixed_len != b_len:
+                            has_index_based_mixed_channels = True
+                            break
+        
         # Track lines for legend
         channel_a_line = None
         channel_b_line = None
         
+        # Plot input channels (A and B) on main axis with time data
         if channel_a and channel_a.ydata is not None and self._is_channel_visible_in_table("A"):
-            if use_x_axis_data:
-                x_data = channel_a.xdata if channel_a.xdata is not None else np.arange(len(channel_a.ydata))
-            else:
-                x_data = np.arange(len(channel_a.ydata))
+            x_data = channel_a.xdata if channel_a.xdata is not None else np.arange(len(channel_a.ydata))
             channel_a_line, = self.ax.plot(x_data, channel_a.ydata, 'b-', alpha=0.7, linewidth=1,
                         label=f"A: {channel_a.legend_label or channel_a.channel_id}")
             plotted_any = True
             max_data_length = max(max_data_length, len(channel_a.ydata))
         
         if channel_b and channel_b.ydata is not None and self._is_channel_visible_in_table("B"):
-            if use_x_axis_data:
-                x_data = channel_b.xdata if channel_b.xdata is not None else np.arange(len(channel_b.ydata))
-            else:
-                x_data = np.arange(len(channel_b.ydata))
+            x_data = channel_b.xdata if channel_b.xdata is not None else np.arange(len(channel_b.ydata))
             channel_b_line, = self.ax.plot(x_data, channel_b.ydata, 'r-', alpha=0.7, linewidth=1,
                         label=f"B: {channel_b.legend_label or channel_b.channel_id}")
             plotted_any = True
             max_data_length = max(max_data_length, len(channel_b.ydata))
         
         # Plot mixed channels
-        mixed_channels = self.manager.get_mixed_channels()
         colors = self._get_mixed_channel_colors()
         
         for i, channel in enumerate(mixed_channels):
@@ -1287,25 +1300,82 @@ class SignalMixerWizardWindow(QMainWindow):
                 is_visible = self._is_channel_visible_in_table(channel_label)
                 
                 if is_visible:
-                    if use_x_axis_data:
-                        x_data = channel.xdata if channel.xdata is not None else np.arange(len(channel.ydata))
-                    else:
-                        x_data = np.arange(len(channel.ydata))
                     color = colors[i % len(colors)]
-                    self.ax.plot(x_data, channel.ydata, color=color, linewidth=2,
-                                label=f"{channel_label}: {channel.legend_label or channel.channel_id}")
+                    
+                    # Check if this mixed channel should use independent x-axis
+                    use_independent_x = False
+                    if channel_a and channel_a.ydata is not None and channel_b and channel_b.ydata is not None:
+                        # Get alignment method from data aligner widget
+                        alignment_config = self._get_alignment_config()
+                        alignment_method = alignment_config.get('alignment_method', 'time')
+                        
+                        self._log_message(f"Alignment method: {alignment_method}")
+                        
+                        if alignment_method == 'index':
+                            # For index-based alignment, check if x-data columns match
+                            a_xdata = channel_a.xdata if channel_a.xdata is not None else np.arange(len(channel_a.ydata))
+                            b_xdata = channel_b.xdata if channel_b.xdata is not None else np.arange(len(channel_b.ydata))
+                            mixed_xdata = channel.xdata if channel.xdata is not None else np.arange(len(channel.ydata))
+                            
+                            # Check if mixed signal x-data matches either input channel x-data
+                            a_matches = len(a_xdata) == len(mixed_xdata) and np.allclose(a_xdata, mixed_xdata, rtol=1e-10, atol=1e-10)
+                            b_matches = len(b_xdata) == len(mixed_xdata) and np.allclose(b_xdata, mixed_xdata, rtol=1e-10, atol=1e-10)
+                            
+                            # Use independent x-axis if mixed signal x-data doesn't match either input channel
+                            if not a_matches and not b_matches:
+                                use_independent_x = True
+                                self._log_message(f"Index alignment: Mixed signal x-data doesn't match input channels - using top axis")
+                            else:
+                                self._log_message(f"Index alignment: Mixed signal x-data matches input channels - using main axis")
+                    
+                    if use_independent_x:
+                        # Plot mixed channel on top axis with sample indices
+                        if not hasattr(self, 'ax_top') or self.ax_top is None:
+                            self.ax_top = self.ax.twiny()
+                        x_data = np.arange(len(channel.ydata))
+                        self.ax_top.plot(x_data, channel.ydata, color=color, linewidth=2,
+                                    label=f"{channel_label}: {channel.legend_label or channel.channel_id}")
+                        self._log_message(f"Plotted {channel_label} on top axis (index-based) with {len(channel.ydata)} samples")
+                    else:
+                        # Plot mixed channel on main axis with time data
+                        x_data = channel.xdata if channel.xdata is not None else np.arange(len(channel.ydata))
+                        self.ax.plot(x_data, channel.ydata, color=color, linewidth=2,
+                                    label=f"{channel_label}: {channel.legend_label or channel.channel_id}")
+                        self._log_message(f"Plotted {channel_label} on main axis (time-based) with {len(channel.ydata)} samples")
+                    
                     plotted_any = True
                     max_data_length = max(max_data_length, len(channel.ydata))
 
         # Set up plot
         if plotted_any:
-            # Add top x-axis when using indices instead of inherited x-data
-            # This helps users understand that the x-axis represents sample indices
-            if not use_x_axis_data:
-                self._add_index_axis()
+            # Add top x-axis labels and ticks for independent scaling
+            if hasattr(self, 'ax_top') and self.ax_top is not None:
+                self._setup_independent_x_axes()
+            
+            # Add legend to show which signals are on which axis
+            if hasattr(self, 'ax_top') and self.ax_top is not None:
+                # Create legend for both axes
+                lines_main, labels_main = self.ax.get_legend_handles_labels()
+                lines_top, labels_top = self.ax_top.get_legend_handles_labels()
+                
+                # Combine legends
+                all_lines = lines_main + lines_top
+                all_labels = labels_main + labels_top
+                
+                if all_lines:
+                    self.ax.legend(all_lines, all_labels, loc='upper right')
+            else:
+                # Single axis legend
+                if self.ax.get_legend_handles_labels()[0]:
+                    self.ax.legend(loc='upper right')
         
-        # Remove all labels and title
-        self.ax.set_xlabel("")
+        # Set axis labels
+        if hasattr(self, 'ax_top') and self.ax_top is not None:
+            self.ax.set_xlabel("Time", fontsize=10)
+            self.ax_top.set_xlabel("Sample Index", fontsize=10)
+        else:
+            self.ax.set_xlabel("")
+        
         self.ax.set_ylabel("")
         self.ax.set_title("")
         
@@ -1766,6 +1836,53 @@ class SignalMixerWizardWindow(QMainWindow):
         except Exception as e:
             return False
     
+    def _setup_independent_x_axes(self):
+        """Setup independent x-axes with proper labels and ticks"""
+        try:
+            # Get the current x-axis limits from the main plot (time-based)
+            x_min, x_max = self.ax.get_xlim()
+            
+            # Get the current x-axis limits from the top plot (index-based)
+            top_x_min, top_x_max = self.ax_top.get_xlim()
+            
+            # Set up main axis (bottom) - time-based
+            self.ax.set_xlabel("Time", fontsize=10)
+            self.ax.tick_params(axis='x', labelsize=9)
+            
+            # Set up top axis - index-based
+            self.ax_top.set_xlabel("Sample Index", fontsize=10)
+            self.ax_top.tick_params(axis='x', labelsize=9)
+            
+            # Set appropriate tick locations for the top axis (sample indices)
+            if top_x_max - top_x_min > 0:
+                # Calculate reasonable tick spacing for sample indices
+                index_range = top_x_max - top_x_min
+                if index_range <= 10:
+                    tick_spacing = 1
+                elif index_range <= 50:
+                    tick_spacing = 5
+                elif index_range <= 100:
+                    tick_spacing = 10
+                elif index_range <= 500:
+                    tick_spacing = 50
+                elif index_range <= 1000:
+                    tick_spacing = 100
+                else:
+                    tick_spacing = int(index_range / 10)
+                
+                # Generate tick positions
+                tick_start = int(top_x_min / tick_spacing) * tick_spacing
+                tick_positions = np.arange(tick_start, top_x_max + tick_spacing, tick_spacing)
+                tick_positions = tick_positions[(tick_positions >= top_x_min) & (tick_positions <= top_x_max)]
+                
+                if len(tick_positions) > 0:
+                    self.ax_top.set_xticks(tick_positions)
+                    self.ax_top.set_xticklabels([str(int(pos)) for pos in tick_positions])
+            
+        except Exception as e:
+            # Don't let axis setup errors break the plot
+            pass
+
     def _add_index_axis(self):
         """Add a top x-axis showing sample indices"""
         try:

@@ -27,6 +27,9 @@ class DataAlignerWidget(QWidget):
         # Connect signals
         self._connect_signals()
         
+        # Set initial visibility and control states after everything is set up
+        self._on_alignment_method_changed("time")
+        
     def _build_ui(self):
         """Build the alignment UI"""
         layout = QVBoxLayout(self)
@@ -125,8 +128,9 @@ class DataAlignerWidget(QWidget):
         
         layout.addWidget(self.alignment_group)
         
-        # Set initial visibility
-        self._on_alignment_method_changed("time")
+        # Initially hide both groups to prevent both showing at startup
+        self.index_group.setVisible(False)
+        self.time_group.setVisible(False)
         
     def _connect_signals(self):
         """Connect UI signals to parameter change handler"""
@@ -134,13 +138,13 @@ class DataAlignerWidget(QWidget):
         self.alignment_method_combo.currentTextChanged.connect(self._on_alignment_method_changed)
         
         # Index parameter changes
-        self.index_mode_combo.currentTextChanged.connect(self._on_parameter_changed)
+        self.index_mode_combo.currentTextChanged.connect(self._on_index_mode_changed)
         self.start_index_spin.valueChanged.connect(self._on_parameter_changed)
         self.end_index_spin.valueChanged.connect(self._on_parameter_changed)
         self.index_offset_spin.valueChanged.connect(self._on_parameter_changed)
         
         # Time parameter changes
-        self.time_mode_combo.currentTextChanged.connect(self._on_parameter_changed)
+        self.time_mode_combo.currentTextChanged.connect(self._on_time_mode_changed)
         self.start_time_spin.valueChanged.connect(self._on_parameter_changed)
         self.end_time_spin.valueChanged.connect(self._on_parameter_changed)
         self.time_offset_spin.valueChanged.connect(self._on_parameter_changed)
@@ -153,10 +157,14 @@ class DataAlignerWidget(QWidget):
             self.index_group.setVisible(True)
             self.time_group.setVisible(False)
             self.status_label.setText("Index-based alignment configured")
+            # Update index mode controls
+            self._on_index_mode_changed(self.index_mode_combo.currentText())
         else:  # time
             self.index_group.setVisible(False)
             self.time_group.setVisible(True)
             self.status_label.setText("Time-based alignment configured")
+            # Update time mode controls
+            self._on_time_mode_changed(self.time_mode_combo.currentText())
         
         # Emit parameter change
         self._on_parameter_changed()
@@ -165,6 +173,42 @@ class DataAlignerWidget(QWidget):
         """Handle any parameter change"""
         params = self.get_alignment_parameters()
         self.parameters_changed.emit(params)
+        
+    def _on_index_mode_changed(self, mode: str):
+        """Handle index mode change - enable/disable custom controls"""
+        if mode == 'truncate':
+            # Disable custom index controls
+            self.start_index_spin.setEnabled(False)
+            self.end_index_spin.setEnabled(False)
+            self.start_index_spin.setToolTip("Disabled in truncate mode - uses full range automatically")
+            self.end_index_spin.setToolTip("Disabled in truncate mode - uses full range automatically")
+        else:  # custom
+            # Enable custom index controls
+            self.start_index_spin.setEnabled(True)
+            self.end_index_spin.setEnabled(True)
+            self.start_index_spin.setToolTip("Start index for custom range")
+            self.end_index_spin.setToolTip("End index for custom range")
+        
+        # Emit parameter change
+        self._on_parameter_changed()
+        
+    def _on_time_mode_changed(self, mode: str):
+        """Handle time mode change - enable/disable custom controls"""
+        if mode == 'overlap':
+            # Disable custom time controls
+            self.start_time_spin.setEnabled(False)
+            self.end_time_spin.setEnabled(False)
+            self.start_time_spin.setToolTip("Disabled in overlap mode - uses overlapping time range automatically")
+            self.end_time_spin.setToolTip("Disabled in overlap mode - uses overlapping time range automatically")
+        else:  # custom
+            # Enable custom time controls
+            self.start_time_spin.setEnabled(True)
+            self.end_time_spin.setEnabled(True)
+            self.start_time_spin.setToolTip("Start time for custom range")
+            self.end_time_spin.setToolTip("End time for custom range")
+        
+        # Emit parameter change
+        self._on_parameter_changed()
         
     def get_alignment_parameters(self) -> Dict[str, Any]:
         """Get current alignment parameters in DataAligner format"""
@@ -210,6 +254,9 @@ class DataAlignerWidget(QWidget):
                 self.end_index_spin.setValue(params.get('end_index', 1000))
                 self.index_offset_spin.setValue(params.get('offset', 0))
                 
+                # Update control states for index mode
+                self._on_index_mode_changed(mode)
+                
             else:  # time
                 # Set time parameters
                 mode = params.get('mode', 'overlap')
@@ -228,6 +275,9 @@ class DataAlignerWidget(QWidget):
                     self.interpolation_combo.setCurrentIndex(index)
                 
                 self.resolution_spin.setValue(params.get('resolution', 0.1))
+                
+                # Update control states for time mode
+                self._on_time_mode_changed(mode)
                 
         except Exception as e:
             print(f"[DataAlignerWidget] Error setting parameters: {e}")
@@ -274,7 +324,12 @@ class DataAlignerWidget(QWidget):
                     if overlap_start < overlap_end:
                         self.start_time_spin.setValue(overlap_start)
                         self.end_time_spin.setValue(overlap_end)
-                        self.status_label.setText(f"Auto-configured: overlap [{overlap_start:.3f}:{overlap_end:.3f}]")
+                        
+                        # Auto-configure resolution based on sampling rates
+                        resolution = self._calculate_optimal_resolution(ref_channel, test_channel)
+                        self.resolution_spin.setValue(resolution)
+                        
+                        self.status_label.setText(f"Auto-configured: overlap [{overlap_start:.3f}:{overlap_end:.3f}], resolution {resolution:.6f}")
                     else:
                         self.status_label.setText("No time overlap between channels")
                 else:
@@ -283,6 +338,53 @@ class DataAlignerWidget(QWidget):
         except Exception as e:
             print(f"[DataAlignerWidget] Error auto-configuring: {e}")
             self.status_label.setText(f"Auto-configuration failed: {e}")
+    
+    def _calculate_optimal_resolution(self, ref_channel: Channel, test_channel: Channel) -> float:
+        """Calculate optimal resolution based on maximum sampling rate of both channels"""
+        try:
+            # Calculate sampling rates for both channels
+            ref_sampling_rate = self._calculate_sampling_rate(ref_channel)
+            test_sampling_rate = self._calculate_sampling_rate(test_channel)
+            
+            # Use the reciprocal of the maximum sampling rate as resolution
+            # Higher sampling rate = smaller resolution (more frequent samples)
+            max_sampling_rate = max(ref_sampling_rate, test_sampling_rate)
+            optimal_resolution = 1.0 / max_sampling_rate
+            
+            # Ensure resolution is within valid bounds
+            min_resolution = 0.000001
+            max_resolution = 1000.0
+            optimal_resolution = max(min_resolution, min(optimal_resolution, max_resolution))
+            
+            return optimal_resolution
+            
+        except Exception as e:
+            print(f"[DataAlignerWidget] Error calculating optimal resolution: {e}")
+            return 0.1  # Fallback to default
+    
+    def _calculate_sampling_rate(self, channel: Channel) -> float:
+        """Calculate sampling rate for a channel based on its time data"""
+        try:
+            if not hasattr(channel, 'xdata') or channel.xdata is None:
+                return 0.1  # Default if no time data
+            
+            time_data = channel.xdata
+            if len(time_data) < 2:
+                return 0.1  # Need at least 2 points
+            
+            # Calculate time span
+            time_span = float(time_data[-1]) - float(time_data[0])
+            if time_span <= 0:
+                return 0.1  # Avoid division by zero
+            
+            # Calculate sampling rate (samples per time unit)
+            sampling_rate = (len(time_data) - 1) / time_span
+            
+            return sampling_rate
+            
+        except Exception as e:
+            print(f"[DataAlignerWidget] Error calculating sampling rate: {e}")
+            return 0.1  # Fallback to default
     
     def validate_parameters(self) -> tuple[bool, str]:
         """Validate current alignment parameters"""
