@@ -1485,43 +1485,21 @@ class ProcessWizardManager:
                 y_data = channel_info['y']
                 
                 # Validate output data based on channel type
-                allow_length_change = channel_type in ['time-series', 'spectrogram', 'reduced']
+                allow_length_change = channel_type in ['time-series', 'reduced']
                 BaseStep.validate_output_data(parent_channel.ydata, y_data, channel_type=channel_type, allow_length_change=allow_length_change)
                 
                 # Generate channel suffix
                 suffix = f"CustomScript_{channel_type}" if len(channels_data) > 1 else "CustomScript"
                 
-                # Create the channel based on type
-                if channel_type == 'spectrogram':
-                    # Handle spectrogram-specific properties
-                    t_data = channel_info.get('t', x_data)
-                    f_data = channel_info.get('f', y_data)
-                    z_data = channel_info.get('z', None)
-                    
-                    new_channel = BaseStep.create_new_channel(
-                        parent=parent_channel,
-                        xdata=t_data,      # Time axis
-                        ydata=f_data,      # Frequency axis
-                        params=fallback_params,
-                        suffix=suffix,
-                        channel_tags=tags
-                    )
-                    
-                    # Add spectrogram data to metadata
-                    if z_data is not None:
-                        new_channel.metadata = {'Zxx': z_data}
-                    else:
-                        new_channel.metadata = {}
-                else:
-                    # Handle regular channels (time-series, etc.)
-                    new_channel = BaseStep.create_new_channel(
-                        parent=parent_channel,
-                        xdata=x_data,
-                        ydata=y_data,
-                        params=fallback_params,
-                        suffix=suffix,
-                        channel_tags=tags
-                    )
+                # Create the channel (all channels are now time-series)
+                new_channel = BaseStep.create_new_channel(
+                    parent=parent_channel,
+                    xdata=x_data,
+                    ydata=y_data,
+                    params=fallback_params,
+                    suffix=suffix,
+                    channel_tags=tags
+                )
                 
                 # Update channel metadata for custom script
                 new_channel.description = parent_channel.description + f' -> custom_script_{channel_type}'

@@ -70,11 +70,5 @@ Provides better time-frequency resolution trade-off than STFT."""
                 'tags': ['time-series'],
                 'x': x,
                 'y': reduced_data
-            },
-            {
-                'tags': ['spectrogram'],
-                't': x,
-                'f': frequencies,
-                'z': cwt_magnitude
             }
         ]

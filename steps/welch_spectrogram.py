@@ -136,11 +136,5 @@ Useful for:
                 'tags': ['time-series'],
                 'x': time_centers,
                 'y': reduced_data
-            },
-            {
-                'tags': ['spectrogram'],
-                't': time_centers,
-                'f': frequencies,
-                'z': psd_matrix
             }
         ] 

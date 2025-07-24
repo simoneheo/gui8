@@ -22,7 +22,6 @@ from channel import SourceType
 from steps.base_step import BaseStep
 import numpy as np
 from scipy.signal import find_peaks
-from scipy.ndimage import zoom
 
 class ProcessWizardWindow(QMainWindow):
     """
@@ -355,8 +354,6 @@ class ProcessWizardWindow(QMainWindow):
         self.step_table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         right_layout.addWidget(self.step_table)
 
-
-
         # Create tab widget for plot area
         self.tab_widget = QTabWidget()
 
@@ -372,56 +369,8 @@ class ProcessWizardWindow(QMainWindow):
         time_series_layout.addWidget(self.toolbar)
         time_series_layout.addWidget(self.canvas)
 
-        # Create Spectrogram tab
-        spectrogram_tab = QWidget()
-        spectrogram_layout = QVBoxLayout(spectrogram_tab)
-
-        # Add spectrogram controls
-        controls_layout = QHBoxLayout()
-        
-        # Log scaling toggle
-        self.log_scale_checkbox = QCheckBox("Logarithmic Scaling")
-        self.log_scale_checkbox.setChecked(False)  # Default off
-        self.log_scale_checkbox.stateChanged.connect(self._on_spectrogram_settings_changed)
-        controls_layout.addWidget(self.log_scale_checkbox)
-        
-        # Downsampling toggle
-        self.downsample_checkbox = QCheckBox("Downsample for Performance")
-        self.downsample_checkbox.setChecked(True)  # Default on
-        self.downsample_checkbox.stateChanged.connect(self._on_spectrogram_settings_changed)
-        controls_layout.addWidget(self.downsample_checkbox)
-        
-        # Add spacer to push controls to the left
-        controls_layout.addStretch()
-        
-        spectrogram_layout.addLayout(controls_layout)
-
-        # Spectrogram plot area
-        self.spectrogram_figure = plt.figure(figsize=(8, 6), dpi=100)
-        self.spectrogram_ax = self.spectrogram_figure.add_subplot(111)
-        # Set initial layout with space for right colorbar
-        self.spectrogram_figure.subplots_adjust(right=0.85, left=0.1, top=0.9, bottom=0.1)
-        self.spectrogram_canvas = FigureCanvas(self.spectrogram_figure)
-        self.spectrogram_toolbar = NavigationToolbar(self.spectrogram_canvas, spectrogram_tab)
-        spectrogram_layout.addWidget(self.spectrogram_toolbar)
-        spectrogram_layout.addWidget(self.spectrogram_canvas)
-
-        # Create Bar Chart tab
-        bar_chart_tab = QWidget()
-        bar_chart_layout = QVBoxLayout(bar_chart_tab)
-
-        # Bar chart plot area
-        self.bar_chart_figure = plt.figure(figsize=(8, 6), dpi=100)
-        self.bar_chart_ax = self.bar_chart_figure.add_subplot(111)
-        self.bar_chart_canvas = FigureCanvas(self.bar_chart_figure)
-        self.bar_chart_toolbar = NavigationToolbar(self.bar_chart_canvas, bar_chart_tab)
-        bar_chart_layout.addWidget(self.bar_chart_toolbar)
-        bar_chart_layout.addWidget(self.bar_chart_canvas)
-
         # Add tabs
         self.tab_widget.addTab(time_series_tab, "Time Series")
-        self.tab_widget.addTab(spectrogram_tab, "Spectrogram")
-        self.tab_widget.addTab(bar_chart_tab, "Bar Chart")
         
         # Connect tab change event
         self.tab_widget.currentChanged.connect(self._on_tab_changed)
@@ -843,15 +792,8 @@ class ProcessWizardWindow(QMainWindow):
 
     def _filter_lineage_by_tab(self, lineage, tab_index):
         """Filter lineage channels based on the current tab."""
-        if tab_index == 0:  # Time Series tab
-            return [ch for ch in lineage if "time-series" in ch.tags or ch.step == 0]
-        elif tab_index == 1:  # Spectrogram tab
-            return [ch for ch in lineage if "spectrogram" in ch.tags]
-        elif tab_index == 2:  # Bar Chart tab (updated index after removing scatter)
-            return [ch for ch in lineage if "bar-chart" in ch.tags]
-        else:
-            # Default: show all channels
-            return lineage
+        # Since we only have time series tab now, return all channels
+        return lineage
 
     def _update_plot(self):
         """Update the plot with the current channel data."""
@@ -878,30 +820,13 @@ class ProcessWizardWindow(QMainWindow):
             lineage = [ch for ch in file_channels if ch.lineage_id == active_channel.lineage_id]
             lineage.sort(key=lambda ch: ch.step)
         
-        # Determine which tab to update based on current active tab
-        current_tab = self.tab_widget.currentWidget()
-        tab_index = self.tab_widget.indexOf(current_tab)
-        
-        if tab_index == 1:  # Spectrogram tab
-            self._update_spectrogram_plot(lineage, active_channel)
-        elif tab_index == 2:  # Bar Chart tab (updated index after removing scatter)
-            self._update_bar_chart_plot(lineage, active_channel)
-        else:  # Time Series tab
-            self._update_time_series_plot(lineage, active_channel)
+        # Update time series plot
+        self._update_time_series_plot(lineage, active_channel)
 
     def _update_time_series_plot(self, lineage, active_channel):
         """Update the time series plot."""
-        # Filter for time series channels - include all channels that aren't specifically spectrograms or bar charts
-        channels = []
-        for ch in lineage:
-            # Include channels that:
-            # 1. Have "time-series" in tags, OR
-            # 2. Are raw channels (step == 0), OR  
-            # 3. Don't have spectrogram or bar-chart tags (default to time series)
-            if ("time-series" in ch.tags or 
-                ch.step == 0 or 
-                ("spectrogram" not in ch.tags and "bar-chart" not in ch.tags)):
-                channels.append(ch)
+        # Include all channels since we only have time series now
+        channels = lineage
         
         # Clear the plot
         self.ax.clear()
@@ -931,186 +856,10 @@ class ProcessWizardWindow(QMainWindow):
         self.ax.legend().set_visible(False)
         self.canvas.draw()
 
-    def _update_spectrogram_plot(self, lineage, active_channel):
-        """Update the spectrogram plot."""
-        channels = [ch for ch in lineage if "spectrogram" in ch.tags]
-
-        # Clear the figure and recreate axes
-        self.spectrogram_figure.clf()
-        self.spectrogram_ax = self.spectrogram_figure.add_subplot(111)
-
-        # For spectrograms, only show the most recent one by default to prevent overlays
-        # But still respect user's visibility choices
-        visible_channels = [ch for ch in channels if ch.show]
-        
-        # If multiple spectrogram channels are visible, prefer the most recent one
-        # unless user has explicitly unchecked older ones
-        if len(visible_channels) > 1:
-            # Check if user has manually toggled visibility (some channels are hidden)
-            all_channels_visible = len(visible_channels) == len(channels)
-            
-            if all_channels_visible:
-                # User hasn't manually toggled - show only the most recent
-                most_recent = max(channels, key=lambda ch: ch.step)
-                visible_channels = [most_recent]
-                print(f"[ProcessWizard] Multiple spectrograms detected, showing most recent: {most_recent.legend_label}")
-
-        # Track colorbars to prevent duplication
-        colorbar_added = False
-
-        for channel in visible_channels:
-            if channel.show and hasattr(channel, 'metadata') and 'Zxx' in channel.metadata:
-                Zxx = channel.metadata['Zxx'].copy()  # Make a copy to avoid modifying original
-                colormap = channel.metadata.get('colormap', 'viridis')
-                
-                # Apply logarithmic scaling if enabled
-                if self.log_scale_checkbox.isChecked():
-                    # Convert to dB scale with small epsilon to avoid log(0)
-                    epsilon = np.finfo(float).eps
-                    Zxx_display = 10 * np.log10(Zxx + epsilon)
-                    cbar_label = "Power (dB)"
-                else:
-                    Zxx_display = Zxx
-                    cbar_label = "Power"
-                
-                # Apply downsampling if enabled
-                if self.downsample_checkbox.isChecked():
-                    # Downsample if spectrogram is too large for efficient plotting
-                    max_display_size = (200, 1000)  # (freq_bins, time_bins)
-                    freq_bins, time_bins = Zxx_display.shape
-                    
-                    if freq_bins > max_display_size[0] or time_bins > max_display_size[1]:
-                        # Calculate zoom factors
-                        freq_zoom = min(1.0, max_display_size[0] / freq_bins)
-                        time_zoom = min(1.0, max_display_size[1] / time_bins)
-                        
-                        # Downsample the spectrogram
-                        Zxx_display = zoom(Zxx_display, (freq_zoom, time_zoom), order=1)
-                        
-                        # Downsample corresponding axes
-                        if len(channel.ydata) > 1:
-                            freq_indices = np.linspace(0, len(channel.ydata)-1, Zxx_display.shape[0], dtype=int)
-                            ydata_display = channel.ydata[freq_indices]
-                        else:
-                            ydata_display = channel.ydata
-                            
-                        if len(channel.xdata) > 1:
-                            time_indices = np.linspace(0, len(channel.xdata)-1, Zxx_display.shape[1], dtype=int)
-                            xdata_display = channel.xdata[time_indices]
-                        else:
-                            xdata_display = channel.xdata
-                    else:
-                        xdata_display = channel.xdata
-                        ydata_display = channel.ydata
-                else:
-                    xdata_display = channel.xdata
-                    ydata_display = channel.ydata
-                
-                # Intelligent color limits using percentiles
-                if self.log_scale_checkbox.isChecked():
-                    # For dB scale, use percentiles to avoid extreme values
-                    vmin, vmax = np.percentile(Zxx_display[np.isfinite(Zxx_display)], [5, 95])
-                    # Ensure reasonable dB range
-                    if vmax - vmin < 20:  # Less than 20 dB range
-                        vmax = vmin + 40  # Expand to 40 dB range
-                else:
-                    # For linear scale, use percentiles but ensure non-negative
-                    vmin, vmax = np.percentile(Zxx_display, [1, 99])
-                    vmin = max(0, vmin)  # Ensure non-negative for linear scale
-                
-                # Plot the spectrogram
-                im = self.spectrogram_ax.pcolormesh(xdata_display, ydata_display, Zxx_display, 
-                                                 shading='gouraud', cmap=colormap, vmin=vmin, vmax=vmax)
-                
-                if 'colormap' not in channel.metadata:
-                    channel.metadata['colormap'] = colormap
-                    
-                self.spectrogram_ax.set_ylabel(channel.ylabel)
-                self.spectrogram_ax.set_xlabel(channel.xlabel)
-                self.spectrogram_ax.set_yscale('log')
-                
-                # Set axis limits
-                if len(ydata_display) > 0:
-                    y_min = min(ydata_display)
-                    y_max = max(ydata_display)
-                    if y_min <= 0:
-                        y_min = y_max * 0.01
-                    y_min = y_min * 0.9
-                    y_max = y_max * 1.1
-                    self.spectrogram_ax.set_ylim(y_min, y_max)
-                    
-                if len(xdata_display) > 0:
-                    x_min = min(xdata_display)
-                    x_max = max(xdata_display)
-                    x_min = x_min - (x_max - x_min) * 0.02
-                    x_max = x_max + (x_max - x_min) * 0.02
-                    self.spectrogram_ax.set_xlim(x_min, x_max)
-                
-                # Add colorbar on the right side (only once per plot)
-                if not colorbar_added:
-                    cbar = self.spectrogram_figure.colorbar(im, ax=self.spectrogram_ax, 
-                                                          orientation='vertical', pad=0.05, aspect=20)
-                    cbar.set_label(cbar_label)
-                    colorbar_added = True
-                    
-        self.spectrogram_ax.set_title(f"File: {active_channel.filename}")
-        self.spectrogram_figure.tight_layout(rect=[0, 0.1, 0.85, 1])  # leave space for colorbar on right
-        self.spectrogram_canvas.draw()
-
-    def _update_bar_chart_plot(self, lineage, active_channel):
-        """Update the bar chart plot."""
-        channels = [ch for ch in lineage if "bar-chart" in ch.tags]
-
-        # Clear the plot
-        self.bar_chart_ax.clear()
-
-        # Plot each channel using stored style properties
-        for ch in channels:
-            if ch.show:  # Only plot visible channels
-                # Use stored style properties from channel
-                color = getattr(ch, 'color', '#1f77b4')
-                
-                # Create bar chart
-                if hasattr(ch, 'xdata') and hasattr(ch, 'ydata'):
-                    self.bar_chart_ax.bar(ch.xdata, ch.ydata, 
-                                        color=color, 
-                                        label=ch.legend_label,
-                                        alpha=0.7)
-
-        # Set title and labels
-        self.bar_chart_ax.set_title(f"File: {active_channel.filename}")
-        if channels and channels[0].show:
-            # Use labels from the first visible channel
-            visible_channel = next((ch for ch in channels if ch.show), None)
-            if visible_channel:
-                self.bar_chart_ax.set_xlabel(getattr(visible_channel, 'xlabel', 'X'))
-                self.bar_chart_ax.set_ylabel(getattr(visible_channel, 'ylabel', 'Y'))
-        
-        self.bar_chart_ax.legend().set_visible(False)
-        self.bar_chart_figure.tight_layout()
-        self.bar_chart_canvas.draw()
-
     def _on_tab_changed(self, index):
         """Handle tab change event."""
-        # Store current figure sizes
-        spectrogram_size = self.spectrogram_figure.get_size_inches()
-        bar_chart_size = self.bar_chart_figure.get_size_inches()
-        
-        # Update the data (this will maintain the current input channel selection)
-        self._update_step_table()
+        # Since we only have one tab now, just update the plot
         self._update_plot()
-        
-        # Restore figure sizes
-        self.spectrogram_figure.set_size_inches(spectrogram_size)
-        self.bar_chart_figure.set_size_inches(bar_chart_size)
-        
-        # Ensure spectrogram layout is maintained with space for right colorbar
-        self.spectrogram_figure.subplots_adjust(right=0.85, left=0.1, top=0.9, bottom=0.1)
-        
-        # Redraw all canvases to ensure proper display
-        self.spectrogram_canvas.draw()
-        self.bar_chart_canvas.draw()
-        self.canvas.draw()
 
     def _on_file_selected(self, index):
         """Handle file selection change."""
@@ -1283,15 +1032,7 @@ class ProcessWizardWindow(QMainWindow):
         self._update_input_channel_combobox()
 
         # Switch to appropriate tab based on created channel type
-        if new_channel and hasattr(new_channel, 'tags'):
-            if "spectrogram" in new_channel.tags:
-                self.tab_widget.setCurrentIndex(1)  # Switch to spectrogram tab
-            elif "bar-chart" in new_channel.tags:
-                self.tab_widget.setCurrentIndex(2)  # Switch to bar chart tab
-        # Fallback to old logic for special cases like stft_filter
-        elif hasattr(self.wizard_manager, 'pending_step') and self.wizard_manager.pending_step:
-            if self.wizard_manager.pending_step.name == "stft_filter":
-                self.tab_widget.setCurrentIndex(1)  # Switch to spectrogram tab
+        # Since we only have time series tab now, no need to switch tabs
 
         # Update step table and plot with the new channel properly selected
         self._update_step_table()  # This should now show the new channel in the updated lineage
@@ -1301,10 +1042,8 @@ class ProcessWizardWindow(QMainWindow):
         
         self._update_plot()
         
-        # Force redraw of all canvases
+        # Force redraw of canvas
         self.canvas.draw()
-        self.spectrogram_canvas.draw()
-        self.bar_chart_canvas.draw()
 
     def _is_script_customized(self, script_text):
         """Check if the script has been customized by the user (not just the default generated script)"""
@@ -1453,11 +1192,7 @@ class ProcessWizardWindow(QMainWindow):
         if len(filtered_steps) == 1:
             self.filter_list.setCurrentRow(0)
 
-    def _on_spectrogram_settings_changed(self):
-        """Handle spectrogram settings change."""
-        # Only update if we're on the spectrogram tab
-        if self.tab_widget.currentIndex() == 1:  # Spectrogram tab
-            self._update_plot()
+
 
     # Action methods for the Actions column
     def _toggle_channel_visibility(self, channel_id: str):
@@ -1565,8 +1300,6 @@ class ProcessWizardWindow(QMainWindow):
             
             # Force plot canvas to redraw immediately
             self.canvas.draw()
-            self.spectrogram_canvas.draw()
-            self.bar_chart_canvas.draw()
             
 
 
@@ -1940,15 +1673,7 @@ class ProcessWizardWindow(QMainWindow):
                 "        }",
                 "    ]",
                 "    ",
-                "    # For spectrograms, add additional fields:",
-                "    # {",
-                "    #     'tags': ['spectrogram'],",
-                "    #     'x': time_axis,      # Time axis for plotting",
-                "    #     'y': freq_axis,      # Frequency axis for plotting", 
-                "    #     't': time_axis,      # Time data",
-                "    #     'f': freq_axis,      # Frequency data",
-                "    #     'z': spectrogram_data # 2D spectrogram data",
-                "    # }",
+
                 "",
                 "# IMPORTANT: The script must define 'result_channels_data' (new format)",
                 "# or 'result_channel'/'result_channels' (legacy format)",

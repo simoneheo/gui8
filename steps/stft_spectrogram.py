@@ -200,11 +200,5 @@ Reduction methods:
                 'tags': ['time-series'],
                 'x': t_aligned,
                 'y': reduced_data
-            },
-            {
-                'tags': ['spectrogram'],
-                't': t_aligned,
-                'f': f,
-                'z': Pxx
             }
         ]
