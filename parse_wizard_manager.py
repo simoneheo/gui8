@@ -45,11 +45,11 @@ class ParseWizardManager(QObject):
     
     def _validate_managers(self) -> bool:
         """Validate that required managers are available"""
-        if not self.file_manager:
+        if self.file_manager is None:
             print("[ParseWizardManager] Error: No file manager available")
             return False
         
-        if not self.channel_manager:
+        if self.channel_manager is None:
             print("[ParseWizardManager] Error: No channel manager available")
             return False
         

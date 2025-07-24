@@ -430,6 +430,11 @@ class DataAligner:
         self.alignment_stats['total_alignments'] += 1
         error_messages = []
         
+        # DEBUG: Print input data lengths
+        print(f"[DEBUG] DataAligner input - ref_channel length: {len(ref_channel.ydata) if ref_channel.ydata is not None else 0}")
+        print(f"[DEBUG] DataAligner input - test_channel length: {len(test_channel.ydata) if test_channel.ydata is not None else 0}")
+        print(f"[DEBUG] DataAligner input - alignment_params: {alignment_params}")
+        
         # CRITICAL: Check if channels have data - if not, fail immediately
         if (ref_channel.ydata is None or len(ref_channel.ydata) == 0 or
             test_channel.ydata is None or len(test_channel.ydata) == 0):
@@ -460,6 +465,10 @@ class DataAligner:
                 test_channel = self._cleanup_channel_data(test_channel)
                 self.alignment_stats['fallback_usage'] += 1
             
+            # DEBUG: Print data lengths after cleanup
+            print(f"[DEBUG] DataAligner after cleanup - ref_channel length: {len(ref_channel.ydata) if ref_channel.ydata is not None else 0}")
+            print(f"[DEBUG] DataAligner after cleanup - test_channel length: {len(test_channel.ydata) if test_channel.ydata is not None else 0}")
+            
             # Step 3: Apply datetime conversion if needed - but continue if it fails
             try:
                 enhanced_ref = self.datetime_converter.detect_and_convert_datetime(ref_channel)
@@ -475,6 +484,10 @@ class DataAligner:
             
             # Step 4: Perform alignment - this is the core operation
             alignment_result = self._perform_enhanced_alignment(enhanced_ref, enhanced_test, alignment_params)
+            
+            # DEBUG: Print alignment result lengths
+            print(f"[DEBUG] DataAligner result - ref_data length: {len(alignment_result.ref_data) if alignment_result.success else 0}")
+            print(f"[DEBUG] DataAligner result - test_data length: {len(alignment_result.test_data) if alignment_result.success else 0}")
             
             # Step 5: Validate alignment result - but don't fail if validation fails
             if alignment_result.success:
@@ -547,7 +560,7 @@ class DataAligner:
         """Get safe fallback parameters when validation fails"""
         fallback_params = params.copy()
         
-        alignment_method = params.get('alignment_method', 'index')
+        alignment_method = params.get('alignment_method', 'time')
         
         if alignment_method == 'index' or alignment_method not in ['index', 'time']:
             # Safe index-based fallback
@@ -616,7 +629,7 @@ class DataAligner:
         from pair import AlignmentConfig, AlignmentMethod
         
         # Get alignment method from params
-        alignment_method = alignment_params.get('alignment_method', 'index')
+        alignment_method = alignment_params.get('alignment_method', 'time')
         mode = alignment_params.get('mode', 'truncate')
         
         if alignment_method == 'index':
@@ -753,6 +766,14 @@ class DataAligner:
         ref_data = ref_channel.ydata
         test_data = test_channel.ydata
         
+        # DEBUG: Print alignment method details
+        print(f"[DEBUG] DataAligner._align_by_index - mode: {alignment_config.mode}")
+        print(f"[DEBUG] DataAligner._align_by_index - ref_data length: {len(ref_data) if ref_data is not None else 0}")
+        print(f"[DEBUG] DataAligner._align_by_index - test_data length: {len(test_data) if test_data is not None else 0}")
+        if alignment_config.mode == 'custom':
+            print(f"[DEBUG] DataAligner._align_by_index - start_index: {alignment_config.start_index}, end_index: {alignment_config.end_index}")
+        print(f"[DEBUG] DataAligner._align_by_index - offset: {alignment_config.offset}")
+        
         # Ensure data is not None
         if ref_data is None or test_data is None:
             return AlignmentResult(
@@ -770,6 +791,7 @@ class DataAligner:
             min_length = min(len(ref_data), len(test_data))
             aligned_ref = ref_data[:min_length]
             aligned_test = test_data[:min_length]
+            print(f"[DEBUG] DataAligner._align_by_index truncate - min_length: {min_length}")
             
             # Apply offset by shifting one array
             if offset > 0:
@@ -831,6 +853,10 @@ class DataAligner:
                 success=False,
                 error_message="No overlapping data after alignment"
             )
+        
+        # DEBUG: Print final aligned data lengths
+        print(f"[DEBUG] DataAligner._align_by_index final - aligned_ref length: {len(aligned_ref)}")
+        print(f"[DEBUG] DataAligner._align_by_index final - aligned_test length: {len(aligned_test)}")
         
         alignment_info = {
             'method': 'index',
@@ -981,7 +1007,7 @@ class DataAligner:
                 )
             
             # Create uniform time points
-            uniform_time_grid = np.arange(time_start, time_end + alignment_config.resolution, 
+            uniform_time_grid = np.arange(time_start, time_end, 
                                         alignment_config.resolution)
             
             # Interpolate both channels to uniform grid

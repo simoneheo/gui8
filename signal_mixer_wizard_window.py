@@ -72,6 +72,9 @@ class SignalMixerWizardWindow(QMainWindow):
         # Track channel visibility states to preserve checkbox states across table updates
         self._channel_visibility_states = {}
         
+        # Initialize alignment method tracking
+        self._previous_alignment_method = 'time'
+        
         # Validate initialization
         if not self._validate_initialization():
             return
@@ -580,6 +583,14 @@ class SignalMixerWizardWindow(QMainWindow):
         else:
             self.channel_a_stats.setText("No channel selected")
         
+        # Auto-configure alignment parameters when channel changes
+        channel_b = self.channel_b_combo.currentData()
+        if channel and channel_b:
+            self.data_aligner_widget.auto_configure_for_channels(channel, channel_b)
+            # Initialize previous alignment method tracking
+            params = self.data_aligner_widget.get_alignment_parameters()
+            self._previous_alignment_method = params.get('alignment_method', 'time')
+        
         self._update_compatibility()
         self._update_plot()
 
@@ -594,6 +605,14 @@ class SignalMixerWizardWindow(QMainWindow):
             )
         else:
             self.channel_b_stats.setText("No channel selected")
+        
+        # Auto-configure alignment parameters when channel changes
+        channel_a = self.channel_a_combo.currentData()
+        if channel and channel_a:
+            self.data_aligner_widget.auto_configure_for_channels(channel_a, channel)
+            # Initialize previous alignment method tracking
+            params = self.data_aligner_widget.get_alignment_parameters()
+            self._previous_alignment_method = params.get('alignment_method', 'time')
         
         self._update_compatibility()
         self._update_plot()
@@ -637,8 +656,31 @@ class SignalMixerWizardWindow(QMainWindow):
 
     def _on_alignment_parameter_changed(self, parameters=None):
         """Handle alignment parameter value changes"""
-        # Update compatibility check and validation display
-        self._update_compatibility()
+        try:
+            # Check if alignment method has changed
+            if parameters:
+                current_method = parameters.get('alignment_method', 'time')
+                previous_method = getattr(self, '_previous_alignment_method', None)
+                
+                if current_method != previous_method:
+                    # Alignment method changed - trigger auto-configuration
+                    channel_a = self.channel_a_combo.currentData()
+                    channel_b = self.channel_b_combo.currentData()
+                    
+                    if channel_a and channel_b:
+                        print(f"[SignalMixerWizard] Alignment method changed from {previous_method} to {current_method}, auto-configuring...")
+                        self.data_aligner_widget.auto_configure_for_channels(channel_a, channel_b)
+                    
+                    # Store the new method for next comparison
+                    self._previous_alignment_method = current_method
+            
+            # Update compatibility check and validation display
+            self._update_compatibility()
+            
+        except Exception as e:
+            print(f"[SignalMixerWizard] Error handling alignment parameter change: {e}")
+            # Still update compatibility even if there's an error
+            self._update_compatibility()
 
     def _on_input_changed(self):
         """Handle expression or channel name input changes"""
@@ -1654,7 +1696,7 @@ class SignalMixerWizardWindow(QMainWindow):
         # If not in index-based mode, always use x-axis data
         if hasattr(self, 'data_aligner_widget'):
             alignment_params = self.data_aligner_widget.get_alignment_parameters()
-            alignment_method = alignment_params.get('alignment_method', 'index')
+            alignment_method = alignment_params.get('alignment_method', 'time')
             if alignment_method != 'index':
                 return True
         else:

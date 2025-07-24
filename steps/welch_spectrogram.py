@@ -25,7 +25,7 @@ Useful for:
 • **Power spectral analysis**: Estimate power distribution across frequencies
 • **Signal characterization**: Identify dominant frequency components
 • **Noise analysis**: Analyze frequency content of non-stationary signals"""
-    tags = ["spectrogram", "time-frequency", "welch", "psd", "scipy", "frequency", "power", "window"]
+    tags = ["stft", "welch", "psd", "scipy", "frequency", "power", "window"]
     params = [
         {
             "name": "window_duration", 

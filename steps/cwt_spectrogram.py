@@ -12,7 +12,7 @@ class cwt_spectrogram(BaseStep):
     category = "Spectrogram"
     description = """Compute Continuous Wavelet Transform (CWT) spectrogram for time-frequency analysis.
 Provides better time-frequency resolution trade-off than STFT."""
-    tags = ["spectrogram", "time-frequency", "cwt", "wavelet", "pywt", "continuous"]
+    tags = ["stft", "cwt", "wavelet", "pywt", "continuous"]
     params = [
         {"name": "wavelet", "type": "str", "default": "morl", "options": ["morl", "mexh", "cgau1", "cgau2"], "help": "Wavelet function for CWT"},
         {"name": "scales_min", "type": "float", "default": "1.0", "help": "Minimum scale (higher frequency)"},

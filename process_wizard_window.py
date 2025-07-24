@@ -939,10 +939,26 @@ class ProcessWizardWindow(QMainWindow):
         self.spectrogram_figure.clf()
         self.spectrogram_ax = self.spectrogram_figure.add_subplot(111)
 
+        # For spectrograms, only show the most recent one by default to prevent overlays
+        # But still respect user's visibility choices
+        visible_channels = [ch for ch in channels if ch.show]
+        
+        # If multiple spectrogram channels are visible, prefer the most recent one
+        # unless user has explicitly unchecked older ones
+        if len(visible_channels) > 1:
+            # Check if user has manually toggled visibility (some channels are hidden)
+            all_channels_visible = len(visible_channels) == len(channels)
+            
+            if all_channels_visible:
+                # User hasn't manually toggled - show only the most recent
+                most_recent = max(channels, key=lambda ch: ch.step)
+                visible_channels = [most_recent]
+                print(f"[ProcessWizard] Multiple spectrograms detected, showing most recent: {most_recent.legend_label}")
+
         # Track colorbars to prevent duplication
         colorbar_added = False
 
-        for channel in channels:
+        for channel in visible_channels:
             if channel.show and hasattr(channel, 'metadata') and 'Zxx' in channel.metadata:
                 Zxx = channel.metadata['Zxx'].copy()  # Make a copy to avoid modifying original
                 colormap = channel.metadata.get('colormap', 'viridis')
@@ -1232,10 +1248,16 @@ class ProcessWizardWindow(QMainWindow):
                 if new_channel:
                     print(f"[ProcessWizard] Hardcoded script executed successfully!")
                     if not used_custom_script:  # Only update console if we didn't already show a custom script message
-                        self.console_output.setPlainText(
-                            f"Operation applied successfully!\n"
-                            f"Created channel: {new_channel.channel_id}"
-                        )
+                        console_message = f"Operation applied successfully!\nCreated channel: {new_channel.channel_id}"
+                        
+                        # Check for repair information in the created channel
+                        if (hasattr(new_channel, 'metadata') and new_channel.metadata is not None and 
+                            'data_repair_info' in new_channel.metadata):
+                            repair_info = new_channel.metadata['data_repair_info']
+                            if repair_info and repair_info != "No repairs needed":
+                                console_message += f"\n\nData Repair Applied:\n{repair_info}"
+                        
+                        self.console_output.setPlainText(console_message)
             except Exception as fallback_e:
                 print(f"[ProcessWizard] Hardcoded script also failed: {fallback_e}")
                 self.console_output.setPlainText(f"Both custom and hardcoded scripts failed: {fallback_e}")

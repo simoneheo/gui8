@@ -774,9 +774,14 @@ class ProcessWizardManager:
             # Update new_channels to only include valid ones
             new_channels = valid_channels
             
-            # Set the most recent new channel as the input for next step
+            # Set the most appropriate new channel as input for next step
             if new_channels:
-                self.ui.input_ch = new_channels[-1]  # Use the last created channel
+                # Prefer time-series channels for further processing over spectrogram/visualization channels
+                time_series_channels = [ch for ch in new_channels if 'time-series' in getattr(ch, 'tags', [])]
+                if time_series_channels:
+                    self.ui.input_ch = time_series_channels[-1]  # Use the last time-series channel
+                else:
+                    self.ui.input_ch = new_channels[-1]  # Fallback to last created channel
             
             # Store step name before clearing pending_step
             step_name = self.pending_step.name if self.pending_step else "Unknown step"
@@ -843,7 +848,14 @@ class ProcessWizardManager:
         self.ui.param_table.setRowCount(0)
         self.pending_step = None
         
-        return new_channels[-1] if new_channels else None  # Return the last channel for UI consistency
+        # Return the most appropriate channel for UI consistency (prefer time-series for further processing)
+        if new_channels:
+            time_series_channels = [ch for ch in new_channels if 'time-series' in getattr(ch, 'tags', [])]
+            if time_series_channels:
+                return time_series_channels[-1]  # Return the last time-series channel
+            else:
+                return new_channels[-1]  # Fallback to last created channel
+        return None
 
     def apply_pending_step(self):
         if not self.pending_step:
@@ -1108,9 +1120,14 @@ class ProcessWizardManager:
             if empty_channels:
                 print(f"[ProcessWizardManager] Filtered out {len(empty_channels)} empty channel(s)")
             
-            # Set the most recent new channel as the input for next step
+            # Set the most appropriate new channel as input for next step
             if new_channels:
-                self.ui.input_ch = new_channels[-1]  # Use the last created channel
+                # Prefer time-series channels for further processing over spectrogram/visualization channels
+                time_series_channels = [ch for ch in new_channels if 'time-series' in getattr(ch, 'tags', [])]
+                if time_series_channels:
+                    self.ui.input_ch = time_series_channels[-1]  # Use the last time-series channel
+                else:
+                    self.ui.input_ch = new_channels[-1]  # Fallback to last created channel
             
             # Store step name before clearing pending_step
             step_name = self.pending_step.name if self.pending_step else "Unknown step"
@@ -1137,13 +1154,25 @@ class ProcessWizardManager:
         # Clean up the step name for display
         display_step_name = step_name.replace('_', ' ').title()
         
+        # Check for data repair information in any of the created channels
+        repair_info_messages = []
+        for channel in new_channels:
+            if (hasattr(channel, 'metadata') and channel.metadata is not None and 
+                'data_repair_info' in channel.metadata):
+                repair_info = channel.metadata['data_repair_info']
+                if repair_info and repair_info != "No repairs needed":
+                    repair_info_messages.append(repair_info)
+        
         if len(new_channels) == 1:
             # Get the channel name for display
             channel_name = new_channels[0].legend_label or new_channels[0].ylabel or f"Channel {new_channels[0].channel_id}"
-            self.ui.console_output.setPlainText(
-                f"Filter Applied: {display_step_name}\n"
-                f"New Channel: {channel_name}"
-            )
+            console_message = f"Operation applied successfully!\nCreated channel: {new_channels[0].channel_id}"
+            
+            # Add repair information if present
+            if repair_info_messages:
+                console_message += f"\n\nData Repair Applied:\n{repair_info_messages[0]}"
+            
+            self.ui.console_output.setPlainText(console_message)
         else:
             # For multiple channels, show names if available
             channel_names = []
@@ -1151,10 +1180,14 @@ class ProcessWizardManager:
                 name = ch.legend_label or ch.ylabel or f"Channel {ch.channel_id}"
                 channel_names.append(name)
             channel_list = ", ".join(channel_names)
-            self.ui.console_output.setPlainText(
-                f"Filter Applied: {display_step_name}\n"
-                f"Created {len(new_channels)} channels: {channel_list}"
-            )
+            
+            console_message = f"Operation applied successfully!\nCreated {len(new_channels)} channels: {channel_list}"
+            
+            # Add repair information if present
+            if repair_info_messages:
+                console_message += f"\n\nData Repair Applied:\n" + "\n".join(repair_info_messages)
+            
+            self.ui.console_output.setPlainText(console_message)
 
         # Update UI
         self.ui._update_file_selector()
@@ -1162,7 +1195,14 @@ class ProcessWizardManager:
         self.ui._update_step_table()
         self.ui._update_plot()
 
-        return new_channels[-1] if new_channels else None  # Return the last channel for UI consistency
+        # Return the most appropriate channel for UI consistency (prefer time-series for further processing)
+        if new_channels:
+            time_series_channels = [ch for ch in new_channels if 'time-series' in getattr(ch, 'tags', [])]
+            if time_series_channels:
+                return time_series_channels[-1]  # Return the last time-series channel
+            else:
+                return new_channels[-1]  # Fallback to last created channel
+        return None
 
     def _execute_script_safely(self, script_text, fallback_params):
         """Execute the user's script in a controlled environment with fallback to original step"""

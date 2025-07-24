@@ -916,12 +916,18 @@ Recommendations:
                 return True
             elif clicked_button == downsample_button:
                 self.log_message(f"User chose Manual Parse with downsample for: {file_path.name}", "info")
-                # Create a temporary file object to open Manual Parse
-                from file import File
-                temp_file = File(file_path)
-                self.file_manager.add_file(temp_file)
-                self._show_parse_wizard(temp_file.file_id)
-                return False
+                try:
+                    # Create a temporary file object to open Manual Parse
+                    from file import File
+                    temp_file = File(file_path)
+                    self.file_manager.add_file(temp_file)
+                    self._show_parse_wizard(temp_file.file_id)
+                    return False
+                except Exception as e:
+                    self.log_message(f"Error creating manual parse for large file: {str(e)}", "error")
+                    import traceback
+                    traceback.print_exc()
+                    return False
             else:
                 self.log_message(f"User cancelled loading large file: {file_path.name}", "info")
                 return False

@@ -238,7 +238,7 @@ class SignalMixerWizardManager:
                 return True, f"Channels are compatible (length: {len_a})", {'needs_alignment': False}
             
             # Different lengths - check if alignment can handle this
-            alignment_method = alignment_config.get('alignment_method', 'index')
+            alignment_method = alignment_config.get('alignment_method', 'time')
             
             if alignment_method == 'index':
                 # Index-based alignment
@@ -908,12 +908,27 @@ class SignalMixerWizardManager:
                     if not alignment_result.success:
                         return None, f"Failed to align channels: {alignment_result.error_message}"
                     
+                    # DEBUG: Print range of x that are being returned from aligner (ref and test)
+                    print(f"[DEBUG] Alignment result - ref_data length: {len(alignment_result.ref_data)}")
+                    print(f"[DEBUG] Alignment result - test_data length: {len(alignment_result.test_data)}")
+                    if hasattr(alignment_result, 'time_data') and alignment_result.time_data is not None:
+                        print(f"[DEBUG] Alignment result - time_data range: {alignment_result.time_data[0]:.6f} to {alignment_result.time_data[-1]:.6f}")
+                        print(f"[DEBUG] Alignment result - time_data length: {len(alignment_result.time_data)}")
+                    else:
+                        print(f"[DEBUG] Alignment result - no time_data returned")
+                    
                     # Get alignment stats for logging
                     alignment_stats = data_aligner.get_alignment_stats()
                     
                     # Create new channel objects with aligned data
-                    aligned_a = self._create_aligned_channel(channel_a, alignment_result.ref_data, None)
-                    aligned_b = self._create_aligned_channel(channel_b, alignment_result.test_data, None)
+                    aligned_a = self._create_aligned_channel(channel_a, alignment_result.ref_data, None, channel_a, channel_b)
+                    aligned_b = self._create_aligned_channel(channel_b, alignment_result.test_data, None, channel_a, channel_b)
+                    
+                    # DEBUG: Print downstream x-data information for aligned channels
+                    print(f"[DEBUG] Downstream - aligned_a xdata range: {aligned_a.xdata[0]:.6f} to {aligned_a.xdata[-1]:.6f}")
+                    print(f"[DEBUG] Downstream - aligned_a xdata length: {len(aligned_a.xdata)}")
+                    print(f"[DEBUG] Downstream - aligned_b xdata range: {aligned_b.xdata[0]:.6f} to {aligned_b.xdata[-1]:.6f}")
+                    print(f"[DEBUG] Downstream - aligned_b xdata length: {len(aligned_b.xdata)}")
                     
                     # Update context with aligned channels
                     channel_context['A'] = aligned_a
@@ -951,7 +966,7 @@ class SignalMixerWizardManager:
     
     def _align_channels(self, ref_channel, test_channel, config):
         """Align channels based on configuration (adapted from comparison wizard)."""
-        alignment_method = config.get('alignment_method', 'index')
+        alignment_method = config.get('alignment_method', 'time')
         
         if alignment_method == 'index':
             return self._align_by_index(ref_channel, test_channel, config)
@@ -1246,9 +1261,89 @@ class SignalMixerWizardManager:
             self._log_state_change(f"Error interpolating {channel_name} channel: {e}")
             raise
     
-    def _create_aligned_channel(self, original_channel, aligned_data, time_data=None):
+    def _create_aligned_channel(self, original_channel, aligned_data, time_data=None, channel_a=None, channel_b=None):
         """Create a new channel with aligned data."""
         from channel import Channel
+        
+        # Determine xdata to use
+        xdata_to_use = None
+        
+        if time_data is not None:
+            # Use provided time data
+            xdata_to_use = time_data
+        elif channel_a is not None and channel_b is not None:
+            # DEBUG: Print x-data information for channels A and B
+            print(f"[DEBUG] _create_aligned_channel - channel_a has xdata: {hasattr(channel_a, 'xdata') and channel_a.xdata is not None}")
+            print(f"[DEBUG] _create_aligned_channel - channel_b has xdata: {hasattr(channel_b, 'xdata') and channel_b.xdata is not None}")
+            
+            if hasattr(channel_a, 'xdata') and channel_a.xdata is not None:
+                print(f"[DEBUG] _create_aligned_channel - channel_a xdata range: {channel_a.xdata[0]:.6f} to {channel_a.xdata[-1]:.6f}")
+                print(f"[DEBUG] _create_aligned_channel - channel_a xdata length: {len(channel_a.xdata)}")
+            
+            if hasattr(channel_b, 'xdata') and channel_b.xdata is not None:
+                print(f"[DEBUG] _create_aligned_channel - channel_b xdata range: {channel_b.xdata[0]:.6f} to {channel_b.xdata[-1]:.6f}")
+                print(f"[DEBUG] _create_aligned_channel - channel_b xdata length: {len(channel_b.xdata)}")
+            
+            # Check if channels A and B have identical xdata
+            if (hasattr(channel_a, 'xdata') and channel_a.xdata is not None and 
+                hasattr(channel_b, 'xdata') and channel_b.xdata is not None):
+                
+                # Check if xdata lengths match
+                if len(channel_a.xdata) == len(channel_b.xdata):
+                    print(f"[DEBUG] _create_aligned_channel - xdata lengths match: {len(channel_a.xdata)}")
+                    try:
+                        # Check if xdata values are identical
+                        xdata_identical = np.allclose(channel_a.xdata, channel_b.xdata, rtol=1e-10, atol=1e-10)
+                        print(f"[DEBUG] _create_aligned_channel - xdata values identical: {xdata_identical}")
+                        
+                        if xdata_identical:
+                            # Use A's xdata (sliced to match aligned data length)
+                            print(f"[DEBUG] _create_aligned_channel - length comparison: original_xdata({len(channel_a.xdata)}) >= aligned_data({len(aligned_data)}) = {len(channel_a.xdata) >= len(aligned_data)}")
+                            if len(channel_a.xdata) >= len(aligned_data):
+                                xdata_to_use = channel_a.xdata[:len(aligned_data)]
+                                print(f"[DEBUG] _create_aligned_channel - using channel_a xdata (sliced): {xdata_to_use[0]:.6f} to {xdata_to_use[-1]:.6f}")
+                            else:
+                                # If original xdata is shorter, try to extend it proportionally
+                                original_length = len(channel_a.xdata)
+                                aligned_length = len(aligned_data)
+                                
+                                if original_length > 0:
+                                    # Calculate the time step from original data
+                                    time_step = (channel_a.xdata[-1] - channel_a.xdata[0]) / (original_length - 1)
+                                    # Extend the time range proportionally
+                                    extended_xdata = np.linspace(channel_a.xdata[0], channel_a.xdata[-1] + time_step * (aligned_length - original_length), aligned_length)
+                                    xdata_to_use = extended_xdata
+                                    print(f"[DEBUG] _create_aligned_channel - using extended channel_a xdata: {xdata_to_use[0]:.6f} to {xdata_to_use[-1]:.6f}")
+                                else:
+                                    # Fallback to indices if no original xdata
+                                    xdata_to_use = np.arange(len(aligned_data))
+                                    print(f"[DEBUG] _create_aligned_channel - using indices (no original xdata)")
+                        else:
+                            # Different xdata values - use indices
+                            xdata_to_use = np.arange(len(aligned_data))
+                            print(f"[DEBUG] _create_aligned_channel - using indices (different xdata values)")
+                    except Exception as e:
+                        # Error comparing xdata - use indices
+                        xdata_to_use = np.arange(len(aligned_data))
+                        print(f"[DEBUG] _create_aligned_channel - using indices (error comparing xdata: {e})")
+                else:
+                    # Different xdata lengths - use indices
+                    xdata_to_use = np.arange(len(aligned_data))
+                    print(f"[DEBUG] _create_aligned_channel - using indices (different xdata lengths: {len(channel_a.xdata)} vs {len(channel_b.xdata)})")
+            else:
+                # Missing xdata - use indices
+                xdata_to_use = np.arange(len(aligned_data))
+                print(f"[DEBUG] _create_aligned_channel - using indices (missing xdata)")
+        else:
+            # No channels provided for comparison - use indices
+            xdata_to_use = np.arange(len(aligned_data))
+        
+        # DEBUG: Print final xdata assignment
+        print(f"[DEBUG] _create_aligned_channel - final xdata_to_use type: {type(xdata_to_use)}")
+        if hasattr(xdata_to_use, '__len__'):
+            print(f"[DEBUG] _create_aligned_channel - final xdata_to_use length: {len(xdata_to_use)}")
+            if len(xdata_to_use) > 0:
+                print(f"[DEBUG] _create_aligned_channel - final xdata_to_use range: {xdata_to_use[0]:.6f} to {xdata_to_use[-1]:.6f}")
         
         # Create new channel with aligned data
         aligned_channel = Channel(
@@ -1258,7 +1353,7 @@ class SignalMixerWizardManager:
             xlabel=original_channel.xlabel,
             ylabel=original_channel.ylabel,
             step=original_channel.step,
-            xdata=time_data if time_data is not None else np.arange(len(aligned_data)),
+            xdata=xdata_to_use,
             ydata=aligned_data,
             legend_label=original_channel.legend_label,
             description=original_channel.description,

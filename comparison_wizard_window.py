@@ -2071,7 +2071,7 @@ class ComparisonWizardWindow(QWidget):
         """Handle alignment parameter changes from DataAlignerWidget"""
         try:
             # Check if alignment method has changed
-            current_method = parameters.get('alignment_method', 'index')
+            current_method = parameters.get('alignment_method', 'time')
             previous_method = getattr(self, '_previous_alignment_method', None)
             
             if current_method != previous_method:
@@ -2108,7 +2108,7 @@ class ComparisonWizardWindow(QWidget):
                 # Initialize previous alignment method tracking
                 if hasattr(self, 'data_aligner_widget'):
                     params = self.data_aligner_widget.get_alignment_parameters()
-                    self._previous_alignment_method = params.get('alignment_method', 'index')
+                    self._previous_alignment_method = params.get('alignment_method', 'time')
                 
         except Exception as e:
             print(f"[ComparisonWizard] Error handling channel selection change: {e}")

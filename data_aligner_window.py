@@ -40,7 +40,7 @@ class DataAlignerWidget(QWidget):
         mode_layout = QHBoxLayout()
         mode_layout.addWidget(QLabel("Alignment Method:"))
         self.alignment_method_combo = QComboBox()
-        self.alignment_method_combo.addItems(["index", "time"])
+        self.alignment_method_combo.addItems(["time", "index"])
         mode_layout.addWidget(self.alignment_method_combo)
         group_layout.addLayout(mode_layout)
         
@@ -126,7 +126,7 @@ class DataAlignerWidget(QWidget):
         layout.addWidget(self.alignment_group)
         
         # Set initial visibility
-        self._on_alignment_method_changed("index")
+        self._on_alignment_method_changed("time")
         
     def _connect_signals(self):
         """Connect UI signals to parameter change handler"""
@@ -192,7 +192,7 @@ class DataAlignerWidget(QWidget):
     def set_alignment_parameters(self, params: Dict[str, Any]):
         """Set alignment parameters from a dictionary"""
         try:
-            alignment_method = params.get('alignment_method', 'index')
+            alignment_method = params.get('alignment_method', 'time')
             
             # Set alignment method
             index = self.alignment_method_combo.findText(alignment_method)

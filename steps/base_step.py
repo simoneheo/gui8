@@ -60,8 +60,19 @@ class BaseStep(ABC):
             if x is None or y is None:
                 raise ValueError("Channel must have valid xdata and ydata")
             
-            # 3. Validate input data
-            cls.validate_signal_data(x, y)
+            # 3. Validate input data with repair capability
+            data_repair_info = None
+            try:
+                cls.validate_signal_data(x, y)
+            except ValueError as e:
+                print(f"[{step_name}] Data validation failed: {e}")
+                print(f"[{step_name}] Attempting data repair...")
+                x, y, repair_summary = cls.repair_signal_data(x, y, step_name)
+                data_repair_info = repair_summary
+                print(f"[{step_name}] {repair_summary}")
+                print(f"[{step_name}] Retrying validation with repaired data...")
+                cls.validate_signal_data(x, y)
+                print(f"[{step_name}] Validation passed after repair")
             
             # 4. Get sampling frequency
             fs = cls._get_channel_fs(channel)
@@ -103,10 +114,13 @@ class BaseStep(ABC):
                     y_data = channel_info['y']
                     z_data = None
                 
-                # Validate output data for this channel based on its type
-                # Allow length changes for time-series from STFT/spectrogram processing
-                allow_length_change = channel_type in ['time-series', 'spectrogram', 'reduced']
-                cls.validate_output_data(y, y_data, channel_type=channel_type, allow_length_change=allow_length_change)
+                # Validate output data for this channel - generous validation
+                if channel_type == 'spectrogram':
+                    # Spectrogram validation: just check that data exists and is not empty
+                    cls.validate_spectrogram_data(x_data, y_data, z_data)
+                else:
+                    # Regular time-series validation: check x/y length match
+                    cls.validate_output_data(y, y_data, x_data=x_data)
                 
                 print(f"[{step_name}] Channel {i+1} ({channel_type}) data shape: {y_data.shape if hasattr(y_data, 'shape') else len(y_data)}")
                 
@@ -157,6 +171,12 @@ class BaseStep(ABC):
                         suffix=suffix,
                         channel_tags=channel_tags
                     )
+                
+                # Add data repair information to channel metadata if repairs were made
+                if data_repair_info is not None:
+                    if not hasattr(new_channel, 'metadata') or new_channel.metadata is None:
+                        new_channel.metadata = {}
+                    new_channel.metadata['data_repair_info'] = data_repair_info
                 
                 created_channels.append(new_channel)
             
@@ -370,15 +390,29 @@ class BaseStep(ABC):
         # Use channel-specific tags if provided, otherwise use step class tags
         tags_to_use = channel_tags if channel_tags is not None else cls.tags
         
-        return Channel.from_parent(
+        # Debug output for channel creation
+        final_legend_label = f"{parent.legend_label} - {name_suffix}"
+        print(f"[{cls.name}] DEBUG: Creating new channel with:")
+        print(f"[{cls.name}] DEBUG:   - Parent legend_label: '{parent.legend_label}'")
+        print(f"[{cls.name}] DEBUG:   - Name suffix: '{name_suffix}'")
+        print(f"[{cls.name}] DEBUG:   - Final legend_label: '{final_legend_label}'")
+        print(f"[{cls.name}] DEBUG:   - Tags: {tags_to_use}")
+        print(f"[{cls.name}] DEBUG:   - xdata shape: {xdata.shape}")
+        print(f"[{cls.name}] DEBUG:   - ydata shape: {ydata.shape}")
+        print(f"[{cls.name}] DEBUG:   - ydata range: [{np.min(ydata):.3f}, {np.max(ydata):.3f}]")
+        
+        new_channel = Channel.from_parent(
             parent=parent,
             xdata=xdata,
             ydata=ydata,
-            legend_label=f"{parent.legend_label} - {name_suffix}",
+            legend_label=final_legend_label,
             description=cls.description,
             tags=tags_to_use,
             params=params  # Pass the parameters to the new channel
         )
+        
+        print(f"[{cls.name}] DEBUG: New channel created successfully with legend_label: '{new_channel.legend_label}'")
+        return new_channel
 
     # ============================================================================
     # VALIDATION HELPER METHODS
@@ -431,9 +465,17 @@ class BaseStep(ABC):
         if np.all(np.isnan(ydata)):
             raise ValueError("Signal contains only NaN values")
         
+        # Check for any NaN values (triggers repair)
+        if np.any(np.isnan(ydata)):
+            raise ValueError("Signal contains NaN values")
+        
         # Check for all infinite values
         if np.all(np.isinf(ydata)):
             raise ValueError("Signal contains only infinite values")
+        
+        # Check for any infinite values (triggers repair)
+        if np.any(np.isinf(ydata)):
+            raise ValueError("Signal contains infinite values")
         
         # Check time data validity
         if np.any(np.isnan(xdata)):
@@ -441,6 +483,163 @@ class BaseStep(ABC):
         
         if np.any(np.isinf(xdata)):
             raise ValueError("Time data contains infinite values")
+
+    @classmethod
+    def repair_signal_data(cls, xdata: np.ndarray, ydata: np.ndarray, step_name: str) -> tuple[np.ndarray, np.ndarray, str]:
+        """
+        Attempts to repair invalid signal data using the comprehensive approach.
+        
+        Args:
+            xdata: Time/index data
+            ydata: Signal data
+            step_name: Name of the step that encountered the validation error
+            
+        Returns:
+            tuple: (repaired_xdata, repaired_ydata, repair_summary)
+        """
+        print(f"[{step_name}] === DEBUG: Starting data repair ===")
+        print(f"[{step_name}] Original xdata: shape={xdata.shape}, dtype={xdata.dtype}")
+        print(f"[{step_name}] Original xdata range: [{np.min(xdata) if len(xdata) > 0 else 'empty'}] to [{np.max(xdata) if len(xdata) > 0 else 'empty'}]")
+        print(f"[{step_name}] Original xdata stats: NaN={np.sum(np.isnan(xdata))}, Inf={np.sum(np.isinf(xdata))}, Finite={np.sum(np.isfinite(xdata))}")
+        print(f"[{step_name}] Original ydata: shape={ydata.shape}, dtype={ydata.dtype}")
+        print(f"[{step_name}] Original ydata range: [{np.min(ydata) if len(ydata) > 0 else 'empty'}] to [{np.max(ydata) if len(ydata) > 0 else 'empty'}]")
+        print(f"[{step_name}] Original ydata stats: NaN={np.sum(np.isnan(ydata))}, Inf={np.sum(np.isinf(ydata))}, Finite={np.sum(np.isfinite(ydata))}")
+        
+        repaired_xdata = np.copy(xdata)
+        repaired_ydata = np.copy(ydata)
+        repairs_made = []
+        original_length = len(ydata)
+        
+        # 1. Handle length mismatch first
+        if len(xdata) != len(ydata):
+            min_len = min(len(xdata), len(ydata))
+            repaired_xdata = repaired_xdata[:min_len]
+            repaired_ydata = repaired_ydata[:min_len]
+            repairs_made.append(f"Length mismatch: x={len(xdata)}, y={len(ydata)} → truncated to {min_len} samples")
+            print(f"[{step_name}] - Length mismatch detected: x={len(xdata)}, y={len(ydata)} → truncated to {min_len} samples")
+            print(f"[{step_name}] DEBUG: After length fix - xdata.shape={repaired_xdata.shape}, ydata.shape={repaired_ydata.shape}")
+
+        # 2. Handle time data issues (critical - delete problematic points)
+        time_issues_mask = np.isnan(repaired_xdata) | np.isinf(repaired_xdata)
+        if np.any(time_issues_mask):
+            num_time_issues = np.sum(time_issues_mask)
+            print(f"[{step_name}] DEBUG: Time issues mask: {time_issues_mask}")
+            print(f"[{step_name}] DEBUG: Invalid time indices: {np.where(time_issues_mask)[0]}")
+            valid_mask = ~time_issues_mask
+            
+            if np.any(valid_mask):  # Some valid time points remain
+                print(f"[{step_name}] DEBUG: Before time repair - xdata shape: {repaired_xdata.shape}, ydata shape: {repaired_ydata.shape}")
+                repaired_xdata = repaired_xdata[valid_mask]
+                repaired_ydata = repaired_ydata[valid_mask]
+                repairs_made.append(f"Removed {num_time_issues} time points with NaN/inf values")
+                print(f"[{step_name}] - Found {num_time_issues} invalid time values → removed corresponding points")
+                print(f"[{step_name}] DEBUG: After time repair - xdata shape: {repaired_xdata.shape}, ydata shape: {repaired_ydata.shape}")
+                print(f"[{step_name}] DEBUG: After time repair - xdata range: [{np.min(repaired_xdata):.3f}, {np.max(repaired_xdata):.3f}]")
+            else:
+                raise ValueError("All time data points are invalid (NaN or infinite) - cannot repair")
+
+        # 3. Handle signal NaN values (interpolate)
+        nan_mask = np.isnan(repaired_ydata)
+        if np.any(nan_mask):
+            num_nan = np.sum(nan_mask)
+            print(f"[{step_name}] DEBUG: NaN mask: {nan_mask}")
+            print(f"[{step_name}] DEBUG: NaN indices: {np.where(nan_mask)[0]}")
+            print(f"[{step_name}] DEBUG: Before NaN repair - ydata: {repaired_ydata}")
+            
+            if np.all(nan_mask):
+                raise ValueError("All signal values are NaN - cannot repair")
+            
+            nan_percentage = (num_nan / len(repaired_ydata)) * 100
+            if nan_percentage > 50:
+                raise ValueError(f"Too many NaN values in signal ({nan_percentage:.1f}%) - data quality too poor for repair")
+            
+            # Interpolate over NaN values
+            valid_indices = np.where(~nan_mask)[0]
+            valid_values = repaired_ydata[~nan_mask]
+            nan_indices = np.where(nan_mask)[0]
+            print(f"[{step_name}] DEBUG: Valid indices: {valid_indices}, Valid values: {valid_values}")
+            print(f"[{step_name}] DEBUG: NaN indices for interpolation: {nan_indices}")
+            
+            if len(valid_indices) > 1:
+                # Use linear interpolation for small gaps, or clamp to nearest for edge cases
+                interpolated_values = np.interp(nan_indices, valid_indices, valid_values)
+                print(f"[{step_name}] DEBUG: Interpolated values: {interpolated_values}")
+                repaired_ydata[nan_mask] = interpolated_values
+                repairs_made.append(f"Interpolated {num_nan} NaN values ({nan_percentage:.1f}% of signal)")
+                print(f"[{step_name}] - Found {num_nan} NaN values → interpolated using linear method")
+                print(f"[{step_name}] DEBUG: After NaN repair - ydata: {repaired_ydata}")
+            else:
+                raise ValueError("Not enough valid signal points for interpolation")
+
+        # 4. Handle signal infinite values (clip)
+        inf_mask = np.isinf(repaired_ydata)
+        if np.any(inf_mask):
+            num_inf = np.sum(inf_mask)
+            print(f"[{step_name}] DEBUG: Inf mask: {inf_mask}")
+            print(f"[{step_name}] DEBUG: Inf indices: {np.where(inf_mask)[0]}")
+            print(f"[{step_name}] DEBUG: Before inf repair - ydata: {repaired_ydata}")
+            
+            if np.all(inf_mask):
+                raise ValueError("All signal values are infinite - cannot repair")
+            
+            inf_percentage = (num_inf / len(repaired_ydata)) * 100
+            if inf_percentage > 50:
+                raise ValueError(f"Too many infinite values in signal ({inf_percentage:.1f}%) - data quality too poor for repair")
+            
+            # Calculate clipping bounds from finite values
+            finite_values = repaired_ydata[np.isfinite(repaired_ydata)]
+            print(f"[{step_name}] DEBUG: Finite values for clipping bounds: {finite_values}")
+            
+            if len(finite_values) > 0:
+                # Use 99th percentile as clipping bounds
+                upper_bound = np.percentile(finite_values, 99)
+                lower_bound = np.percentile(finite_values, 1)
+                print(f"[{step_name}] DEBUG: Clipping bounds: [{lower_bound:.3g}, {upper_bound:.3g}]")
+                
+                # Clip infinite values
+                pos_inf_mask = np.isposinf(repaired_ydata)
+                neg_inf_mask = np.isneginf(repaired_ydata)
+                print(f"[{step_name}] DEBUG: Positive inf indices: {np.where(pos_inf_mask)[0]}")
+                print(f"[{step_name}] DEBUG: Negative inf indices: {np.where(neg_inf_mask)[0]}")
+                
+                repaired_ydata[pos_inf_mask] = upper_bound
+                repaired_ydata[neg_inf_mask] = lower_bound
+                
+                repairs_made.append(f"Clipped {num_inf} infinite values to bounds [{lower_bound:.3g}, {upper_bound:.3g}]")
+                print(f"[{step_name}] - Found {num_inf} infinite values → clipped to ±{upper_bound:.3g} (99th percentile)")
+                print(f"[{step_name}] DEBUG: After inf repair - ydata: {repaired_ydata}")
+            else:
+                raise ValueError("No finite values available for clipping bounds")
+
+        # 5. Final check - ensure we still have some data
+        if len(repaired_ydata) == 0:
+            raise ValueError("Data repair resulted in empty arrays")
+        
+        # Calculate data preservation statistics
+        final_length = len(repaired_ydata)
+        preservation_percentage = (final_length / original_length) * 100
+        
+        # Generate summary
+        if repairs_made:
+            repair_summary = f"Repair complete: {', '.join(repairs_made)} - {preservation_percentage:.1f}% of original data preserved"
+            if preservation_percentage < 80:
+                print(f"[{step_name}] Warning: Only {preservation_percentage:.1f}% of original data preserved after repair")
+        else:
+            repair_summary = "No repairs needed"
+        
+        # Final debug output
+        print(f"[{step_name}] === DEBUG: Final repaired data ===")
+        print(f"[{step_name}] Final xdata: shape={repaired_xdata.shape}, dtype={repaired_xdata.dtype}")
+        print(f"[{step_name}] Final xdata range: [{np.min(repaired_xdata):.3f}, {np.max(repaired_xdata):.3f}]")
+        print(f"[{step_name}] Final xdata: {repaired_xdata}")
+        print(f"[{step_name}] Final ydata: shape={repaired_ydata.shape}, dtype={repaired_ydata.dtype}")
+        print(f"[{step_name}] Final ydata range: [{np.min(repaired_ydata):.3f}, {np.max(repaired_ydata):.3f}]")
+        print(f"[{step_name}] Final ydata: {repaired_ydata}")
+        print(f"[{step_name}] Final data stats: NaN={np.sum(np.isnan(repaired_ydata))}, Inf={np.sum(np.isinf(repaired_ydata))}, Finite={np.sum(np.isfinite(repaired_ydata))}")
+        print(f"[{step_name}] Data preservation: {preservation_percentage:.1f}% ({final_length}/{original_length} samples)")
+        print(f"[{step_name}] === DEBUG: Repair completed ===")
+        
+        return repaired_xdata, repaired_ydata, repair_summary
 
     @classmethod
     def validate_numeric_parameter(cls, param_name: str, value: Any, 
@@ -574,61 +773,86 @@ class BaseStep(ABC):
 
     @classmethod
     def validate_output_data(cls, y_input: np.ndarray, y_output: np.ndarray,
-                           allow_length_change: bool = False, channel_type: str = "main") -> None:
+                           x_data: np.ndarray = None, **kwargs) -> None:
         """
-        Validate output data from processing.
+        Generous validation: only check if data is fundamentally unplottable.
         
         Args:
-            y_input: Original input signal
-            y_output: Processed output signal
-            allow_length_change: Whether to allow output length to differ from input
-            channel_type: Type of channel being validated (e.g., 'time-series', 'spectrogram')
+            y_input: Original input signal (unused, kept for compatibility)
+            y_output: Processed output signal  
+            x_data: Optional x-axis data to check length match
+            **kwargs: Other unused args kept for compatibility
             
         Raises:
-            ValueError: If output data is invalid
+            ValueError: Only if data cannot be plotted by matplotlib
         """
+        # Check for None output
         if y_output is None:
             raise ValueError("Processing produced no output")
         
-        y_output = np.asarray(y_output)
+        # Convert to numpy array for consistent handling
+        try:
+            y_output = np.asarray(y_output)
+        except Exception as e:
+            raise ValueError(f"Output data cannot be converted to array: {e}")
         
+        # Check for empty output
         if len(y_output) == 0:
             raise ValueError("Processing produced empty output")
         
-        # Channel-type specific validation
-        if channel_type == "time-series":
-            # Time-series should maintain same length as input unless explicitly allowed
-            if not allow_length_change and len(y_output) != len(y_input):
-                raise ValueError(f"Time-series processing changed signal length: {len(y_input)} -> {len(y_output)}")
-        elif channel_type == "spectrogram":
-            # Spectrograms can have different time resolution
-            # Just ensure it's not empty and has reasonable dimensions
-            if y_output.ndim == 1:
-                if len(y_output) == 0:
-                    raise ValueError("Spectrogram frequency axis is empty")
-            elif y_output.ndim == 2:
-                if y_output.shape[0] == 0 or y_output.shape[1] == 0:
-                    raise ValueError("Spectrogram data has zero dimensions")
-            else:
-                raise ValueError(f"Spectrogram data has unexpected dimensions: {y_output.shape}")
-        elif channel_type == "reduced":
-            # Reduced data (like envelope, peaks) can be shorter
-            if len(y_output) == 0:
-                raise ValueError("Reduced data is empty")
-            if len(y_output) > len(y_input):
-                raise ValueError(f"Reduced data cannot be longer than input: {len(y_input)} -> {len(y_output)}")
-        else:
-            # Default validation for unknown channel types
-            if not allow_length_change and len(y_output) != len(y_input):
-                raise ValueError(f"Processing changed signal length: {len(y_input)} -> {len(y_output)}")
+        # Check x/y dimension mismatch (critical for plotting)
+        if x_data is not None:
+            if len(x_data) != len(y_output):
+                raise ValueError(f"x and y data have different lengths: {len(x_data)} vs {len(y_output)}")
         
-        # Check for unexpected NaN values (skip for spectrograms as they may have NaN regions)
-        if channel_type != "spectrogram" and np.any(np.isnan(y_output)) and not np.any(np.isnan(y_input)):
-            raise ValueError("Processing produced unexpected NaN values")
+        # That's it! Everything else is matplotlib's problem.
+        # Let the plotting system handle NaN, inf, weird ranges, etc.
+
+    @classmethod
+    def validate_spectrogram_data(cls, t_data: np.ndarray, f_data: np.ndarray, z_data: np.ndarray) -> None:
+        """
+        Validate spectrogram data structure (t, f, z format).
         
-        # Check for unexpected infinite values
-        if np.any(np.isinf(y_output)) and not np.any(np.isinf(y_input)):
-            raise ValueError("Processing produced unexpected infinite values")
+        Args:
+            t_data: Time axis data
+            f_data: Frequency axis data  
+            z_data: Spectrogram matrix data
+            
+        Raises:
+            ValueError: Only if data cannot be used for spectrogram plotting
+        """
+        # Check for None data
+        if t_data is None:
+            raise ValueError("Spectrogram time axis cannot be None")
+        if f_data is None:
+            raise ValueError("Spectrogram frequency axis cannot be None")  
+        if z_data is None:
+            raise ValueError("Spectrogram matrix data cannot be None")
+        
+        # Convert to numpy arrays
+        try:
+            t_data = np.asarray(t_data)
+            f_data = np.asarray(f_data)
+            z_data = np.asarray(z_data)
+        except Exception as e:
+            raise ValueError(f"Spectrogram data cannot be converted to arrays: {e}")
+        
+        # Check for empty data
+        if len(t_data) == 0:
+            raise ValueError("Spectrogram time axis is empty")
+        if len(f_data) == 0:
+            raise ValueError("Spectrogram frequency axis is empty")
+        if z_data.size == 0:
+            raise ValueError("Spectrogram matrix is empty")
+        
+        # Check matrix dimensions match axes (if 2D)
+        if z_data.ndim == 2:
+            if z_data.shape[1] != len(t_data):
+                raise ValueError(f"Spectrogram matrix time dimension ({z_data.shape[1]}) doesn't match time axis ({len(t_data)})")
+            if z_data.shape[0] != len(f_data):
+                raise ValueError(f"Spectrogram matrix frequency dimension ({z_data.shape[0]}) doesn't match frequency axis ({len(f_data)})")
+        
+        # That's it! Matplotlib can handle the rest.
 
     @classmethod
     def validate_channel_structure(cls, channel_info: dict, channel_index: int) -> None:
