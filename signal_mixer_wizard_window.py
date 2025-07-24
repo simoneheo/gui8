@@ -1351,23 +1351,6 @@ class SignalMixerWizardWindow(QMainWindow):
             # Add top x-axis labels and ticks for independent scaling
             if hasattr(self, 'ax_top') and self.ax_top is not None:
                 self._setup_independent_x_axes()
-            
-            # Add legend to show which signals are on which axis
-            if hasattr(self, 'ax_top') and self.ax_top is not None:
-                # Create legend for both axes
-                lines_main, labels_main = self.ax.get_legend_handles_labels()
-                lines_top, labels_top = self.ax_top.get_legend_handles_labels()
-                
-                # Combine legends
-                all_lines = lines_main + lines_top
-                all_labels = labels_main + labels_top
-                
-                if all_lines:
-                    self.ax.legend(all_lines, all_labels, loc='upper right')
-            else:
-                # Single axis legend
-                if self.ax.get_legend_handles_labels()[0]:
-                    self.ax.legend(loc='upper right')
         
         # Set axis labels
         if hasattr(self, 'ax_top') and self.ax_top is not None:
@@ -1444,8 +1427,9 @@ class SignalMixerWizardWindow(QMainWindow):
         label_item.setToolTip(tooltip)
         self.results_table.setItem(row, 2, label_item)
         
-        # Column 3: Expression (for input channels, show "Input Channel A/B")
-        expr_item = QTableWidgetItem(f"Input Channel {label}")
+        # Column 3: Expression (for input channels, show actual channel name)
+        channel_name = channel.legend_label or channel.channel_id
+        expr_item = QTableWidgetItem(channel_name)
         expr_item.setToolTip(tooltip)
         self.results_table.setItem(row, 3, expr_item)
         
@@ -1616,35 +1600,17 @@ class SignalMixerWizardWindow(QMainWindow):
         self.results_table.setCellWidget(row, 5, actions_widget)
 
     def _create_mixed_channel_tooltip(self, mixed_channel):
-        """Create a tooltip showing parent channel information for a mixed channel"""
+        """Create a tooltip showing complete lineage information for a mixed channel"""
         tooltip_parts = []
         
-        # Get current channels A and B
-        channel_a = self.channel_a_combo.currentData()
-        channel_b = self.channel_b_combo.currentData()
-        
-        # Add parent channel information
-        if channel_a:
-            a_file = getattr(channel_a, 'filename', 'Unknown file')
-            a_name = channel_a.legend_label or channel_a.channel_id
-            tooltip_parts.append(f"Channel A: {a_name}")
-            tooltip_parts.append(f"  File: {a_file}")
-        
-        if channel_b:
-            b_file = getattr(channel_b, 'filename', 'Unknown file')
-            b_name = channel_b.legend_label or channel_b.channel_id
-            tooltip_parts.append(f"Channel B: {b_name}")
-            tooltip_parts.append(f"  File: {b_file}")
-        
-        # Add mixed channel information
+        # Get mixed channel information
         mixed_name = mixed_channel.legend_label or mixed_channel.channel_id
         mixed_label = getattr(mixed_channel, 'step_table_label', 'Unknown')
-        tooltip_parts.append(f"")
+        full_expression = getattr(mixed_channel, 'description', '')
+        
         tooltip_parts.append(f"Mixed Channel: {mixed_name}")
         tooltip_parts.append(f"Label: {mixed_label}")
         
-        # Add expression information
-        full_expression = getattr(mixed_channel, 'description', '')
         if full_expression:
             tooltip_parts.append(f"Expression: {full_expression}")
         
@@ -1652,7 +1618,68 @@ class SignalMixerWizardWindow(QMainWindow):
         if mixed_channel.ydata is not None:
             tooltip_parts.append(f"Data points: {len(mixed_channel.ydata):,}")
         
+        # Add complete lineage tracing
+        tooltip_parts.append("")
+        tooltip_parts.append("Lineage:")
+        lineage_info = self._trace_channel_lineage(mixed_channel, full_expression)
+        tooltip_parts.extend(lineage_info)
+        
         return "\n".join(tooltip_parts)
+
+    def _trace_channel_lineage(self, mixed_channel, expression, indent_level=0):
+        """Recursively trace the complete lineage of a mixed channel"""
+        lineage_parts = []
+        indent = "  " * indent_level
+        
+        if not expression or '=' not in expression:
+            return lineage_parts
+        
+        # Extract the right side of the expression (the formula)
+        formula = expression.split('=', 1)[1].strip()
+        
+        # Find all channel references in the formula (A, B, C, D, etc.)
+        import re
+        channel_refs = re.findall(r'\b[A-Z]\b', formula)
+        
+        for ref in channel_refs:
+            if ref in ['A', 'B']:
+                # Input channel - get current A and B
+                if ref == 'A':
+                    channel = self.channel_a_combo.currentData()
+                else:
+                    channel = self.channel_b_combo.currentData()
+                
+                if channel:
+                    channel_name = channel.legend_label or channel.channel_id
+                    file_name = getattr(channel, 'filename', 'Unknown file')
+                    lineage_parts.append(f"{indent}• {ref}: {channel_name}")
+                    lineage_parts.append(f"{indent}  File: {file_name}")
+                    
+                    # Add data stats for input channels
+                    if channel.ydata is not None:
+                        y_min = np.min(channel.ydata)
+                        y_max = np.max(channel.ydata)
+                        lineage_parts.append(f"{indent}  Range: {y_min:.3f} to {y_max:.3f}")
+            else:
+                # Mixed channel reference - find it and trace its lineage
+                mixed_channels = self.manager.get_mixed_channels()
+                for other_channel in mixed_channels:
+                    other_label = getattr(other_channel, 'step_table_label', None)
+                    if other_label == ref:
+                        other_name = other_channel.legend_label or other_channel.channel_id
+                        other_expression = getattr(other_channel, 'description', '')
+                        
+                        lineage_parts.append(f"{indent}• {ref}: {other_name}")
+                        if other_expression:
+                            lineage_parts.append(f"{indent}  Expression: {other_expression}")
+                        
+                        # Recursively trace this mixed channel's lineage
+                        if other_expression and other_expression != expression:  # Prevent infinite recursion
+                            sub_lineage = self._trace_channel_lineage(other_channel, other_expression, indent_level + 1)
+                            lineage_parts.extend(sub_lineage)
+                        break
+        
+        return lineage_parts
 
     def _create_input_channel_tooltip(self, channel, label):
         """Create a tooltip showing information for an input channel (A or B)"""
