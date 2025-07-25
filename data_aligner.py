@@ -22,6 +22,7 @@ class AlignmentResult:
     """Container for alignment results - just the aligned data"""
     ref_data: np.ndarray
     test_data: np.ndarray
+    time_data: Optional[np.ndarray] = None  # Time axis for aligned data (when applicable)
     success: bool = True
     error_message: Optional[str] = None
     quality_metrics: Optional[Dict[str, Any]] = None
@@ -607,20 +608,76 @@ class DataAligner:
     
     def _cleanup_channel_data(self, channel: Channel) -> Channel:
         """Clean up channel data to make it more suitable for alignment"""
+        print(f"[DEBUG] _cleanup_channel_data: channel_id={channel.channel_id}, type={getattr(channel, 'type', 'unknown')}")
+        print(f"[DEBUG] _cleanup_channel_data: step={getattr(channel, 'step', 'unknown')}, parent_ids={getattr(channel, 'parent_ids', 'unknown')}")
+        
         if channel.ydata is not None:
-            # Remove NaN and infinite values
-            finite_mask = np.isfinite(channel.ydata)
-            if np.any(finite_mask):
-                channel.ydata = channel.ydata[finite_mask]
-                if channel.xdata is not None:
-                    channel.xdata = channel.xdata[finite_mask]
+            print(f"[DEBUG] _cleanup_channel_data: Initial ydata length: {len(channel.ydata)}")
+            print(f"[DEBUG] _cleanup_channel_data: Initial xdata length: {len(channel.xdata) if channel.xdata is not None else 'None'}")
             
-            # Ensure data is not empty after cleanup
+            # Create a combined mask for both xdata and ydata to ensure they stay aligned
+            if channel.xdata is not None:
+                print(f"[DEBUG] _cleanup_channel_data: Both x and y data exist")
+                
+                # Check if lengths are already different
+                if len(channel.xdata) != len(channel.ydata):
+                    print(f"[DEBUG] _cleanup_channel_data: WARNING - xdata length ({len(channel.xdata)}) != ydata length ({len(channel.ydata)})")
+                
+                # Both x and y data exist - ensure they're the same length first
+                min_length = min(len(channel.xdata), len(channel.ydata))
+                print(f"[DEBUG] _cleanup_channel_data: Truncating to min_length: {min_length}")
+                
+                channel.xdata = channel.xdata[:min_length]
+                channel.ydata = channel.ydata[:min_length]
+                
+                # Create combined finite mask for both arrays
+                finite_mask_x = np.isfinite(channel.xdata)
+                finite_mask_y = np.isfinite(channel.ydata)
+                
+                print(f"[DEBUG] _cleanup_channel_data: finite_mask_x sum: {np.sum(finite_mask_x)}/{len(finite_mask_x)}")
+                print(f"[DEBUG] _cleanup_channel_data: finite_mask_y sum: {np.sum(finite_mask_y)}/{len(finite_mask_y)}")
+                
+                combined_mask = finite_mask_x & finite_mask_y
+                print(f"[DEBUG] _cleanup_channel_data: combined_mask sum: {np.sum(combined_mask)}/{len(combined_mask)}")
+                
+                if np.any(combined_mask):
+                    original_x_len = len(channel.xdata)
+                    original_y_len = len(channel.ydata)
+                    
+                    channel.xdata = channel.xdata[combined_mask]
+                    channel.ydata = channel.ydata[combined_mask]
+                    
+                    print(f"[DEBUG] _cleanup_channel_data: After masking - xdata: {original_x_len} -> {len(channel.xdata)}")
+                    print(f"[DEBUG] _cleanup_channel_data: After masking - ydata: {original_y_len} -> {len(channel.ydata)}")
+                else:
+                    print(f"[DEBUG] _cleanup_channel_data: No finite values - creating dummy data")
+                    # No finite values - create minimal dummy data
+                    channel.xdata = np.array([0.0])
+                    channel.ydata = np.array([0.0])
+            else:
+                print(f"[DEBUG] _cleanup_channel_data: Only y data exists")
+                # Only y data exists
+                finite_mask = np.isfinite(channel.ydata)
+                print(f"[DEBUG] _cleanup_channel_data: finite_mask sum: {np.sum(finite_mask)}/{len(finite_mask)}")
+                
+                if np.any(finite_mask):
+                    original_len = len(channel.ydata)
+                    channel.ydata = channel.ydata[finite_mask]
+                    print(f"[DEBUG] _cleanup_channel_data: After masking - ydata: {original_len} -> {len(channel.ydata)}")
+                else:
+                    print(f"[DEBUG] _cleanup_channel_data: No finite values - creating dummy data")
+                    # No finite values - create minimal dummy data
+                    channel.ydata = np.array([0.0])
+            
+            # Final check: ensure data is not empty after cleanup
             if len(channel.ydata) == 0:
-                # Create minimal dummy data to prevent complete failure
+                print(f"[DEBUG] _cleanup_channel_data: Empty data after cleanup - creating dummy data")
                 channel.ydata = np.array([0.0])
                 if channel.xdata is not None:
                     channel.xdata = np.array([0.0])
+        
+        print(f"[DEBUG] _cleanup_channel_data: Final ydata length: {len(channel.ydata)}")
+        print(f"[DEBUG] _cleanup_channel_data: Final xdata length: {len(channel.xdata) if channel.xdata is not None else 'None'}")
         
         return channel
     
@@ -858,20 +915,30 @@ class DataAligner:
         print(f"[DEBUG] DataAligner._align_by_index final - aligned_ref length: {len(aligned_ref)}")
         print(f"[DEBUG] DataAligner._align_by_index final - aligned_test length: {len(aligned_test)}")
         
-        alignment_info = {
-            'method': 'index',
-            'mode': alignment_config.mode,
-            'offset': offset,
-            'original_ref_length': len(ref_data),
-            'original_test_length': len(test_data),
-            'aligned_length': len(aligned_ref),
-            'start_index': alignment_config.start_index if alignment_config.mode == 'custom' else 0,
-            'end_index': alignment_config.end_index if alignment_config.mode == 'custom' else min(len(ref_data), len(test_data))
-        }
+        # Check if channels have shared xdata that should be preserved
+        shared_time_data = None
+        if (hasattr(ref_channel, 'xdata') and ref_channel.xdata is not None and
+            hasattr(test_channel, 'xdata') and test_channel.xdata is not None):
+            
+            # Check if both channels have the same length xdata and identical values
+            if (len(ref_channel.xdata) == len(test_channel.xdata) and 
+                np.allclose(ref_channel.xdata, test_channel.xdata, rtol=1e-10, atol=1e-10)):
+                
+                # Extract corresponding time data for the aligned indices
+                if alignment_config.mode == 'truncate':
+                    if offset == 0:
+                        # No offset, use first part of shared time data
+                        shared_time_data = ref_channel.xdata[:len(aligned_ref)]
+                elif alignment_config.mode == 'custom':
+                    start_idx = alignment_config.start_index
+                    end_idx = min(start_idx + len(aligned_ref), len(ref_channel.xdata))
+                    if end_idx <= len(ref_channel.xdata):
+                        shared_time_data = ref_channel.xdata[start_idx:end_idx]
         
         return AlignmentResult(
             ref_data=aligned_ref,
             test_data=aligned_test,
+            time_data=shared_time_data,  # Include time data when channels have shared xdata
             success=True, # Index alignment is always successful
             error_message=None
         )
@@ -1007,8 +1074,12 @@ class DataAligner:
                 )
             
             # Create uniform time points
-            uniform_time_grid = np.arange(time_start, time_end, 
+            # Add small epsilon to ensure endpoint is included in the grid
+            uniform_time_grid = np.arange(time_start, time_end + alignment_config.resolution/2, 
                                         alignment_config.resolution)
+            
+            print(f"[DEBUG] DataAligner time grid: start={time_start:.6f}, end={time_end:.6f}, resolution={alignment_config.resolution:.6f}")
+            print(f"[DEBUG] DataAligner generated {len(uniform_time_grid)} points: {uniform_time_grid}")
             
             # Interpolate both channels to uniform grid
             interpolation_method = alignment_config.interpolation or 'linear'
@@ -1053,6 +1124,7 @@ class DataAligner:
         return AlignmentResult(
             ref_data=aligned_ref_y,
             test_data=aligned_test_y,
+            time_data=aligned_ref_x,  # Return the time axis for the aligned data
             success=True, # Time alignment is always successful
             error_message=None
         )

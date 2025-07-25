@@ -537,6 +537,10 @@ class SignalMixerWizardWindow(QMainWindow):
                             self.channel_b_combo.setCurrentIndex(j)
                             break
                     break
+        
+        # Reset manual resolution flag after initial auto-population to allow auto-configuration
+        if channel_a and channel_b:
+            self.data_aligner_widget.reset_resolution_manual_flag()
 
     # Event Handlers
     def _on_channel_a_file_changed(self):
@@ -663,7 +667,9 @@ class SignalMixerWizardWindow(QMainWindow):
                 previous_method = getattr(self, '_previous_alignment_method', None)
                 
                 if current_method != previous_method:
-                    # Alignment method changed - trigger auto-configuration
+                    # Alignment method changed - reset manual resolution flag and trigger auto-configuration
+                    self.data_aligner_widget.reset_resolution_manual_flag()
+                    
                     channel_a = self.channel_a_combo.currentData()
                     channel_b = self.channel_b_combo.currentData()
                     
