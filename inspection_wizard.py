@@ -128,7 +128,7 @@ class DataTableWidget(QTableWidget):
                 self._add_row(i, x_data[i], y_data[i], row_index)
                 row_index += 1
     
-    def _add_row(self, data_index: int, x_value: float, y_value: float, table_row: int = None):
+    def _add_row(self, data_index: int, x_value, y_value, table_row: int = None):
         """Add a single row to the table"""
         if table_row is None:
             table_row = data_index
@@ -139,15 +139,45 @@ class DataTableWidget(QTableWidget):
         index_item.setBackground(QColor(240, 240, 240))
         self.setItem(table_row, 0, index_item)
         
+        # Helper function to format values safely
+        def format_value(value):
+            """Format a value safely, handling both numeric and string types"""
+            try:
+                # Try to convert to float and format as numeric
+                float_val = float(value)
+                if isinstance(value, (int, float, np.number)):
+                    return f"{float_val:.8g}"
+                else:
+                    # For string values that can be converted to float, show both
+                    return f"{value} ({float_val:.8g})"
+            except (ValueError, TypeError):
+                # If conversion fails, just return the string representation
+                return str(value)
+        
+        def format_tooltip(value):
+            """Format a value for tooltip display"""
+            try:
+                float_val = float(value)
+                if isinstance(value, (int, float, np.number)):
+                    return f"Original: {float_val:.12g}"
+                else:
+                    return f"Original: {value} (numeric: {float_val:.12g})"
+            except (ValueError, TypeError):
+                return f"Original: {value}"
+        
         # X value (editable)
-        x_item = QTableWidgetItem(f"{x_value:.8g}")
-        x_item.setToolTip(f"Original: {x_value:.12g}")
+        x_display = format_value(x_value)
+        x_tooltip = format_tooltip(x_value)
+        x_item = QTableWidgetItem(x_display)
+        x_item.setToolTip(x_tooltip)
         x_item.setData(Qt.UserRole, data_index)  # Store original index
         self.setItem(table_row, 1, x_item)
         
         # Y value (editable)
-        y_item = QTableWidgetItem(f"{y_value:.8g}")
-        y_item.setToolTip(f"Original: {y_value:.12g}")
+        y_display = format_value(y_value)
+        y_tooltip = format_tooltip(y_value)
+        y_item = QTableWidgetItem(y_display)
+        y_item.setToolTip(y_tooltip)
         y_item.setData(Qt.UserRole, data_index)  # Store original index
         self.setItem(table_row, 2, y_item)
     

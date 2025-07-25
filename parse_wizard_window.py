@@ -35,6 +35,7 @@ class ParseWizardWindow(QMainWindow):
         self.raw_lines = []
         self.encoding = 'utf-8'
         self.preview_data = None
+        self.original_preview_data = None  # Store original data before type conversions
         self._last_column_names = []  # Track column names for dropdown preservation
         
         # Parse parameters
@@ -50,9 +51,8 @@ class ParseWizardWindow(QMainWindow):
             'thousands': '',
             'na_values': ['', 'NA', 'N/A', 'null', 'NULL', 'nan', 'NaN'],
             'parse_dates': True,
-            'date_format': 'auto',
+            'date_formats': ['%Y-%m-%d', '%m/%d/%Y', '%d/%m/%Y', '%Y-%m-%d %H:%M:%S', '%m/%d/%Y %H:%M:%S', '%d/%m/%Y %H:%M:%S'],
             'time_column': None,
-            'column_names': [],
             'column_types': {},
             'downsample_enabled': False,
             'downsample_method': 'Every Nth row',
@@ -66,6 +66,9 @@ class ParseWizardWindow(QMainWindow):
         self.update_timer.timeout.connect(self._update_preview)
         self.update_delay = 500  # ms
         
+        # Track last parameters to prevent infinite loops
+        self._last_parse_params = {}
+        
         # Setup UI
         self._init_ui()
         self._connect_signals()
@@ -76,7 +79,7 @@ class ParseWizardWindow(QMainWindow):
         
     def _init_ui(self):
         """Initialize the user interface"""
-        self.setWindowTitle("🔨 Parse Wizard - Manual File Parsing")
+        self.setWindowTitle("Parse Wizard - Manual File Parsing")
         self.setMinimumSize(1500, 950)
         
         # Create central widget
@@ -96,8 +99,8 @@ class ParseWizardWindow(QMainWindow):
         self._build_left_panel(main_splitter)
         self._build_right_panel(main_splitter)
         
-        # Set splitter proportions (40% left, 60% right) - more space for left panel controls
-        main_splitter.setSizes([560, 840])
+        # Set splitter proportions (1:2 ratio) - left panel smaller, right panel larger
+        main_splitter.setSizes([500, 1000])
         
     def _build_left_panel(self, main_splitter):
         """Build the left control panel with compact grouped controls"""
@@ -108,7 +111,7 @@ class ParseWizardWindow(QMainWindow):
         left_layout.setSpacing(10)
         
         # Add title
-        title_label = QLabel("🔧 Parse Configuration")
+        title_label = QLabel("Parse Configuration")
         title_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #2c3e50; padding: 5px;")
         left_layout.addWidget(title_label)
         
@@ -116,7 +119,7 @@ class ParseWizardWindow(QMainWindow):
         self._create_file_selection_group(left_layout)
         self._create_basic_parsing_group(left_layout)
         self._create_advanced_parsing_group(left_layout)
-        self._create_datetime_configuration_group(left_layout)
+        self._create_column_configuration_group(left_layout)
         self._create_action_buttons_group(left_layout)
         
         # Add stretch to push everything to top
@@ -126,7 +129,7 @@ class ParseWizardWindow(QMainWindow):
         
     def _create_file_selection_group(self, layout):
         """Create file selection group"""
-        group = QGroupBox("📁 File Selection")
+        group = QGroupBox("File Selection")
         group.setStyleSheet("QGroupBox { font-weight: bold; }")
         group_layout = QVBoxLayout(group)
         
@@ -151,7 +154,7 @@ class ParseWizardWindow(QMainWindow):
         
     def _create_basic_parsing_group(self, layout):
         """Create basic parsing parameters group"""
-        group = QGroupBox("⚙️ Basic Parsing")
+        group = QGroupBox("Basic Parsing")
         group.setStyleSheet("QGroupBox { font-weight: bold; }")
         group_layout = QFormLayout(group)
         
@@ -206,7 +209,7 @@ class ParseWizardWindow(QMainWindow):
         
     def _create_advanced_parsing_group(self, layout):
         """Create advanced parsing parameters group - more compact"""
-        group = QGroupBox("🔧 Advanced Parsing")
+        group = QGroupBox("Advanced Parsing")
         group.setStyleSheet("QGroupBox { font-weight: bold; }")
         group_layout = QFormLayout(group)
         
@@ -244,6 +247,12 @@ class ParseWizardWindow(QMainWindow):
         self.na_values_input.setToolTip("Comma-separated list of values to treat as NaN")
         self.na_values_input.textChanged.connect(self._trigger_preview_update)
         group_layout.addRow("NA Values:", self.na_values_input)
+        
+        # Date formats
+        self.date_formats_input = QLineEdit('%Y-%m-%d,%m/%d/%Y,%d/%m/%Y,%Y-%m-%d %H:%M:%S,%m/%d/%Y %H:%M:%S,%d/%m/%Y %H:%M:%S')
+        self.date_formats_input.setToolTip("Comma-separated list of datetime formats to attempt parsing. Add your own formats as needed.")
+        self.date_formats_input.textChanged.connect(self._trigger_preview_update)
+        group_layout.addRow("Date Formats:", self.date_formats_input)
         
         # Downsampling section - more compact
         downsample_frame = QFrame()
@@ -296,79 +305,67 @@ class ParseWizardWindow(QMainWindow):
         
         layout.addWidget(group)
         
-    def _create_datetime_configuration_group(self, layout):
-        """Create datetime and X-axis configuration group - more compact"""
-        group = QGroupBox("📅 Date/Time & X-Axis Configuration")
+    def _create_column_configuration_group(self, layout):
+        """Create column configuration group for left panel"""
+        group = QGroupBox("Column Configuration")
         group.setStyleSheet("QGroupBox { font-weight: bold; }")
-        group_layout = QFormLayout(group)
+        group_layout = QVBoxLayout(group)
         
-        # Parse dates checkbox
-        self.parse_dates_checkbox = QCheckBox("Attempt to parse dates")
-        self.parse_dates_checkbox.setChecked(True)
-        self.parse_dates_checkbox.toggled.connect(self._trigger_preview_update)
-        group_layout.addRow("", self.parse_dates_checkbox)
+        # Column types table - compact version for left panel
+        types_label = QLabel("Column Types:")
+        types_label.setStyleSheet("font-weight: bold; margin-top: 5px;")
+        group_layout.addWidget(types_label)
         
-        # Date format
-        self.date_format_combo = QComboBox()
-        self.date_format_combo.addItems([
-            'auto', '%Y-%m-%d', '%m/%d/%Y', '%d/%m/%Y', '%Y-%m-%d %H:%M:%S',
-            '%m/%d/%Y %H:%M:%S', '%d/%m/%Y %H:%M:%S', 'custom...'
-        ])
-        self.date_format_combo.currentTextChanged.connect(self._on_date_format_changed)
-        group_layout.addRow("Date Format:", self.date_format_combo)
+        # Add info label about column name editing
+        info_label = QLabel("Tip: Double-click column names to edit them. Channel types are auto-detected and read-only.")
+        info_label.setStyleSheet("color: #666; font-size: 10px; font-style: italic; padding: 3px; background-color: #f9f9f9; border: 1px solid #ddd; border-radius: 3px;")
+        group_layout.addWidget(info_label)
         
-        # Custom date format input
-        self.custom_date_format_input = QLineEdit()
-        self.custom_date_format_input.setPlaceholderText("Enter custom date format")
-        self.custom_date_format_input.setVisible(False)
-        self.custom_date_format_input.textChanged.connect(self._trigger_preview_update)
-        group_layout.addRow("Custom Format:", self.custom_date_format_input)
+        self.column_types_table = QTableWidget()
+        self.column_types_table.setColumnCount(4)
+        self.column_types_table.setHorizontalHeaderLabels(["Column", "Detected Type", "Auto-Detected Type", "X-Axis Column"])
+        self.column_types_table.horizontalHeader().setStretchLastSection(True)
+        # Compact height for left panel
+        self.column_types_table.setMinimumHeight(200)
         
-        # X-axis / Time column selection
-        self.time_column_combo = QComboBox()
-        self.time_column_combo.addItem("Auto-detect")
-        self.time_column_combo.addItem("Use row index")
-        self.time_column_combo.currentTextChanged.connect(self._trigger_preview_update)
-        self.time_column_combo.setToolTip("Select which column to use as X-axis (time/index). Auto-detect will find time-like columns automatically.")
-        group_layout.addRow("X-Axis Column:", self.time_column_combo)
+        # Enable editing only for column names (first column)
+        self.column_types_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        
+        # Add tooltip to explain column name editing
+        self.column_types_table.setToolTip(
+            "Column Configuration Table:\n"
+            "• Column: Click to edit column names (double-click or press F2)\n"
+            "• Detected Type: Original pandas data type (read-only)\n"
+            "• Auto-Detected Type: Auto-detected channel type (read-only)\n"
+            "• X-Axis Column: Select which column to use as X-axis (radio button)\n\n"
+            "Tip: Edit column names to customize channel names when created!"
+        )
+        
+        # Connect signal to trigger preview update when column names are edited
+        self.column_types_table.itemChanged.connect(self._on_column_name_changed)
+        
+        # Enable editing only for column names (first column) via mouse double-click
+        self.column_types_table.cellDoubleClicked.connect(self._on_cell_double_clicked)
+        
+        # Create button group for X-axis radio buttons
+        self.x_axis_button_group = QButtonGroup()
+        self.x_axis_button_group.setExclusive(True)  # Only one radio button can be selected
+        self.x_axis_button_group.buttonClicked.connect(self._on_x_axis_selection_changed)
+        
+        group_layout.addWidget(self.column_types_table)
         
         layout.addWidget(group)
         
     def _create_action_buttons_group(self, layout):
         """Create action buttons group"""
-        group = QGroupBox("🎯 Actions")
+        group = QGroupBox("Actions")
         group.setStyleSheet("QGroupBox { font-weight: bold; }")
         group_layout = QVBoxLayout(group)
         
-        # Preview button
-        self.preview_button = QPushButton("🔍 Preview Data")
-        self.preview_button.clicked.connect(self._force_preview_update)
-        group_layout.addWidget(self.preview_button)
-        
-        # Auto-detect button
-        self.auto_detect_button = QPushButton("🤖 Auto-Detect Settings")
-        self.auto_detect_button.clicked.connect(self._auto_detect_settings)
-        group_layout.addWidget(self.auto_detect_button)
-        
-        # Reset button
-        self.reset_button = QPushButton("🔄 Reset to Defaults")
-        self.reset_button.clicked.connect(self._reset_to_defaults)
-        group_layout.addWidget(self.reset_button)
-        
-        # Re-enable large file warnings button
-        self.enable_warnings_button = QPushButton("⚠️ Re-enable Large File Warnings")
-        self.enable_warnings_button.clicked.connect(self._enable_large_file_warnings)
-        self.enable_warnings_button.setToolTip("Re-enable large file size warnings that were previously disabled")
-        group_layout.addWidget(self.enable_warnings_button)
-        
-        # Separator
-        separator = QFrame()
-        separator.setFrameShape(QFrame.HLine)
-        separator.setFrameShadow(QFrame.Sunken)
-        group_layout.addWidget(separator)
+
         
         # Parse and create channels button
-        self.parse_button = QPushButton("✅ Parse and Create Channels")
+        self.parse_button = QPushButton("Parse and Create Channels")
         self.parse_button.setStyleSheet("""
             QPushButton {
                 background-color: #4CAF50;
@@ -384,11 +381,6 @@ class ParseWizardWindow(QMainWindow):
         self.parse_button.clicked.connect(self._parse_and_create_channels)
         group_layout.addWidget(self.parse_button)
         
-        # Cancel button
-        self.cancel_button = QPushButton("❌ Cancel")
-        self.cancel_button.clicked.connect(self.close)
-        group_layout.addWidget(self.cancel_button)
-        
         layout.addWidget(group)
         
     def _build_right_panel(self, main_splitter):
@@ -399,15 +391,12 @@ class ParseWizardWindow(QMainWindow):
         right_layout.setSpacing(10)
         
         # Title
-        title_label = QLabel("📊 Data Preview & Column Configuration")
+        title_label = QLabel("Data Preview")
         title_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #2c3e50; padding: 5px;")
         right_layout.addWidget(title_label)
         
         # Data Preview Section
         self._create_data_preview_section(right_layout)
-        
-        # Column Configuration Section
-        self._create_column_configuration_section(right_layout)
         
         main_splitter.addWidget(right_panel)
     
@@ -424,7 +413,7 @@ class ParseWizardWindow(QMainWindow):
         self.data_table.horizontalHeader().setStretchLastSection(True)
         self.data_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.data_table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.data_table.setMaximumHeight(200)  # Limit preview table height
+        # Remove height limit to fill entire right panel
         layout.addWidget(self.data_table)
         
         # Parse status
@@ -432,42 +421,18 @@ class ParseWizardWindow(QMainWindow):
         self.parse_status_label.setStyleSheet("padding: 5px; background-color: #f0f0f0; border: 1px solid #ccc;")
         layout.addWidget(self.parse_status_label)
     
-    def _create_column_configuration_section(self, layout):
-        """Create the column configuration section with longer table"""
-        # Column Configuration Group
-        group = QGroupBox("📊 Column Configuration")
-        group.setStyleSheet("QGroupBox { font-weight: bold; }")
-        group_layout = QVBoxLayout(group)
+
         
-        # Column names input
-        names_layout = QHBoxLayout()
-        names_layout.addWidget(QLabel("Column Names:"))
-        self.column_names_input = QLineEdit()
-        self.column_names_input.setPlaceholderText("Leave blank to use detected headers")
-        self.column_names_input.setToolTip("Comma-separated list of column names (useful for non-ASCII headers or when no header row exists)")
-        self.column_names_input.textChanged.connect(self._trigger_preview_update)
-        names_layout.addWidget(self.column_names_input)
-        group_layout.addLayout(names_layout)
-        
-        # Column types table - make it much longer
-        types_label = QLabel("Column Types:")
-        types_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
-        group_layout.addWidget(types_label)
-        
-        self.column_types_table = QTableWidget()
-        self.column_types_table.setColumnCount(3)
-        self.column_types_table.setHorizontalHeaderLabels(["Column", "Detected Type", "Override Type"])
-        self.column_types_table.horizontalHeader().setStretchLastSection(True)
-        # Remove maximum height restriction to allow table to expand
-        self.column_types_table.setMinimumHeight(300)  # Set minimum height instead
-        group_layout.addWidget(self.column_types_table)
-        
-        layout.addWidget(group)
+
         
     def _connect_signals(self):
         """Connect all signal handlers"""
         # Signals are connected in the individual control creation methods
         pass
+        
+
+        
+
         
     def _browse_file(self):
         """Browse for file to parse"""
@@ -486,8 +451,12 @@ class ParseWizardWindow(QMainWindow):
             self.file_path = file_path
             self.file_path_label.setText(str(file_path))
             
+            print(f"[ParseWizard] Loading file: {file_path.name}")
+            
             # Read file with encoding detection
             self.raw_lines, self.encoding = self._read_file_with_encoding(file_path)
+            
+            print(f"[ParseWizard] File loaded: {len(self.raw_lines)} lines, encoding: {self.encoding}")
             
             # Update encoding combo
             if self.encoding in [self.encoding_combo.itemText(i) for i in range(self.encoding_combo.count())]:
@@ -499,12 +468,17 @@ class ParseWizardWindow(QMainWindow):
             self.file_info_label.setText(f"Lines: {len(self.raw_lines)}, Size: {size_str}, Encoding: {self.encoding}")
             
             # Auto-detect settings
+            print("[ParseWizard] Auto-detecting parsing settings...")
             self._auto_detect_settings()
             
             # Update preview
             self._trigger_preview_update()
             
+            # Update readiness status
+            self._update_readiness_status()
+            
         except Exception as e:
+            print(f"[ParseWizard] Error loading file: {str(e)}")
             QMessageBox.critical(self, "Error Loading File", f"Could not load file:\n{str(e)}")
             
     def _read_file_with_encoding(self, file_path: Path) -> Tuple[List[str], str]:
@@ -529,6 +503,12 @@ class ParseWizardWindow(QMainWindow):
         except Exception:
             return [], 'unknown'
             
+    def _on_auto_detect_clicked(self):
+        """Handle auto-detect button click"""
+        print(f"[ParseWizard] Auto-detect button clicked")
+        self._auto_detect_settings()
+        print(f"[ParseWizard] Auto-detect complete")
+        
     def _auto_detect_settings(self):
         """Auto-detect parsing settings from file"""
         if not self.raw_lines:
@@ -536,10 +516,24 @@ class ParseWizardWindow(QMainWindow):
             
         print(f"[ParseWizard] Auto-detecting settings for {len(self.raw_lines)} lines")
         
-        # Since autoparse failed, default delimiter to None instead of auto-detecting
-        # This encourages user to manually choose the appropriate delimiter
-        self.delimiter_combo.setCurrentText('None')
-        print(f"[ParseWizard] Defaulting delimiter to 'None' (encouraging manual selection)")
+        # Try to auto-detect delimiter first
+        detected_delimiter = self._detect_delimiter()
+        if detected_delimiter:
+            # Map detected delimiter to UI option
+            delimiter_map = {
+                ',': 'Comma (,)',
+                '\t': 'Tab (\\t)',
+                ';': 'Semicolon (;)',
+                '|': 'Pipe (|)',
+                ' ': 'Space'
+            }
+            ui_option = delimiter_map.get(detected_delimiter, 'Comma (,)')
+            self.delimiter_combo.setCurrentText(ui_option)
+            print(f"[ParseWizard] Auto-detected delimiter: {ui_option}")
+        else:
+            # Fallback to comma if detection fails
+            self.delimiter_combo.setCurrentText('Comma (,)')
+            print(f"[ParseWizard] Delimiter detection failed, defaulting to comma")
             
         # Detect header row
         header_row = self._detect_header_row()
@@ -561,7 +555,7 @@ class ParseWizardWindow(QMainWindow):
         print(f"[ParseWizard] Detecting delimiter from {len(self.raw_lines)} lines")
         
         # Test common delimiters
-        delimiters = [',', '\t', ';', '|', ' ']
+        delimiters = [',', '\t', ';', '|']
         delimiter_scores = {}
         
         # Sample first few non-empty lines
@@ -603,15 +597,22 @@ class ParseWizardWindow(QMainWindow):
         if not self.raw_lines:
             return 0
             
+        print(f"[ParseWizard] Detecting header row from {len(self.raw_lines)} lines")
+        
         # Look for metadata lines at the beginning
         metadata_patterns = [r'^#', r'^//', r'^%', r'^;', r'^--', r'^\s*$']
+        print(f"[ParseWizard] Metadata patterns: {metadata_patterns}")
         
         for i, line in enumerate(self.raw_lines):
-            if not any(re.match(pattern, line) for pattern in metadata_patterns):
-                # Found first non-metadata line - this is likely the header
+            is_metadata = any(re.match(pattern, line) for pattern in metadata_patterns)
+            if is_metadata:
+                print(f"[ParseWizard] Row {i}: '{line}' -> METADATA")
+            else:
+                print(f"[ParseWizard] Row {i}: '{line}' -> HEADER (first non-metadata)")
                 return i
                 
         # If all lines are metadata, default to row 0
+        print(f"[ParseWizard] All lines appear to be metadata, defaulting to row 0")
         return 0
         
     def _on_delimiter_changed(self, text):
@@ -645,15 +646,7 @@ class ParseWizardWindow(QMainWindow):
         if self.file_path:
             self._load_file(self.file_path)
             
-    def _on_date_format_changed(self, text):
-        """Handle date format change"""
-        if text == 'custom...':
-            self.custom_date_format_input.setVisible(True)
-        else:
-            self.custom_date_format_input.setVisible(False)
-            self.parse_params['date_format'] = text
-            
-        self._trigger_preview_update()
+
     
     def _on_downsample_toggled(self, checked):
         """Handle downsample checkbox toggle"""
@@ -673,8 +666,71 @@ class ParseWizardWindow(QMainWindow):
         self.downsample_window_spin.setEnabled(self.downsample_checkbox.isChecked() and show_window)
         self._trigger_preview_update()
         
+    def _on_cell_double_clicked(self, row, column):
+        """Handle cell double-click to enable editing only for column names"""
+        if column == 0:  # Only allow editing for the first column (column names)
+            # Temporarily enable editing for this specific cell
+            self.column_types_table.setEditTriggers(QTableWidget.DoubleClicked | QTableWidget.EditKeyPressed)
+            # Start editing the cell
+            self.column_types_table.editItem(self.column_types_table.item(row, column))
+            # Disable editing again after a short delay
+            QTimer.singleShot(100, lambda: self.column_types_table.setEditTriggers(QTableWidget.NoEditTriggers))
+    
+    def _on_column_name_changed(self, item):
+        """Handle column name editing in the table"""
+        if item.column() == 0:  # Only handle changes to the first column (column names)
+            new_name = item.text().strip()
+            print(f"[ParseWizard] Column name changed to: '{new_name}'")
+            
+            # Update visual styling to show it's been edited
+            if new_name:
+                item.setBackground(QColor(255, 255, 200))  # Light yellow for edited names
+                # Find the original column name for the tooltip
+                if self.original_preview_data is not None and item.row() < len(self.original_preview_data.columns):
+                    original_name = str(self.original_preview_data.columns[item.row()])
+                    item.setToolTip(f"Edited from '{original_name}' to '{new_name}'")
+                else:
+                    item.setToolTip(f"Edited column name: '{new_name}'")
+            else:
+                # Empty name - show warning styling
+                item.setBackground(QColor(255, 200, 200))  # Light red for invalid names
+                item.setToolTip("Column name cannot be empty")
+            
+            self._trigger_preview_update()
+    
+    def _on_x_axis_selection_changed(self, button):
+        """Handle X-axis column selection change"""
+        if button and button.isChecked() and button.isEnabled():
+            row = self.x_axis_button_group.id(button)
+            if self.preview_data is not None and row < len(self.preview_data.columns):
+                selected_column = str(self.preview_data.columns[row])
+                print(f"[ParseWizard] X-axis column selected: '{selected_column}' (row {row})")
+                self._trigger_preview_update()
+                # Update readiness status
+                self._update_readiness_status()
+        elif button and button.isChecked() and not button.isEnabled():
+            # If a disabled button was somehow checked, uncheck it
+            button.setChecked(False)
+            print(f"[ParseWizard] Attempted to select disabled X-axis column, unchecking")
+            # Update readiness status
+            self._update_readiness_status()
+        
     def _trigger_preview_update(self):
         """Trigger delayed preview update"""
+        # Check if parameters actually changed to prevent infinite loops
+        current_params = {
+            'delimiter': self.parse_params.get('delimiter'),
+            'header_row': self.parse_params.get('header_row'),
+            'delete_rows': self.parse_params.get('delete_rows', ''),
+            'encoding': self.parse_params.get('encoding'),
+            'column_names': self.parse_params.get('column_names', [])
+        }
+        
+        if current_params == self._last_parse_params:
+            print(f"[ParseWizard] Parameters unchanged, skipping preview update")
+            return
+            
+        self._last_parse_params = current_params.copy()
         self.update_timer.stop()
         self.update_timer.start(self.update_delay)
         
@@ -688,29 +744,47 @@ class ParseWizardWindow(QMainWindow):
         if not self.raw_lines:
             return
             
+        print(f"[ParseWizard] Updating preview with {len(self.raw_lines)} raw lines")
+        
         try:
             # Update parse parameters from UI
             self._update_parse_params_from_ui()
+            print(f"[ParseWizard] Parse parameters: delimiter='{self.parse_params.get('delimiter')}', header_row={self.parse_params.get('header_row')}")
             
             # Parse preview data
             self.preview_data = self._parse_preview_data()
             
             if self.preview_data is not None and not self.preview_data.empty:
+                print(f"[ParseWizard] Preview parsed successfully: {len(self.preview_data)} rows, {len(self.preview_data.columns)} columns")
+                print(f"[ParseWizard] Preview columns: {list(self.preview_data.columns)}")
+                
+                # Store original data for column type detection
+                self.original_preview_data = self.preview_data.copy()
+                
+                # Apply user-selected column type conversions to preview
+                user_channel_types = self._get_user_channel_types()
+                if user_channel_types:
+                    print(f"[ParseWizard] Applying user column type conversions to preview: {user_channel_types}")
+                    self.preview_data = self._convert_column_types(self.preview_data, user_channel_types)
+                
+                # Apply user-edited column names to preview
+                user_column_names = self._get_user_column_names()
+                if user_column_names:
+                    print(f"[ParseWizard] Applying user column name changes to preview: {user_column_names}")
+                    self.preview_data = self._apply_column_name_changes(self.preview_data, user_column_names)
+                
                 self._update_preview_table()
                 self._update_column_types_table()
-                self._update_time_column_combo()
                 
-                # Show X-axis column info
-                x_col_info = self._get_x_axis_info()
-                self.parse_status_label.setText(f"Status: Preview ready ({len(self.preview_data)} rows, {len(self.preview_data.columns)} columns) | X-axis: {x_col_info}")
-                self.parse_status_label.setStyleSheet("padding: 5px; background-color: #e8f5e8; border: 1px solid #4CAF50;")
+                # Update readiness status
+                self._update_readiness_status()
             else:
-                self.parse_status_label.setText("Status: Parse error - check settings")
-                self.parse_status_label.setStyleSheet("padding: 5px; background-color: #ffe8e8; border: 1px solid #f44336;")
+                print(f"[ParseWizard] Preview parse failed - no data returned")
+                self._update_readiness_status()
                 
         except Exception as e:
-            self.parse_status_label.setText(f"Status: Error - {str(e)}")
-            self.parse_status_label.setStyleSheet("padding: 5px; background-color: #ffe8e8; border: 1px solid #f44336;")
+            print(f"[ParseWizard] Preview update error: {str(e)}")
+            self._update_readiness_status()
             
     def _update_parse_params_from_ui(self):
         """Update parse parameters from UI controls"""
@@ -722,9 +796,8 @@ class ParseWizardWindow(QMainWindow):
             'decimal': self.decimal_combo.currentText(),
             'thousands': self.thousands_combo.currentText(),
             'na_values': [v.strip() for v in self.na_values_input.text().split(',') if v.strip()],
-            'parse_dates': self.parse_dates_checkbox.isChecked(),
-            'date_format': self.custom_date_format_input.text() if self.custom_date_format_input.isVisible() else self.date_format_combo.currentText(),
-            'column_names': [v.strip() for v in self.column_names_input.text().split(',') if v.strip()] if self.column_names_input.text().strip() else [],
+            'parse_dates': True,  # Always parse dates
+            'date_formats': [v.strip() for v in self.date_formats_input.text().split(',') if v.strip()],
             'downsample_enabled': self.downsample_checkbox.isChecked(),
             'downsample_method': self.downsample_method_combo.currentText(),
             'downsample_factor': self.downsample_factor_spin.value(),
@@ -866,10 +939,8 @@ class ParseWizardWindow(QMainWindow):
                 df = pd.read_fwf(
                     io.StringIO(temp_content),
                     header=header_row,
-                    names=self.parse_params['column_names'] if self.parse_params['column_names'] else None,
                     na_values=self.parse_params['na_values'],
                     parse_dates=self.parse_params['parse_dates'],
-                    date_format=self.parse_params['date_format'] if self.parse_params['date_format'] != 'auto' else None,
                     encoding=self.parse_params['encoding'],
                     on_bad_lines='skip'
                 )
@@ -878,14 +949,12 @@ class ParseWizardWindow(QMainWindow):
                     io.StringIO(temp_content),
                     sep=self.parse_params['delimiter'],
                     header=header_row,
-                    names=self.parse_params['column_names'] if self.parse_params['column_names'] else None,
                     quotechar=self.parse_params['quote_char'],
                     escapechar=self.parse_params['escape_char'],
                     decimal=self.parse_params['decimal'],
                     thousands=self.parse_params['thousands'] if self.parse_params['thousands'] else None,
                     na_values=self.parse_params['na_values'],
                     parse_dates=self.parse_params['parse_dates'],
-                    date_format=self.parse_params['date_format'] if self.parse_params['date_format'] != 'auto' else None,
                     encoding=self.parse_params['encoding'],
                     on_bad_lines='skip'
                 )
@@ -914,42 +983,21 @@ class ParseWizardWindow(QMainWindow):
             return
             
         # Set table size
-        self.data_table.setRowCount(min(len(self.preview_data), 100))  # Limit to 100 rows for preview
+        self.data_table.setRowCount(len(self.preview_data))  # Show all rows
         self.data_table.setColumnCount(len(self.preview_data.columns))
         self.data_table.setHorizontalHeaderLabels([str(col) for col in self.preview_data.columns])
         
         # Determine which column is the X-axis
-        x_col_selection = self.time_column_combo.currentText()
+        selected_button = self.x_axis_button_group.checkedButton()
         x_axis_col_idx = None
         
-        if x_col_selection not in ["Auto-detect", "Use row index"]:
-            # User manually selected a column
-            try:
-                x_axis_col_idx = list(self.preview_data.columns).index(x_col_selection)
-            except ValueError:
-                pass
-        elif x_col_selection == "Auto-detect":
-            # Find what auto-detect would choose
-            auto_detected = None
-            for col in self.preview_data.columns:
-                if self.preview_data[col].dtype.name.startswith('datetime'):
-                    auto_detected = col
-                    break
-            if not auto_detected:
-                time_indicators = ['time', 'timestamp', 'datetime', 'date', 'seconds', 'ms', 't', 'x']
-                for col in self.preview_data.columns:
-                    col_lower = str(col).lower().strip()
-                    if any(indicator in col_lower for indicator in time_indicators):
-                        auto_detected = col
-                        break
-            if auto_detected:
-                try:
-                    x_axis_col_idx = list(self.preview_data.columns).index(auto_detected)
-                except ValueError:
-                    pass
+        if selected_button:
+            row = self.x_axis_button_group.id(selected_button)
+            if row < len(self.preview_data.columns):
+                x_axis_col_idx = row
         
         # Fill table with data
-        for row in range(min(len(self.preview_data), 100)):
+        for row in range(len(self.preview_data)):
             for col in range(len(self.preview_data.columns)):
                 value = self.preview_data.iloc[row, col]
                 if pd.isna(value):
@@ -972,128 +1020,280 @@ class ParseWizardWindow(QMainWindow):
                 
         # Update info label
         total_rows = len(self.preview_data)
-        preview_rows = min(total_rows, 100)
         x_axis_note = " | Blue highlighting shows X-axis column" if x_axis_col_idx is not None else ""
-        self.preview_info_label.setText(f"Showing {preview_rows} of {total_rows} rows, {len(self.preview_data.columns)} columns{x_axis_note}")
+        self.preview_info_label.setText(f"Showing all {total_rows} rows, {len(self.preview_data.columns)} columns{x_axis_note}")
         
+        # Update readiness status
+        self._update_readiness_status()
+        
+    def _update_readiness_status(self):
+        """Update the status label to show if ready for channel creation"""
+        if not hasattr(self, 'parse_status_label'):
+            return
+            
+        # Check all required conditions
+        conditions = []
+        
+        # 1. File loaded
+        if not hasattr(self, 'file_path') or self.file_path is None:
+            self.parse_status_label.setText("❌ No file loaded")
+            self.parse_status_label.setStyleSheet("padding: 5px; background-color: #ffe8e8; border: 1px solid #f44336;")
+            return
+        conditions.append("✅ File loaded")
+        
+        # 2. Preview data available
+        if self.preview_data is None or len(self.preview_data) == 0:
+            self.parse_status_label.setText("❌ No preview data available")
+            self.parse_status_label.setStyleSheet("padding: 5px; background-color: #ffe8e8; border: 1px solid #f44336;")
+            return
+        conditions.append("✅ Preview data available")
+        
+        # 3. At least one column detected
+        if len(self.preview_data.columns) == 0:
+            self.parse_status_label.setText("❌ No columns detected")
+            self.parse_status_label.setStyleSheet("padding: 5px; background-color: #ffe8e8; border: 1px solid #f44336;")
+            return
+        conditions.append(f"✅ {len(self.preview_data.columns)} columns detected")
+        
+        # 4. X-axis column selected
+        selected_button = self.x_axis_button_group.checkedButton()
+        if not selected_button:
+            self.parse_status_label.setText("❌ No X-axis column selected")
+            self.parse_status_label.setStyleSheet("padding: 5px; background-color: #ffe8e8; border: 1px solid #f44336;")
+            return
+        conditions.append("✅ X-axis column selected")
+        
+        # 5. Basic parsing configuration
+        if not hasattr(self, 'delimiter_combo') or not self.delimiter_combo.currentText():
+            self.parse_status_label.setText("❌ Delimiter not configured")
+            self.parse_status_label.setStyleSheet("padding: 5px; background-color: #ffe8e8; border: 1px solid #f44336;")
+            return
+        conditions.append("✅ Parsing configured")
+        
+        # All conditions met - ready for channel creation
+        total_rows = len(self.preview_data)
+        status_text = f"✅ Ready to create channels ({total_rows} rows, {len(self.preview_data.columns)} columns)"
+        self.parse_status_label.setText(status_text)
+        self.parse_status_label.setStyleSheet("padding: 5px; background-color: #e8f5e8; border: 1px solid #4CAF50;")
+        
+    def _is_likely_datetime(self, value: str) -> bool:
+        """Check if a value looks like datetime (from auto parser logic)"""
+        if not value or not value.strip():
+            return False
+            
+        value = value.strip()
+        
+        try:
+            # Try pandas datetime parsing first - this is the most reliable
+            pd.to_datetime(value, errors='raise')
+            return True
+        except:
+            # Check common datetime patterns
+            datetime_patterns = [
+                r'^\d{4}-\d{1,2}-\d{1,2}$',          # YYYY-MM-DD or YYYY-M-D
+                r'^\d{1,2}/\d{1,2}/\d{4}$',          # MM/DD/YYYY or M/D/YYYY
+                r'^\d{1,2}-\d{1,2}-\d{4}$',          # MM-DD-YYYY or M-D-YYYY
+                r'^\d{4}/\d{1,2}/\d{1,2}$',          # YYYY/MM/DD or YYYY/M/D
+                r'^\d{4}-\d{1,2}-\d{1,2}\s+\d{1,2}:\d{2}',  # YYYY-MM-DD HH:MM
+                r'^\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2}',  # MM/DD/YYYY HH:MM
+                r'^\d{4}-\d{3}$',                    # YYYY-DDD (Julian date)
+                r'^\d{8}$',                          # YYYYMMDD
+            ]
+            
+            for pattern in datetime_patterns:
+                if re.match(pattern, value):
+                    return True
+        
+        return False
+    
+    def _is_likely_datetime_with_formats(self, value: str, date_formats: List[str]) -> bool:
+        """Check if a value looks like datetime using configured date formats"""
+        if not value or not value.strip():
+            return False
+            
+        value = value.strip()
+        
+        # Try pandas datetime parsing with configured formats
+        for date_format in date_formats:
+            try:
+                pd.to_datetime(value, format=date_format, errors='raise')
+                return True
+            except:
+                continue
+        
+        # Fallback to general pandas parsing
+        try:
+            pd.to_datetime(value, errors='raise')
+            return True
+        except:
+            pass
+        
+        # Fallback to regex patterns for common formats
+        return self._is_likely_datetime(value)
+
+    def _detect_channel_type(self, series: pd.Series) -> str:
+        """Detect channel type from pandas Series using configured date formats"""
+        dtype_str = str(series.dtype).lower()
+        
+        # Check for datetime types first
+        if 'datetime' in dtype_str or 'timestamp' in dtype_str:
+            return 'datetime'
+        
+        # Check for numeric types
+        if series.dtype.kind in 'biufc':  # bool, int, uint, float, complex
+            # Check if this might be categorical data (small number of unique values)
+            unique_count = series.nunique()
+            total_count = len(series.dropna())
+            
+            if total_count > 0:
+                unique_ratio = unique_count / total_count
+                
+                # If very few unique values relative to total, likely categorical
+                if unique_ratio < 0.1 and unique_count < 20:
+                    return 'category'
+                
+                # Check if values are all integers (could be category codes)
+                if series.dropna().apply(lambda x: float(x).is_integer()).all():
+                    if unique_count < 50:  # Reasonable number of categories
+                        return 'category'
+            
+            return 'numeric'
+        
+        # For object/string types, check the content using configured date formats
+        if dtype_str == 'object':
+            # Sample some values to check for datetime patterns
+            sample_values = series.dropna().head(5).astype(str).tolist()
+            if sample_values:
+                datetime_count = 0
+                date_formats = self.parse_params.get('date_formats', [])
+                
+                for value in sample_values:
+                    if self._is_likely_datetime_with_formats(value, date_formats):
+                        datetime_count += 1
+                
+                # If majority look like datetime, classify as datetime
+                if datetime_count / len(sample_values) > 0.5:
+                    return 'datetime'
+            
+            # Default to category for object types
+            return 'category'
+        
+        # Default fallback
+        return 'numeric'
+
     def _update_column_types_table(self):
         """Update the column types configuration table"""
         if self.preview_data is None:
             return
         
-        # Store current dropdown values before updating
-        current_dropdown_values = {}
+        # Store current edited column names before updating
+        current_edited_names = {}
         current_columns = [str(col) for col in self.preview_data.columns]
         
-        # Check if we should preserve dropdown states (same columns, not just same count)
+        # Use original data for column type detection to avoid circular dependency
+        data_for_detection = self.original_preview_data if hasattr(self, 'original_preview_data') and self.original_preview_data is not None else self.preview_data
+        
+        # Check if we should preserve edited names (same columns, not just same count)
         should_preserve = False
         if hasattr(self, '_last_column_names') and self._last_column_names == current_columns:
             should_preserve = True
-            # Same columns - preserve dropdown states
+            # Same columns - preserve edited names
             for i in range(self.column_types_table.rowCount()):
-                combo = self.column_types_table.cellWidget(i, 2)
-                if combo and isinstance(combo, QComboBox):
-                    col_name = self.column_types_table.item(i, 0)
-                    if col_name:
-                        current_dropdown_values[col_name.text()] = combo.currentText()
+                col_name_item = self.column_types_table.item(i, 0)
+                
+                if col_name_item:
+                    current_edited_names[i] = col_name_item.text()
         
         self.column_types_table.setRowCount(len(self.preview_data.columns))
         
         for i, col in enumerate(self.preview_data.columns):
             col_str = str(col)
             
-            # Column name
+            # Column name - preserve user edits if available
             name_item = self.column_types_table.item(i, 0)
-            if not name_item or name_item.text() != col_str:
-                self.column_types_table.setItem(i, 0, QTableWidgetItem(col_str))
+            if should_preserve and i in current_edited_names:
+                # Restore user-edited name
+                edited_name = current_edited_names[i]
+                if not name_item or name_item.text() != edited_name:
+                    name_item = QTableWidgetItem(edited_name)
+                    name_item.setBackground(QColor(255, 255, 200))  # Light yellow for edited names
+                    name_item.setToolTip(f"Edited from '{col_str}' to '{edited_name}'")
+                    self.column_types_table.setItem(i, 0, name_item)
+                elif name_item:
+                    name_item.setBackground(QColor(255, 255, 200))  # Light yellow for edited names
+                    name_item.setToolTip(f"Edited from '{col_str}' to '{name_item.text()}'")
+            elif not name_item or name_item.text() != col_str:
+                # Use original column name
+                name_item = QTableWidgetItem(col_str)
+                name_item.setBackground(QColor(240, 248, 255))  # Light blue for editable names
+                name_item.setToolTip("Double-click to edit column name")
+                self.column_types_table.setItem(i, 0, name_item)
+            elif name_item:
+                # Ensure original names have the editable styling
+                name_item.setBackground(QColor(240, 248, 255))  # Light blue for editable names
+                name_item.setToolTip("Double-click to edit column name")
             
-            # Detected type
+            # Detected pandas type (for debugging)
             detected_type = str(self.preview_data[col].dtype)
             type_item = self.column_types_table.item(i, 1)
             if not type_item or type_item.text() != detected_type:
                 self.column_types_table.setItem(i, 1, QTableWidgetItem(detected_type))
             
-            # Override type combo - only create if doesn't exist or columns changed
-            existing_combo = self.column_types_table.cellWidget(i, 2)
-            if not existing_combo or not isinstance(existing_combo, QComboBox) or not should_preserve:
-                type_combo = QComboBox()
-                type_combo.addItems(['auto', 'string', 'float', 'int', 'datetime', 'boolean', 'category'])
+            # Auto-detect channel type using original data
+            auto_detected_channel_type = self._detect_channel_type(data_for_detection[col])
+            
+            # Auto-detected type text item (read-only)
+            type_item = self.column_types_table.item(i, 2)
+            if not type_item or type_item.text() != auto_detected_channel_type:
+                type_item = QTableWidgetItem(auto_detected_channel_type)
+                type_item.setFlags(type_item.flags() & ~Qt.ItemIsEditable)  # Make read-only
+                type_item.setBackground(QColor(240, 240, 240))  # Light gray background for read-only
+                self.column_types_table.setItem(i, 2, type_item)
+            
+            # X-axis column radio button
+            x_axis_radio = self.column_types_table.cellWidget(i, 3)
+            if not x_axis_radio or not isinstance(x_axis_radio, QRadioButton):
+                x_axis_radio = QRadioButton()
+                self.x_axis_button_group.addButton(x_axis_radio, i)
+                self.column_types_table.setCellWidget(i, 3, x_axis_radio)
+            
+            # Enable/disable radio button based on column type
+            if auto_detected_channel_type == 'category':
+                x_axis_radio.setEnabled(False)
+                x_axis_radio.setToolTip(f"Cannot use '{col_str}' as X-axis (categorical data)")
+                x_axis_radio.setChecked(False)  # Uncheck if it was previously selected
+            else:
+                x_axis_radio.setEnabled(True)
+                x_axis_radio.setToolTip(f"Select '{col_str}' as X-axis column")
                 
-                # Restore previous value if available
-                if should_preserve and col_str in current_dropdown_values:
-                    type_combo.setCurrentText(current_dropdown_values[col_str])
-                else:
-                    type_combo.setCurrentText('auto')
-                
-                # Set focus policy to avoid interfering with user interaction
-                type_combo.setFocusPolicy(Qt.StrongFocus)
-                self.column_types_table.setCellWidget(i, 2, type_combo)
+                # Auto-select first datetime column or first numeric column if no datetime found
+                if auto_detected_channel_type == 'datetime' and not self.x_axis_button_group.checkedButton():
+                    x_axis_radio.setChecked(True)
+                elif auto_detected_channel_type == 'numeric' and not self.x_axis_button_group.checkedButton():
+                    x_axis_radio.setChecked(True)
         
         # Remember the column names for next update
         self._last_column_names = current_columns
             
-    def _update_time_column_combo(self):
-        """Update the X-axis column combo with available columns"""
-        if self.preview_data is None:
-            return
-            
-        # Store current selection to preserve it
-        current_selection = self.time_column_combo.currentText()
-        
-        self.time_column_combo.clear()
-        self.time_column_combo.addItem("Auto-detect")
-        self.time_column_combo.addItem("Use row index")
-        
-        # Add all data columns
-        for col in self.preview_data.columns:
-            self.time_column_combo.addItem(str(col))
-        
-        # Restore previous selection if it still exists
-        index = self.time_column_combo.findText(current_selection)
-        if index >= 0:
-            self.time_column_combo.setCurrentIndex(index)
+
     
     def _get_x_axis_info(self) -> str:
         """Get information about the currently selected X-axis column"""
         if self.preview_data is None:
             return "No data"
             
-        x_col_selection = self.time_column_combo.currentText()
-        
-        if x_col_selection == "Auto-detect":
-            # Determine what auto-detect would choose
-            auto_detected = None
+        # Get the selected radio button
+        selected_button = self.x_axis_button_group.checkedButton()
+        if not selected_button:
+            return "No X-axis column selected"
             
-            # Check for datetime columns first
-            for col in self.preview_data.columns:
-                if self.preview_data[col].dtype.name.startswith('datetime'):
-                    auto_detected = col
-                    break
-            
-            # If no datetime, check for time-like names
-            if not auto_detected:
-                time_indicators = ['time', 'timestamp', 'datetime', 'date', 'seconds', 'ms', 't', 'x']
-                for col in self.preview_data.columns:
-                    col_lower = str(col).lower().strip()
-                    if any(indicator in col_lower for indicator in time_indicators):
-                        auto_detected = col
-                        break
-            
-            if auto_detected:
-                return f"Auto-detected '{auto_detected}'"
-            else:
-                return "Auto-detected 'Row Index'"
-                
-        elif x_col_selection == "Use row index":
-            return "Row Index (0, 1, 2, ...)"
-            
+        row = self.x_axis_button_group.id(selected_button)
+        if row < len(self.preview_data.columns):
+            selected_column = str(self.preview_data.columns[row])
+            col_type = str(self.preview_data[selected_column].dtype)
+            return f"'{selected_column}' ({col_type})"
         else:
-            # User manually selected a column
-            if x_col_selection in self.preview_data.columns:
-                col_type = str(self.preview_data[x_col_selection].dtype)
-                return f"'{x_col_selection}' ({col_type})"
-            else:
-                return f"'{x_col_selection}' (not found)"
+            return "Invalid X-axis selection"
             
     def _reset_to_defaults(self):
         """Reset all settings to defaults"""
@@ -1109,9 +1309,8 @@ class ParseWizardWindow(QMainWindow):
             'thousands': '',
             'na_values': ['', 'NA', 'N/A', 'null', 'NULL', 'nan', 'NaN'],
             'parse_dates': True,
-            'date_format': 'auto',
+            'date_formats': ['%Y-%m-%d', '%m/%d/%Y', '%d/%m/%Y', '%Y-%m-%d %H:%M:%S', '%m/%d/%Y %H:%M:%S', '%d/%m/%Y %H:%M:%S'],
             'time_column': None,
-            'column_names': [],
             'column_types': {},
             'downsample_enabled': False,
             'downsample_method': 'Every Nth row',
@@ -1128,9 +1327,7 @@ class ParseWizardWindow(QMainWindow):
         self.decimal_combo.setCurrentText('.')
         self.thousands_combo.setCurrentText('')
         self.na_values_input.setText('NA,N/A,null,NULL,nan,NaN')
-        self.parse_dates_checkbox.setChecked(True)
-        self.date_format_combo.setCurrentText('auto')
-        self.column_names_input.setText('')
+        self.date_formats_input.setText('%Y-%m-%d,%m/%d/%Y,%d/%m/%Y,%Y-%m-%d %H:%M:%S,%m/%d/%Y %H:%M:%S,%d/%m/%Y %H:%M:%S')
         self.encoding_combo.setCurrentText('utf-8')
         
         # Reset downsampling controls
@@ -1195,6 +1392,18 @@ class ParseWizardWindow(QMainWindow):
             if full_data is None or full_data.empty:
                 QMessageBox.critical(self, "Parse Error", "Failed to parse the file with current settings.")
                 return
+            
+            # Apply user-selected column type conversions
+            user_channel_types = self._get_user_channel_types()
+            if user_channel_types:
+                print(f"[ParseWizard] Applying user column type conversions for final parsing")
+                full_data = self._convert_column_types(full_data, user_channel_types)
+                
+            # Apply user-edited column names
+            user_column_names = self._get_user_column_names()
+            if user_column_names:
+                print(f"[ParseWizard] Applying user column name changes for final parsing")
+                full_data = self._apply_column_name_changes(full_data, user_column_names)
                 
             # Create file and channels using the managers
             if existing_file:
@@ -1203,13 +1412,21 @@ class ParseWizardWindow(QMainWindow):
                 channels = self._create_channels_from_data(full_data, file_obj)
                 
                 if channels:
+                    print(f"[ParseWizard] Creating {len(channels)} channels from parsed data")
+                    
                     # Remove old channels first
                     old_channels = self.channel_manager.get_channels_by_file(file_obj.file_id)
-                    for old_channel in old_channels:
-                        self.channel_manager.remove_channel(old_channel.channel_id)
+                    if old_channels:
+                        print(f"[ParseWizard] Removing {len(old_channels)} existing channels")
+                        for old_channel in old_channels:
+                            self.channel_manager.remove_channel(old_channel.channel_id)
+                    
+                    # Assign colors to channels before adding to manager
+                    self._assign_colors_to_channels(channels, file_obj.file_id)
                     
                     # Add new channels
                     self.channel_manager.add_channels(channels)
+                    print(f"[ParseWizard] Successfully created {len(channels)} channels")
                     
                     # Emit completion signal
                     self.file_parsed.emit(file_obj.file_id)
@@ -1231,9 +1448,15 @@ class ParseWizardWindow(QMainWindow):
                 channels = self._create_channels_from_data(full_data, file_obj)
                 
                 if channels:
+                    print(f"[ParseWizard] Creating {len(channels)} channels from parsed data")
+                    
+                    # Assign colors to channels before adding to manager
+                    self._assign_colors_to_channels(channels, file_obj.file_id)
+                    
                     # Add to managers
                     self.file_manager.add_file(file_obj)
                     self.channel_manager.add_channels(channels)
+                    print(f"[ParseWizard] Successfully created {len(channels)} channels")
                     
                     # Emit completion signal
                     self.file_parsed.emit(file_obj.file_id)
@@ -1289,10 +1512,8 @@ class ParseWizardWindow(QMainWindow):
                 df = pd.read_fwf(
                     file_input,
                     header=header_row,
-                    names=self.parse_params['column_names'] if self.parse_params['column_names'] else None,
                     na_values=self.parse_params['na_values'],
                     parse_dates=self.parse_params['parse_dates'],
-                    date_format=self.parse_params['date_format'] if self.parse_params['date_format'] != 'auto' else None,
                     encoding=self.parse_params['encoding'],
                     on_bad_lines='skip'
                 )
@@ -1301,14 +1522,12 @@ class ParseWizardWindow(QMainWindow):
                     file_input,
                     sep=self.parse_params['delimiter'],
                     header=header_row,
-                    names=self.parse_params['column_names'] if self.parse_params['column_names'] else None,
                     quotechar=self.parse_params['quote_char'],
                     escapechar=self.parse_params['escape_char'],
                     decimal=self.parse_params['decimal'],
                     thousands=self.parse_params['thousands'] if self.parse_params['thousands'] else None,
                     na_values=self.parse_params['na_values'],
                     parse_dates=self.parse_params['parse_dates'],
-                    date_format=self.parse_params['date_format'] if self.parse_params['date_format'] != 'auto' else None,
                     encoding=self.parse_params['encoding'],
                     on_bad_lines='skip'
                 )
@@ -1349,35 +1568,20 @@ class ParseWizardWindow(QMainWindow):
         
         channels = []
         
-        # Determine X-axis column based on user selection
-        x_col_selection = self.time_column_combo.currentText()
+        # Determine X-axis column based on radio button selection
+        selected_button = self.x_axis_button_group.checkedButton()
         time_col = None
         use_index = False
         
-        if x_col_selection == "Auto-detect":
-            # Auto-detect time column
-            for col in data.columns:
-                if data[col].dtype.name.startswith('datetime'):
-                    time_col = col
-                    break
-            # If no datetime column found, check for time-like column names
-            if not time_col:
-                time_indicators = ['time', 'timestamp', 'datetime', 'date', 'seconds', 'ms', 't', 'x']
-                for col in data.columns:
-                    col_lower = str(col).lower().strip()
-                    if any(indicator in col_lower for indicator in time_indicators):
-                        time_col = col
-                        break
-        elif x_col_selection == "Use row index":
-            use_index = True
-            time_col = None
-        else:
-            # User manually selected a specific column
-            if x_col_selection in data.columns:
-                time_col = x_col_selection
+        if selected_button:
+            row = self.x_axis_button_group.id(selected_button)
+            if row < len(data.columns):
+                time_col = str(data.columns[row])
             else:
-                # Fallback to auto-detect if selected column doesn't exist
                 use_index = True
+        else:
+            # No selection, use row index
+            use_index = True
                 
         # Create channels for each data column
         for col in data.columns:
@@ -1413,6 +1617,33 @@ class ParseWizardWindow(QMainWindow):
             
         return channels
         
+    def _assign_colors_to_channels(self, channels: List, file_id: str):
+        """Assign unique colors to channels based on existing channels in the file"""
+        # Get existing channels from the same file to avoid color conflicts
+        existing_channels = self.channel_manager.get_channels_by_file(file_id)
+        existing_colors = set()
+        for ch in existing_channels:
+            if hasattr(ch, 'color') and ch.color is not None:
+                existing_colors.add(ch.color)
+        
+        # Define color palette (same as used in ProcessWizardManager)
+        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+        
+        # Assign colors to each new channel
+        for i, channel in enumerate(channels):
+            if not hasattr(channel, 'color') or channel.color is None:
+                # Find the first available color not used by other channels in the file
+                available_colors = [c for c in colors if c not in existing_colors]
+                if available_colors:
+                    channel.color = available_colors[0]
+                    existing_colors.add(channel.color)  # Mark this color as used
+                else:
+                    # If all colors are used, cycle through them based on total channel count
+                    color_index = (len(existing_channels) + i) % len(colors)
+                    channel.color = colors[color_index]
+                
+                print(f"[ParseWizard] Assigned color {channel.color} to channel '{channel.legend_label}'")
+        
     def _find_existing_file(self):
         """Find if the current file path already exists in the file manager"""
         if not self.file_path or not self.file_manager:
@@ -1443,3 +1674,198 @@ class ParseWizardWindow(QMainWindow):
         """Set the file path from external source"""
         if file_path:
             self._load_file(Path(file_path)) 
+
+    def _get_user_channel_types(self) -> Dict[str, str]:
+        """Extract auto-detected channel types from the UI table"""
+        channel_types = {}
+        
+        if not hasattr(self, 'column_types_table') or self.column_types_table is None:
+            print("[ParseWizard] No column types table available")
+            return channel_types
+            
+        for i in range(self.column_types_table.rowCount()):
+            col_name_item = self.column_types_table.item(i, 0)
+            type_item = self.column_types_table.item(i, 2)
+            
+            if col_name_item and type_item:
+                # Get the original column name from the data (before any renaming)
+                if self.original_preview_data is not None and i < len(self.original_preview_data.columns):
+                    original_name = str(self.original_preview_data.columns[i])
+                    auto_detected_type = type_item.text()
+                    channel_types[original_name] = auto_detected_type
+                    print(f"[ParseWizard] Auto-detected channel type for '{original_name}': {auto_detected_type}")
+                else:
+                    # Fallback to using the displayed name
+                    col_name = col_name_item.text()
+                    auto_detected_type = type_item.text()
+                    channel_types[col_name] = auto_detected_type
+                    print(f"[ParseWizard] Auto-detected channel type for '{col_name}': {auto_detected_type}")
+            else:
+                print(f"[ParseWizard] Warning: Missing column name item or type item for row {i}")
+        
+        print(f"[ParseWizard] Total auto-detected channel types: {len(channel_types)}")
+        return channel_types
+
+    def _get_user_column_names(self) -> Dict[str, str]:
+        """Extract user-edited column names from the UI table"""
+        column_names = {}
+        
+        if not hasattr(self, 'column_types_table') or self.column_types_table is None:
+            print("[ParseWizard] No column types table available for column names")
+            return column_names
+            
+        for i in range(self.column_types_table.rowCount()):
+            col_name_item = self.column_types_table.item(i, 0)
+            
+            if col_name_item:
+                # Get the original column name from the original data (before any renaming)
+                if self.original_preview_data is not None and i < len(self.original_preview_data.columns):
+                    original_name = str(self.original_preview_data.columns[i])
+                    edited_name = col_name_item.text().strip()
+                    
+                    # Only include if the name was actually changed
+                    if edited_name and edited_name != original_name:
+                        column_names[original_name] = edited_name
+                        print(f"[ParseWizard] User renamed column '{original_name}' to '{edited_name}'")
+                else:
+                    # Fallback to using preview data
+                    if self.preview_data is not None and i < len(self.preview_data.columns):
+                        original_name = str(self.preview_data.columns[i])
+                        edited_name = col_name_item.text().strip()
+                        
+                        # Only include if the name was actually changed
+                        if edited_name and edited_name != original_name:
+                            column_names[original_name] = edited_name
+                            print(f"[ParseWizard] User renamed column '{original_name}' to '{edited_name}'")
+            else:
+                print(f"[ParseWizard] Warning: Missing column name item for row {i}")
+        
+        print(f"[ParseWizard] Total user column name changes: {len(column_names)}")
+        return column_names
+
+    def _convert_column_types(self, df: pd.DataFrame, user_channel_types: Dict[str, str]) -> pd.DataFrame:
+        """Convert DataFrame columns using auto parser logic"""
+        print(f"[ParseWizard] Starting column type conversion for {len(df.columns)} columns")
+        print(f"[ParseWizard] User selections: {user_channel_types}")
+        
+        # Initialize category mappings storage if not exists
+        if not hasattr(df, '_category_mappings'):
+            df._category_mappings = {}
+        
+        for col in df.columns:
+            channel_type = user_channel_types.get(str(col), 'numeric')  # Default to numeric
+            original_dtype = str(df[col].dtype)
+            print(f"[ParseWizard] Converting '{col}' ({original_dtype}) → {channel_type}")
+            
+            if channel_type == 'datetime':
+                try:
+                    print(f"[ParseWizard] Attempting datetime conversion for '{col}'")
+                    
+                    # Convert to datetime and store both datetime and numeric versions
+                    datetime_series = pd.to_datetime(df[col], errors='coerce')
+                    
+                    # Count conversion results
+                    total_values = len(datetime_series)
+                    valid_dates = datetime_series.notna().sum()
+                    invalid_dates = total_values - valid_dates
+                    
+                    if not datetime_series.isnull().all():
+                        # Store original datetime values as metadata
+                        df[f'{col}_datetime'] = datetime_series
+                        # Convert to numeric for plotting (days since first date)
+                        first_date = datetime_series.dropna().iloc[0]
+                        df[col] = (datetime_series - first_date).dt.total_seconds() / 86400  # Days
+                        
+                        success_rate = (valid_dates / total_values) * 100
+                        print(f"[ParseWizard] Datetime conversion successful: {valid_dates}/{total_values} values ({success_rate:.1f}%)")
+                        
+                        if invalid_dates > 0:
+                            print(f"[ParseWizard] {invalid_dates} values converted to NaT (invalid dates)")
+                    else:
+                        # Fallback to numeric if datetime conversion fails
+                        print(f"[ParseWizard] All datetime conversions failed, falling back to numeric")
+                        df[col] = pd.to_numeric(df[col], errors='coerce')
+                        
+                except Exception as e:
+                    # Fallback to numeric
+                    print(f"[ParseWizard] Datetime conversion error: {str(e)}, falling back to numeric")
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            
+            elif channel_type == 'category':
+                try:
+                    print(f"[ParseWizard] Attempting category encoding for '{col}'")
+                    
+                    from sklearn.preprocessing import LabelEncoder
+                    le = LabelEncoder()
+                    
+                    # Ensure strings, fill NaNs to avoid crashing
+                    filled = df[col].astype(str).fillna('__missing__')
+                    
+                    # Count unique values before encoding
+                    unique_values = filled.unique()
+                    print(f"[ParseWizard] Found {len(unique_values)} unique categories")
+                    
+                    df[col] = le.fit_transform(filled)
+                    df[col] = df[col].astype(float)
+                    
+                    # Save the category mapping
+                    category_mapping = {idx: label for idx, label in enumerate(le.classes_)}
+                    df._category_mappings[str(col)] = category_mapping
+                    
+                    # Display category mapping in console
+                    print(f"[ParseWizard] Category mapping for '{col}':")
+                    for code, label in category_mapping.items():
+                        print(f"[ParseWizard]   {code} → '{label}'")
+                    
+                    print(f"[ParseWizard] Category encoding successful: {len(category_mapping)} categories mapped")
+                    
+                except Exception as e:
+                    print(f"[ParseWizard] Category encoding failed: {str(e)}, falling back to numeric")
+                    # Fallback to numeric
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            
+            elif channel_type == 'numeric':
+                try:
+                    print(f"[ParseWizard] Converting '{col}' to numeric")
+                    
+                    original_dtype = str(df[col].dtype)
+                    original_non_null = df[col].notna().sum()
+                    
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+                    
+                    new_dtype = str(df[col].dtype)
+                    new_non_null = df[col].notna().sum()
+                    lost_values = original_non_null - new_non_null
+                    
+                    if lost_values == 0:
+                        print(f"[ParseWizard] Numeric conversion successful: {original_dtype} → {new_dtype}")
+                    else:
+                        print(f"[ParseWizard] Numeric conversion: {original_dtype} → {new_dtype}, {lost_values} values became NaN")
+                        
+                except Exception as e:
+                    print(f"[ParseWizard] Numeric conversion error: {str(e)}")
+        
+        return df 
+
+    def _apply_column_name_changes(self, df: pd.DataFrame, user_column_names: Dict[str, str]) -> pd.DataFrame:
+        """Apply user-edited column names to the DataFrame"""
+        if not user_column_names:
+            return df
+            
+        print(f"[ParseWizard] Applying column name changes: {user_column_names}")
+        
+        # Create a mapping of old names to new names
+        rename_mapping = {}
+        for old_name, new_name in user_column_names.items():
+            if old_name in df.columns:
+                rename_mapping[old_name] = new_name
+                print(f"[ParseWizard] Renaming '{old_name}' → '{new_name}'")
+            else:
+                print(f"[ParseWizard] Column '{old_name}' not found in DataFrame")
+        
+        # Apply the renaming
+        if rename_mapping:
+            df = df.rename(columns=rename_mapping)
+            print(f"[ParseWizard] Applied {len(rename_mapping)} column name changes")
+        
+        return df 
