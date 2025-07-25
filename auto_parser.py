@@ -225,18 +225,57 @@ class AutoParser:
         best_structure = None
         best_score = 0
         
+        print(f"DEBUG: Detecting structure for {len(lines)} lines")
+        
         # Try each delimiter
         for delimiter in delimiters:
+            delimiter_name = 'TAB' if delimiter == '\t' else f"'{delimiter}'"
+            print(f"DEBUG: Trying delimiter {delimiter_name}")
+            
             structure = self._analyze_delimiter_structure(lines, delimiter)
-            if structure and structure['score'] > best_score:
-                best_score = structure['score']
-                best_structure = structure
+            if structure:
+                print(f"DEBUG: Delimiter {delimiter_name} - Score: {structure['score']:.3f}, Cols: {structure['num_cols']}, Consistency: {structure['consistency']:.3f}")
+                if structure['score'] > best_score:
+                    best_score = structure['score']
+                    best_structure = structure
+                    print(f"DEBUG: New best delimiter: {delimiter_name} with score {structure['score']:.3f}")
+            else:
+                print(f"DEBUG: Delimiter {delimiter_name} - No valid structure detected")
         
         # Fallback for single-column files
         if not best_structure:
+            print("DEBUG: No multi-column structure found, falling back to single-column detection")
             structure = self._analyze_single_column_structure(lines)
             if structure:
+                print(f"DEBUG: Single-column structure detected - Score: {structure['score']:.3f}")
                 best_structure = structure
+            else:
+                print("DEBUG: Single-column detection also failed")
+        else:
+            delimiter_name = 'TAB' if best_structure['delimiter'] == '\t' else f"'{best_structure['delimiter']}'"
+            print(f"DEBUG: Final structure - Delimiter: {delimiter_name}, Strategy: {best_structure['strategy']}, Score: {best_structure['score']:.3f}")
+            print(f"DEBUG: Final column types: {best_structure['column_types']}")
+            if best_structure.get('headers'):
+                print(f"DEBUG: Detected headers: {best_structure['headers']}")
+            # Show detailed column type detection for final structure
+            if best_structure['strategy'] == 'multi_column':
+                print(f"DEBUG: === FINAL STRUCTURE DETAILED ANALYSIS ===")
+                # Re-analyze the final structure to show detailed debug
+                final_delimited_lines = [line for line in lines[:20] if best_structure['delimiter'] in line]
+                if len(final_delimited_lines) >= 3:
+                    final_token_matrix = []
+                    for line in final_delimited_lines:
+                        tokens = [token.strip() for token in line.split(best_structure['delimiter'])]
+                        final_token_matrix.append(tokens)
+                    
+                    if final_token_matrix:
+                        max_cols = max(len(row) for row in final_token_matrix)
+                        for row in final_token_matrix:
+                            row.extend([''] * (max_cols - len(row)))
+                        
+                        # Re-run column type detection with debug output
+                        print(f"DEBUG: Re-analyzing final structure with delimiter {delimiter_name}")
+                        self._infer_column_types(final_token_matrix)
         
         return best_structure
     
@@ -364,6 +403,8 @@ class AutoParser:
         max_cols = max(len(row) for row in token_matrix)
         column_types = {}
         
+        print(f"DEBUG: Inferring column types for {max_cols} columns")
+        
         # Transpose matrix to get columns
         for col_idx in range(max_cols):
             column_values = []
@@ -375,11 +416,13 @@ class AutoParser:
             
             if not column_values:
                 column_types[col_idx] = 'unknown'
+                print(f"DEBUG: Column {col_idx} - Type: unknown (no valid values)")
                 continue
             
             # Check for datetime first
             if self._is_datetime_column(column_values):
                 column_types[col_idx] = 'datetime'
+                print(f"DEBUG: Column {col_idx} - Type: datetime (sample: {column_values[:3]})")
                 continue
             
             # Check numeric ratio
@@ -390,16 +433,18 @@ class AutoParser:
             unique_ratio = len(set(column_values)) / len(column_values)
             avg_length = sum(len(val) for val in column_values) / len(column_values)
             
+            print(f"DEBUG: Column {col_idx} - Numeric ratio: {numeric_ratio:.3f}, Unique ratio: {unique_ratio:.3f}, Avg length: {avg_length:.1f}")
+            
             # Classify column type
             if numeric_ratio > 0.8:
                 column_types[col_idx] = 'numerical'
-            elif unique_ratio < 0.5 and avg_length < 15 and numeric_ratio < 0.3:
-                column_types[col_idx] = 'categorical'
-            elif avg_length > 20 or (unique_ratio > 0.9 and numeric_ratio < 0.1):
-                column_types[col_idx] = 'textual'
+                print(f"DEBUG: Column {col_idx} - Type: numerical (sample: {column_values[:3]})")
             else:
-                column_types[col_idx] = 'mixed'
+                column_types[col_idx] = 'categorical'
+                print(f"DEBUG: Column {col_idx} - Type: categorical (sample: {column_values[:3]})")
+       
         
+        print(f"DEBUG: Final column types: {column_types}")
         return column_types
     
     def _determine_single_column_type(self, values: List[str]) -> str:
@@ -506,22 +551,33 @@ class AutoParser:
         """
         if not token_matrix:
             return {'has_header': False, 'headers': [], 'data_start_row': 0}
-        
-        # Check first few rows for header patterns
+
+        # Try intelligent scoring first
         for row_idx in range(min(3, len(token_matrix))):
             row = token_matrix[row_idx]
-            
-            # Check if this row looks like a header
             header_score = self._calculate_header_score(row, row_idx, token_matrix, column_types)
-            
-            if header_score > 0.6:  # Threshold for header detection
+            if header_score > 0.6:
                 return {
                     'has_header': True,
                     'headers': [token.strip() for token in row],
-                    'data_start_row': row_idx + 1  # Skip the header row itself
+                    'data_start_row': row_idx + 1
                 }
-        
+
+        # Fallback: find first row that looks like a string header
+        for row_idx, row in enumerate(token_matrix[:3]):
+            tokens = [token.strip() for token in row if token.strip()]
+            string_count = sum(1 for token in tokens if not self._is_likely_numeric(token))
+            unique_ratio = len(set(tokens)) / len(tokens) if tokens else 0
+            if tokens and string_count / len(tokens) > 0.8 and unique_ratio > 0.8:
+                return {
+                    'has_header': True,
+                    'headers': tokens,
+                    'data_start_row': row_idx + 1
+                }
+
+        # Default: no header
         return {'has_header': False, 'headers': [], 'data_start_row': 0}
+
     
     def _calculate_header_score(self, row: List[str], row_idx: int, 
                                token_matrix: List[List[str]], column_types: Dict[int, str]) -> float:
@@ -708,6 +764,10 @@ class AutoParser:
         """
         Convert DataFrame columns to appropriate types.
         """
+        # Initialize category mappings storage if not exists
+        if not hasattr(df, '_category_mappings'):
+            df._category_mappings = {}
+        
         for col_idx, col in enumerate(df.columns):
             col_type = column_types.get(col_idx, 'unknown')
             
@@ -730,13 +790,32 @@ class AutoParser:
             elif col_type == 'numerical':
                 df[col] = pd.to_numeric(df[col], errors='coerce')
             elif col_type == 'categorical':
-                # Keep as object but could be optimized to category type
-                pass
+                try:
+                    from sklearn.preprocessing import LabelEncoder
+                    le = LabelEncoder()
+                    # Ensure strings, fill NaNs to avoid crashing
+                    filled = df[col].astype(str).fillna('__missing__')
+                    df[col] = le.fit_transform(filled)
+                    df[col] = df[col].astype(float)
+                    
+                    # Save the category mapping
+                    category_mapping = {idx: label for idx, label in enumerate(le.classes_)}
+                    df._category_mappings[col] = category_mapping
+                    
+                    # Debug output for category mapping
+                    print(f"DEBUG: Category mapping for column '{col}': {category_mapping}")
+                    
+                except Exception as e:
+                    print(f"Warning: Failed to encode column '{col}': {e}")
             else:
                 # Try numeric conversion anyway
                 numeric_series = pd.to_numeric(df[col], errors='coerce')
                 if not numeric_series.isnull().all():
                     df[col] = numeric_series
+        
+        # Debug output for all category mappings
+        if df._category_mappings:
+            print(f"DEBUG: All category mappings: {df._category_mappings}")
         
         return df
     
@@ -950,18 +1029,18 @@ class AutoParser:
                 ydata = df[col].values
                 ylabel = str(col)
                 
-                # Determine if this is categorical data
-                is_categorical = self._is_categorical_column(df[col])
-                
-                # Enhanced metadata
                 metadata = {
                     'original_column': col,
                     'parse_method': 'auto_robust',
                     'x_column': x_col_name if x_col_name else 'index',
                     'x_detection_method': x_col_info.get('method', 'none') if x_col_info else 'none',
-                    'is_categorical': is_categorical,
                     'data_quality': 'high' if pd.Series(ydata).notna().sum() / len(ydata) > 0.9 else 'medium'
                 }
+
+                # Add category mapping if present
+                if hasattr(df, '_category_mappings') and col in df._category_mappings:
+                    metadata['category_mapping'] = df._category_mappings[col]
+                    print(f"DEBUG: Added category mapping to channel metadata for column '{col}': {df._category_mappings[col]}")
                 
                 # Add datetime information if X column is datetime
                 if x_col_info and f'{x_col_name}_datetime' in df.columns:

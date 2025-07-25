@@ -534,27 +534,42 @@ class ParseWizardWindow(QMainWindow):
         if not self.raw_lines:
             return
             
+        print(f"[ParseWizard] Auto-detecting settings for {len(self.raw_lines)} lines")
+        
         # Since autoparse failed, default delimiter to None instead of auto-detecting
         # This encourages user to manually choose the appropriate delimiter
         self.delimiter_combo.setCurrentText('None')
+        print(f"[ParseWizard] Defaulting delimiter to 'None' (encouraging manual selection)")
             
         # Detect header row
         header_row = self._detect_header_row()
         self.header_row_spin.setValue(header_row)
+        print(f"[ParseWizard] Detected header row: {header_row}")
+        
+        # Show sample of detected header if available
+        if header_row < len(self.raw_lines):
+            header_line = self.raw_lines[header_row]
+            print(f"[ParseWizard] Header line: '{header_line}'")
+        else:
+            print(f"[ParseWizard] Warning: Header row {header_row} exceeds file length")
         
     def _detect_delimiter(self) -> str:
         """Detect the most likely delimiter"""
         if not self.raw_lines:
             return ','
             
+        print(f"[ParseWizard] Detecting delimiter from {len(self.raw_lines)} lines")
+        
         # Test common delimiters
         delimiters = [',', '\t', ';', '|', ' ']
         delimiter_scores = {}
         
         # Sample first few non-empty lines
         sample_lines = [line for line in self.raw_lines[:20] if line.strip()][:10]
+        print(f"[ParseWizard] Analyzing {len(sample_lines)} sample lines for delimiter detection")
         
         for delimiter in delimiters:
+            delimiter_name = 'TAB' if delimiter == '\t' else f"'{delimiter}'"
             scores = []
             for line in sample_lines:
                 if delimiter in line:
@@ -564,14 +579,23 @@ class ParseWizardWindow(QMainWindow):
                         avg_length = sum(len(part.strip()) for part in parts) / len(parts)
                         score = len(parts) * (1 + min(avg_length / 10, 1))
                         scores.append(score)
+                        print(f"[ParseWizard]   {delimiter_name}: '{line}' -> {len(parts)} parts, avg_length={avg_length:.1f}, score={score:.1f}")
             
             if scores:
-                delimiter_scores[delimiter] = sum(scores) / len(scores)
+                avg_score = sum(scores) / len(scores)
+                delimiter_scores[delimiter] = avg_score
+                print(f"[ParseWizard]   {delimiter_name}: Average score = {avg_score:.2f}")
+            else:
+                print(f"[ParseWizard]   {delimiter_name}: No valid lines found")
         
         # Return delimiter with highest score
         if delimiter_scores:
-            return max(delimiter_scores, key=delimiter_scores.get)
+            best_delimiter = max(delimiter_scores, key=delimiter_scores.get)
+            best_delimiter_name = 'TAB' if best_delimiter == '\t' else f"'{best_delimiter}'"
+            print(f"[ParseWizard] Selected delimiter: {best_delimiter_name} (score: {delimiter_scores[best_delimiter]:.2f})")
+            return best_delimiter
         
+        print(f"[ParseWizard] No delimiter detected, defaulting to comma")
         return ','
         
     def _detect_header_row(self) -> int:
