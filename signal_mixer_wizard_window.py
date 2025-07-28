@@ -402,6 +402,36 @@ class SignalMixerWizardWindow(QMainWindow):
         
         # Update compatibility
         self._update_compatibility()
+        
+        # Ensure mixed channels have proper colors
+        self._ensure_mixed_channels_have_colors()
+        
+        # Set initial console message
+        self._set_initial_console_message()
+
+    def _set_initial_console_message(self):
+        """Set initial helpful console message when the Signal Mixer Wizard opens"""
+        try:
+            welcome_msg = """Welcome to the Signal Mixer Wizard!
+
+Quick Start:
+1. Select two channels (A and B) from the dropdowns
+2. Choose a mixing operation from the left panel
+3. (Optional) Enter a custom expression or edit the Channel Name
+4. Click "Apply Mixer" to create the mixed channel
+
+Tips:
+• Mixing operations combine two input channels
+• Use custom expressions for advanced operations (e.g., C = A**2 + B**2)
+• The Channel Name is for display purposes only
+• Mixed channels appear in the results table below"""
+
+            self.console_output.clear()
+            self.console_output.append(welcome_msg)
+            
+        except Exception as e:
+            # Fallback if console output is not available
+            pass
 
     def _populate_channel_dropdowns(self):
         """Populate file dropdowns with available files"""
@@ -699,8 +729,8 @@ class SignalMixerWizardWindow(QMainWindow):
 
     def _on_operation_selected(self, item):
         """Handle operation template selection"""
-        # Clear console for new template selection
-        self.console_output.clear()
+        # Don't clear console here to avoid interfering with success messages
+        # self.console_output.clear()
         
         template = item.text()
         
@@ -729,8 +759,6 @@ class SignalMixerWizardWindow(QMainWindow):
         else:
             self._log_message("Available Channels: None (select channels A and B first)")
         
-        # Provide simple usage tip based on template type
-        self._log_simple_template_tip(template)
 
     def _log_simple_template_tip(self, template):
         """Log simple, focused tip for the template"""
@@ -1111,8 +1139,14 @@ class SignalMixerWizardWindow(QMainWindow):
         )
         
         if not is_valid:
-            self._log_message(f"Channel incompatibility: {validation_message}")
-            return
+            # Check if this is a time alignment failure due to no overlapping times
+            if "No overlapping time range found" in validation_message:
+                self._log_message(f"Channel incompatibility: {validation_message}")
+                self._log_message("💡 Suggestion: Try switching to 'Alignment Method: Index' in the Data Alignment section")
+                return
+            else:
+                self._log_message(f"Channel incompatibility: {validation_message}")
+                return
         
         # Create channel context
         channel_context = {'A': channel_a, 'B': channel_b}
@@ -1138,9 +1172,23 @@ class SignalMixerWizardWindow(QMainWindow):
         )
         
         if new_channel:
+            # Set the color for the mixed channel based on its index
+            mixed_channels = self.manager.get_mixed_channels()
+            channel_index = len(mixed_channels) - 1  # The new channel is at the end
+            colors = self._get_mixed_channel_colors()
+            new_channel.color = colors[channel_index % len(colors)]
+            
             self.expression_input.clear()
             self.channel_name_input.clear()
-            self._log_message(f"{message}")
+            
+            # Show success message with channel name
+            channel_display_name = channel_name or new_channel.legend_label or new_channel.channel_id
+            
+            # Clear console and show prominent success message
+            self.console_output.clear()
+            self._log_message("Operation applied successfully!")
+            self._log_message(f"Created channel: {channel_display_name}")
+            
             self._update_button_states()
             self._update_plot()
         else:
@@ -1217,8 +1265,15 @@ class SignalMixerWizardWindow(QMainWindow):
                 status_msg += " - No alignment needed"
                 self.data_aligner_widget.set_status_message(status_msg, "success")
         else:
-            status_msg = f"Validation failed: {validation_message}"
-            self.data_aligner_widget.set_status_message(status_msg, "error")
+            # Check if this is a time alignment failure due to no overlapping times
+            if "No overlapping time range found" in validation_message:
+                status_msg = f"Validation failed: {validation_message}"
+                self.data_aligner_widget.set_status_message(status_msg, "error")
+                # Also log the suggestion to the console
+                self._log_message("💡 Suggestion: Try switching to 'Alignment Method: Index' in the Data Alignment section")
+            else:
+                status_msg = f"Validation failed: {validation_message}"
+                self.data_aligner_widget.set_status_message(status_msg, "error")
         
         # Keep create button enabled based only on having expression and channel name
         if hasattr(self, 'create_btn') and hasattr(self, 'expression_input') and hasattr(self, 'channel_name_input'):
@@ -1241,6 +1296,9 @@ class SignalMixerWizardWindow(QMainWindow):
 
     def _update_plot(self):
         """Update the plot with selected and mixed channels"""
+        # Ensure all mixed channels have proper colors set
+        self._ensure_mixed_channels_have_colors()
+        
         self.ax.clear()
         
         # Clear any existing top axis
@@ -1284,14 +1342,34 @@ class SignalMixerWizardWindow(QMainWindow):
         # Plot input channels (A and B) on main axis with time data
         if channel_a and channel_a.ydata is not None and self._is_channel_visible_in_table("A"):
             x_data = channel_a.xdata if channel_a.xdata is not None else np.arange(len(channel_a.ydata))
-            channel_a_line, = self.ax.plot(x_data, channel_a.ydata, 'b-', alpha=0.7, linewidth=1,
+            # Use channel's actual styling properties
+            color = channel_a.color or 'blue'
+            style = channel_a.style or '-'
+            marker = channel_a.marker or 'None'
+            linewidth = 2 if getattr(channel_a, 'z_order', 0) > 0 else 1  # Thicker line if brought to front
+            
+            # Always use color parameter to avoid format string conflicts
+            fmt = style
+            if marker and marker != 'None':
+                fmt += marker
+            channel_a_line, = self.ax.plot(x_data, channel_a.ydata, fmt, color=color, alpha=0.7, linewidth=linewidth,
                         label=f"A: {channel_a.legend_label or channel_a.channel_id}")
             plotted_any = True
             max_data_length = max(max_data_length, len(channel_a.ydata))
         
         if channel_b and channel_b.ydata is not None and self._is_channel_visible_in_table("B"):
             x_data = channel_b.xdata if channel_b.xdata is not None else np.arange(len(channel_b.ydata))
-            channel_b_line, = self.ax.plot(x_data, channel_b.ydata, 'r-', alpha=0.7, linewidth=1,
+            # Use channel's actual styling properties
+            color = channel_b.color or 'red'
+            style = channel_b.style or '-'
+            marker = channel_b.marker or 'None'
+            linewidth = 2 if getattr(channel_b, 'z_order', 0) > 0 else 1  # Thicker line if brought to front
+            
+            # Always use color parameter to avoid format string conflicts
+            fmt = style
+            if marker and marker != 'None':
+                fmt += marker
+            channel_b_line, = self.ax.plot(x_data, channel_b.ydata, fmt, color=color, alpha=0.7, linewidth=linewidth,
                         label=f"B: {channel_b.legend_label or channel_b.channel_id}")
             plotted_any = True
             max_data_length = max(max_data_length, len(channel_b.ydata))
@@ -1306,7 +1384,16 @@ class SignalMixerWizardWindow(QMainWindow):
                 is_visible = self._is_channel_visible_in_table(channel_label)
                 
                 if is_visible:
-                    color = colors[i % len(colors)]
+                    # Use channel's actual styling properties, fallback to default colors if not set
+                    color = channel.color or colors[i % len(colors)]
+                    style = channel.style or '-'
+                    marker = channel.marker or 'None'
+                    linewidth = 2 if getattr(channel, 'z_order', 0) > 0 else 2  # Default to 2 for mixed channels
+                    
+                    # Always use color parameter to avoid format string conflicts
+                    fmt = style
+                    if marker and marker != 'None':
+                        fmt += marker
                     
                     # Check if this mixed channel should use independent x-axis
                     use_independent_x = False
@@ -1339,13 +1426,13 @@ class SignalMixerWizardWindow(QMainWindow):
                         if not hasattr(self, 'ax_top') or self.ax_top is None:
                             self.ax_top = self.ax.twiny()
                         x_data = np.arange(len(channel.ydata))
-                        self.ax_top.plot(x_data, channel.ydata, color=color, linewidth=2,
+                        self.ax_top.plot(x_data, channel.ydata, fmt, color=color, linewidth=linewidth,
                                     label=f"{channel_label}: {channel.legend_label or channel.channel_id}")
                         self._log_message(f"Plotted {channel_label} on top axis (index-based) with {len(channel.ydata)} samples")
                     else:
                         # Plot mixed channel on main axis with time data
                         x_data = channel.xdata if channel.xdata is not None else np.arange(len(channel.ydata))
-                        self.ax.plot(x_data, channel.ydata, color=color, linewidth=2,
+                        self.ax.plot(x_data, channel.ydata, fmt, color=color, linewidth=linewidth,
                                     label=f"{channel_label}: {channel.legend_label or channel.channel_id}")
                         self._log_message(f"Plotted {channel_label} on main axis (time-based) with {len(channel.ydata)} samples")
                     
@@ -1419,11 +1506,14 @@ class SignalMixerWizardWindow(QMainWindow):
         self.results_table.setCellWidget(row, 0, checkbox_widget)
         
         # Column 1: Style (visual preview widget)
-        color = 'blue' if label == 'A' else 'red'
+        # Use channel's actual styling properties, fallback to default colors
+        color = channel.color or ('blue' if label == 'A' else 'red')
+        style = channel.style or '-'
+        marker = channel.marker if channel.marker and channel.marker != 'None' else None
         style_widget = StylePreviewWidget(
             color=color,
-            style='-',
-            marker=None
+            style=style,
+            marker=marker
         )
         style_widget.setToolTip(tooltip)
         self.results_table.setCellWidget(row, 1, style_widget)
@@ -1456,39 +1546,39 @@ class SignalMixerWizardWindow(QMainWindow):
         actions_layout.setContentsMargins(2, 2, 2, 2)
         actions_layout.setSpacing(2)
         
-        # Info button
+        # Info button (channel information)
         info_button = QPushButton("❗")
         info_button.setMaximumWidth(25)
         info_button.setMaximumHeight(25)
-        info_button.setToolTip("Channel information")
+        info_button.setToolTip("Channel information and metadata")
         info_button.clicked.connect(lambda checked=False, ch=channel: self._show_channel_info(ch))
         actions_layout.addWidget(info_button)
         
-        # Inspect button
-        inspect_button = QPushButton("🔍")
-        inspect_button.setMaximumWidth(25)
-        inspect_button.setMaximumHeight(25)
-        inspect_button.setToolTip("Inspect channel data")
-        inspect_button.clicked.connect(lambda checked=False, ch=channel: self._inspect_channel_data(ch))
-        actions_layout.addWidget(inspect_button)
+        # Magnifying glass button (inspect data)
+        zoom_button = QPushButton("🔍")
+        zoom_button.setMaximumWidth(25)
+        zoom_button.setMaximumHeight(25)
+        zoom_button.setToolTip("Inspect and edit channel data")
+        zoom_button.clicked.connect(lambda checked=False, ch=channel: self._inspect_channel_data(ch))
+        actions_layout.addWidget(zoom_button)
         
-        # Style button
+        # Paint brush button (styling)
         style_button = QPushButton("🎨")
         style_button.setMaximumWidth(25)
         style_button.setMaximumHeight(25)
-        style_button.setToolTip("Channel styling")
+        style_button.setToolTip("Channel styling and appearance settings")
         style_button.clicked.connect(lambda checked=False, ch=channel: self._style_channel(ch))
         actions_layout.addWidget(style_button)
         
-        # Transform button
-        transform_button = QPushButton("🔨")
-        transform_button.setMaximumWidth(25)
-        transform_button.setMaximumHeight(25)
-        transform_button.setToolTip("Transform channel data")
-        transform_button.clicked.connect(lambda checked=False, ch=channel: self._transform_channel_data(ch))
-        actions_layout.addWidget(transform_button)
+        # Tool button (transform data)
+        tool_button = QPushButton("🔨")
+        tool_button.setMaximumWidth(25)
+        tool_button.setMaximumHeight(25)
+        tool_button.setToolTip("Transform channel data with math expressions")
+        tool_button.clicked.connect(lambda checked=False, ch=channel: self._transform_channel_data(ch))
+        actions_layout.addWidget(tool_button)
         
-        # Delete button (disabled for input channels A and B)
+        # Trash button (delete) - always last
         delete_button = QPushButton("🗑️")
         delete_button.setMaximumWidth(25)
         delete_button.setMaximumHeight(25)
@@ -1563,39 +1653,39 @@ class SignalMixerWizardWindow(QMainWindow):
         actions_layout.setContentsMargins(2, 2, 2, 2)
         actions_layout.setSpacing(2)
         
-        # Info button
+        # Info button (channel information)
         info_button = QPushButton("❗")
         info_button.setMaximumWidth(25)
         info_button.setMaximumHeight(25)
-        info_button.setToolTip("Channel information")
+        info_button.setToolTip("Channel information and metadata")
         info_button.clicked.connect(lambda checked=False, ch=channel: self._show_channel_info(ch))
         actions_layout.addWidget(info_button)
         
-        # Inspect button
-        inspect_button = QPushButton("🔍")
-        inspect_button.setMaximumWidth(25)
-        inspect_button.setMaximumHeight(25)
-        inspect_button.setToolTip("Inspect channel data")
-        inspect_button.clicked.connect(lambda checked=False, ch=channel: self._inspect_channel_data(ch))
-        actions_layout.addWidget(inspect_button)
+        # Magnifying glass button (inspect data)
+        zoom_button = QPushButton("🔍")
+        zoom_button.setMaximumWidth(25)
+        zoom_button.setMaximumHeight(25)
+        zoom_button.setToolTip("Inspect and edit channel data")
+        zoom_button.clicked.connect(lambda checked=False, ch=channel: self._inspect_channel_data(ch))
+        actions_layout.addWidget(zoom_button)
         
-        # Style button
+        # Paint brush button (styling)
         style_button = QPushButton("🎨")
         style_button.setMaximumWidth(25)
         style_button.setMaximumHeight(25)
-        style_button.setToolTip("Channel styling")
+        style_button.setToolTip("Channel styling and appearance settings")
         style_button.clicked.connect(lambda checked=False, ch=channel: self._style_channel(ch))
         actions_layout.addWidget(style_button)
         
-        # Transform button
-        transform_button = QPushButton("🔨")
-        transform_button.setMaximumWidth(25)
-        transform_button.setMaximumHeight(25)
-        transform_button.setToolTip("Transform channel data")
-        transform_button.clicked.connect(lambda checked=False, ch=channel: self._transform_channel_data(ch))
-        actions_layout.addWidget(transform_button)
+        # Tool button (transform data)
+        tool_button = QPushButton("🔨")
+        tool_button.setMaximumWidth(25)
+        tool_button.setMaximumHeight(25)
+        tool_button.setToolTip("Transform channel data with math expressions")
+        tool_button.clicked.connect(lambda checked=False, ch=channel: self._transform_channel_data(ch))
+        actions_layout.addWidget(tool_button)
         
-        # Delete button (only for mixed channels)
+        # Trash button (delete) - always last
         delete_button = QPushButton("🗑️")
         delete_button.setMaximumWidth(25)
         delete_button.setMaximumHeight(25)
@@ -1788,7 +1878,13 @@ class SignalMixerWizardWindow(QMainWindow):
 
     def _handle_channel_updated(self, channel_id):
         """Handle when channel properties are updated"""
+        # Update the plot to reflect styling changes
         self._update_plot()
+        
+        # Also update the results table to refresh style preview widgets
+        channel_a = self.channel_a_combo.currentData()
+        channel_b = self.channel_b_combo.currentData()
+        self._update_results_table(channel_a, channel_b)
 
 
     def _should_use_x_axis_for_index_mode(self, channel_a, channel_b):
@@ -2029,40 +2125,32 @@ class SignalMixerWizardWindow(QMainWindow):
 
     def _get_mixed_channel_colors(self):
         """Get the list of colors used for mixed channels in plots"""
-        return ['green', 'orange', 'purple', 'brown', 'pink', 'gray', 'olive', 'cyan']
+        # Use hex colors that match PLOT_STYLES['Colors'] for proper Line Wizard integration
+        return ['#2ca02c', '#ff7f0e', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
 
     def _get_mixed_channel_color_info(self, index):
         """Get color information for a mixed channel at given index"""
         colors = self._get_mixed_channel_colors()
         plot_color = colors[index % len(colors)]
         
-        # Map plot color names to Qt colors
-        color_mapping = {
-            'green': Qt.green,
-            'orange': Qt.GlobalColor(16),  # Qt doesn't have orange, use custom
-            'purple': Qt.magenta,
-            'brown': Qt.darkYellow,
-            'pink': Qt.GlobalColor(13),  # Qt doesn't have pink, use custom  
-            'gray': Qt.gray,
-            'olive': Qt.darkGreen,
-            'cyan': Qt.cyan
-        }
-        
-        # For colors Qt doesn't have, create custom QColor
-        if plot_color == 'orange':
-            from PySide6.QtGui import QColor
-            qt_color = QColor(255, 165, 0)  # Orange RGB
-        elif plot_color == 'pink':
-            from PySide6.QtGui import QColor
-            qt_color = QColor(255, 192, 203)  # Pink RGB
-        else:
-            qt_color = color_mapping.get(plot_color, Qt.green)
+        # Convert hex color to QColor for Qt widgets
+        from PySide6.QtGui import QColor
+        qt_color = QColor(plot_color)
         
         return {
             'plot_color': plot_color,
             'qt_color': qt_color,
             'index': index
         }
+    
+    def _ensure_mixed_channels_have_colors(self):
+        """Ensure all mixed channels have proper color properties set"""
+        mixed_channels = self.manager.get_mixed_channels()
+        colors = self._get_mixed_channel_colors()
+        
+        for i, channel in enumerate(mixed_channels):
+            if channel.color is None:
+                channel.color = colors[i % len(colors)]
 
     def _is_channel_visible_in_table(self, label):
         """Check if a channel is visible based on stored visibility state"""
@@ -2070,11 +2158,12 @@ class SignalMixerWizardWindow(QMainWindow):
 
     def _log_message(self, message):
         """Add a message to the console output"""
-        self.console_output.append(message)
-        
-        # Auto-scroll to bottom
-        scrollbar = self.console_output.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
+        if hasattr(self, 'console_output') and self.console_output is not None:
+            self.console_output.append(message)
+            
+            # Auto-scroll to bottom
+            scrollbar = self.console_output.verticalScrollBar()
+            scrollbar.setValue(scrollbar.maximum())
 
     # Manager callback methods
     def _add_channel_to_table(self, channel):

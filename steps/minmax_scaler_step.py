@@ -6,7 +6,7 @@ from channel import Channel
 @register_step
 class minmax_scaler_step(BaseStep):
     name = "minmax scaler"
-    category = "ML"
+    category = "Transform"
     description = """Rescale signal to the [0, 1] range using MinMaxScaler."""
     tags = ["time-series", "scaling", "normalization", "minmax"]
     params = []

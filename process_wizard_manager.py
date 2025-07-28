@@ -1166,7 +1166,7 @@ class ProcessWizardManager:
         if len(new_channels) == 1:
             # Get the channel name for display
             channel_name = new_channels[0].legend_label or new_channels[0].ylabel or f"Channel {new_channels[0].channel_id}"
-            console_message = f"Operation applied successfully!\nCreated channel: {new_channels[0].channel_id}"
+            console_message = f"Operation applied successfully!\nCreated channel: {channel_name}"
             
             # Add repair information if present
             if repair_info_messages:

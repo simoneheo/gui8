@@ -144,13 +144,13 @@ class ProcessWizardWindow(QMainWindow):
         left_column = QWidget()
         left_column_layout = QVBoxLayout(left_column)
         
-        # Filters Group
-        filters_group = QGroupBox("Filters")
-        filter_layout = QVBoxLayout(filters_group)
+        # Transformations Group
+        transformations_group = QGroupBox("Transformations")
+        transformations_layout = QVBoxLayout(transformations_group)
         
-        # Filter search
+        # Transformation search
         self.filter_search = QLineEdit()
-        self.filter_search.setPlaceholderText("Search filters...")
+        self.filter_search.setPlaceholderText("Search transformations...")
         self.filter_search.textChanged.connect(self._on_filter_search)
         
         # Category filter
@@ -158,14 +158,14 @@ class ProcessWizardWindow(QMainWindow):
         self.category_filter.addItem("All Categories")
         self.category_filter.currentTextChanged.connect(self._on_category_filter_changed)
         
-        # Filter list (scrollable)
+        # Transformation list (scrollable)
         self.filter_list = QListWidget()
         
-        filter_layout.addWidget(self.filter_search)
-        filter_layout.addWidget(self.category_filter)
-        filter_layout.addWidget(self.filter_list)
+        transformations_layout.addWidget(self.filter_search)
+        transformations_layout.addWidget(self.category_filter)
+        transformations_layout.addWidget(self.filter_list)
         
-        left_column_layout.addWidget(filters_group)
+        left_column_layout.addWidget(transformations_group)
         
         # Right Column - Control Section stacked top-down
         right_column = QWidget()
@@ -179,6 +179,7 @@ class ProcessWizardWindow(QMainWindow):
         file_layout = QHBoxLayout()
         file_label = QLabel("File:")
         self.file_selector = QComboBox()
+        self.file_selector.setMinimumWidth(200)  # Set consistent width
         self.file_selector.currentIndexChanged.connect(self._on_file_selected)
         file_layout.addWidget(file_label)
         file_layout.addWidget(self.file_selector)
@@ -187,6 +188,7 @@ class ProcessWizardWindow(QMainWindow):
         channel_layout = QHBoxLayout()
         channel_label = QLabel("Channel:")
         self.channel_selector = QComboBox()
+        self.channel_selector.setMinimumWidth(200)  # Set consistent width
         self.channel_selector.currentIndexChanged.connect(self._on_channel_selected)
         channel_layout.addWidget(channel_label)
         channel_layout.addWidget(self.channel_selector)
@@ -197,27 +199,27 @@ class ProcessWizardWindow(QMainWindow):
         # Input Channel Display
         input_channel_group = QGroupBox("Input Channel")
         input_channel_layout = QVBoxLayout(input_channel_group)
-                
-        # Create a horizontal layout for the channel selector
-        input_channel_control_layout = QHBoxLayout()
         
         # Replace spinbox with combobox to show channel names directly
         self.input_channel_combobox = QComboBox()
-        self.input_channel_combobox.setMinimumWidth(200)  # Make it wider to show channel names
         self.input_channel_combobox.currentIndexChanged.connect(self._on_input_channel_changed)
         
-        input_channel_control_layout.addWidget(self.input_channel_combobox)
-        input_channel_control_layout.addStretch()  # Push everything to the left
+        # Add the combobox directly to the vertical layout to make it span full width
+        input_channel_layout.addWidget(self.input_channel_combobox)
         
-        input_channel_layout.addLayout(input_channel_control_layout)
-        
-        # Console Group
+        # Console Group - only around console output
         console_group = QGroupBox("Console")
         console_layout = QVBoxLayout(console_group)
         
         self.console_output = QTextEdit()
         self.console_output.setPlaceholderText("Output will appear here...")
         self.console_output.setReadOnly(True)
+        
+        console_layout.addWidget(self.console_output)
+        
+        # Parameters Group - for parameter table and script
+        parameters_group = QGroupBox("Parameters")
+        parameters_layout = QVBoxLayout(parameters_group)
         
         # Parameter table
         self.param_table = QTableWidget(0, 2)
@@ -234,8 +236,6 @@ class ProcessWizardWindow(QMainWindow):
         param_header.setSectionResizeMode(1, QHeaderView.Stretch)  # Value column - stretches
         self.param_table.setColumnWidth(0, 120)  # Parameter column width
         
-        console_layout.addWidget(self.console_output)
-        
         # Create tab widget for parameter table and script
         self.param_tab_widget = QTabWidget()
         
@@ -251,7 +251,7 @@ class ProcessWizardWindow(QMainWindow):
         
         # Script editor
         self.script_editor = QTextEdit()
-        self.script_editor.setPlaceholderText("Python script will appear here when a filter is selected...")
+        self.script_editor.setPlaceholderText("Python script will appear here when a transformation is selected...")
         self.script_editor.setFont(QFont("Consolas", 10))
         
         # Script controls - simplified
@@ -270,9 +270,9 @@ class ProcessWizardWindow(QMainWindow):
         # Connect tab change to update script when switching to script tab
         self.param_tab_widget.currentChanged.connect(self._on_param_tab_changed)
         
-        console_layout.addWidget(self.param_tab_widget)
+        parameters_layout.addWidget(self.param_tab_widget)
         
-        # Channel Name Entry (above Add Filter button)
+        # Channel Name Entry (outside any section, above Apply Operation button)
         channel_name_layout = QHBoxLayout()
         channel_name_label = QLabel("Channel Name:")
         self.channel_name_entry = QLineEdit()
@@ -280,8 +280,6 @@ class ProcessWizardWindow(QMainWindow):
         self.channel_name_entry.setToolTip("Custom name for the new channel that will be created")
         channel_name_layout.addWidget(channel_name_label)
         channel_name_layout.addWidget(self.channel_name_entry)
-        
-        console_layout.addLayout(channel_name_layout)
         
         # Apply Operation button
         self.add_filter_btn = QPushButton("Apply Operation")
@@ -314,6 +312,12 @@ class ProcessWizardWindow(QMainWindow):
         right_column_layout.addWidget(file_channel_group)
         right_column_layout.addWidget(input_channel_group)
         right_column_layout.addWidget(console_group)
+        right_column_layout.addWidget(parameters_group)
+        
+        # Channel Name Entry (outside any section, above Apply Operation button)
+        right_column_layout.addLayout(channel_name_layout)
+        
+        # Apply Operation button
         right_column_layout.addWidget(self.add_filter_btn)
         
         # Add columns to left panel using splitter for better size control
@@ -426,6 +430,9 @@ class ProcessWizardWindow(QMainWindow):
         # Initial update of tables and plots
         self._update_step_table()
         self._update_plot()
+        
+        # Set initial helpful console message
+        self._set_initial_console_message()
         
         # Mark initialization as complete
         self._initializing = False
@@ -997,7 +1004,9 @@ class ProcessWizardWindow(QMainWindow):
                 if new_channel:
                     print(f"[ProcessWizard] Hardcoded script executed successfully!")
                     if not used_custom_script:  # Only update console if we didn't already show a custom script message
-                        console_message = f"Operation applied successfully!\nCreated channel: {new_channel.channel_id}"
+                        # Get the channel name for display
+                        channel_name = new_channel.legend_label or new_channel.ylabel or f"Channel {new_channel.channel_id}"
+                        console_message = f"Operation applied successfully!\nCreated channel: {channel_name}"
                         
                         # Check for repair information in the created channel
                         if (hasattr(new_channel, 'metadata') and new_channel.metadata is not None and 
@@ -1399,6 +1408,32 @@ class ProcessWizardWindow(QMainWindow):
     def showEvent(self, event):
         """Handle when the wizard window is shown."""
         super().showEvent(event)
+
+    def _set_initial_console_message(self):
+        """Set initial helpful console message when the Process Wizard opens"""
+        try:
+            welcome_msg = """Welcome to the Process Wizard!
+
+Quick Start:
+1. Select a Transformation from the left panel
+2. (Optional) Edit the Channel Name
+3. Click "Apply Operation" to plot
+
+Tips:
+• Transformations apply to the selected Input Channel
+• Adjust parameters in the tab below
+• The Scripts tab shows editable Python code — use with caution"""
+
+            
+            self.console_output.setPlainText(welcome_msg)
+            
+        except Exception as e:
+            print(f"[ProcessWizard] Error setting initial console message: {e}")
+            # Fallback to basic message
+            try:
+                self.console_output.setPlainText("Welcome to the Process Wizard!\n\nSelect a transformation, configure parameters, and click Apply Operation.")
+            except:
+                pass
 
     def _set_default_filter_selection(self):
         """Set default selection to "resample" filter."""

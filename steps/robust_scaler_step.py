@@ -7,7 +7,7 @@ from channel import Channel
 @register_step
 class robust_scaler_step(BaseStep):
     name = "robust scaler"
-    category = "ML"
+    category = "Transform"
     description = """Rescale signal using median and IQR (robust to outliers)."""
     tags = ["scaling", "robust", "iqr", "normalization"]
     params = [

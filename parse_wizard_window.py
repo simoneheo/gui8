@@ -2,7 +2,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QComboBox, 
     QCheckBox, QTextEdit, QGroupBox, QFormLayout, QSplitter, QApplication, QListWidget, QSpinBox,
     QTableWidget, QRadioButton, QTableWidgetItem, QDialog, QStackedWidget, QMessageBox, QScrollArea,
-    QTabWidget, QFrame, QButtonGroup, QSlider, QFileDialog
+    QTabWidget, QFrame, QButtonGroup, QSlider, QFileDialog, QHeaderView
 )
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QTextCursor, QIntValidator, QColor, QFont
@@ -44,14 +44,14 @@ class ParseWizardWindow(QMainWindow):
             'header_row': 0,
             'delete_rows': '',
             'max_rows': 1000,  # For preview
-            'quote_char': '"',
-            'escape_char': '\\',
             'encoding': 'utf-8',
             'decimal': '.',
             'thousands': '',
             'na_values': ['', 'NA', 'N/A', 'null', 'NULL', 'nan', 'NaN'],
+            'delete_na_rows': False,
+            'replace_na_value': '',
             'parse_dates': True,
-            'date_formats': ['%Y-%m-%d', '%m/%d/%Y', '%d/%m/%Y', '%Y-%m-%d %H:%M:%S', '%m/%d/%Y %H:%M:%S', '%d/%m/%Y %H:%M:%S'],
+            'date_formats': ['%H:%M:%S', '%m/%d/%Y','%Y-%m-%d %H:%M:%S'],
             'time_column': None,
             'column_types': {},
             'downsample_enabled': False,
@@ -80,7 +80,7 @@ class ParseWizardWindow(QMainWindow):
     def _init_ui(self):
         """Initialize the user interface"""
         self.setWindowTitle("Parse Wizard - Manual File Parsing")
-        self.setMinimumSize(1500, 950)
+        self.setMinimumSize(800, 950)
         
         # Create central widget
         central_widget = QWidget()
@@ -99,8 +99,8 @@ class ParseWizardWindow(QMainWindow):
         self._build_left_panel(main_splitter)
         self._build_right_panel(main_splitter)
         
-        # Set splitter proportions (1:2 ratio) - left panel smaller, right panel larger
-        main_splitter.setSizes([500, 1000])
+        # Set splitter to 1:1 ratio (equal left and right panels)
+        main_splitter.setSizes([1, 1])
         
     def _build_left_panel(self, main_splitter):
         """Build the left control panel with compact grouped controls"""
@@ -110,20 +110,21 @@ class ParseWizardWindow(QMainWindow):
         left_layout.setContentsMargins(5, 5, 5, 5)
         left_layout.setSpacing(10)
         
-        # Add title
-        title_label = QLabel("Parse Configuration")
-        title_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #2c3e50; padding: 5px;")
-        left_layout.addWidget(title_label)
+        # Removed "Parse Configuration" title as requested
         
         # Add control groups without scrolling - more compact layout
         self._create_file_selection_group(left_layout)
         self._create_basic_parsing_group(left_layout)
         self._create_advanced_parsing_group(left_layout)
-        self._create_column_configuration_group(left_layout)
-        self._create_action_buttons_group(left_layout)
         
-        # Add stretch to push everything to top
+        # Column configuration group that will stretch to fill available space
+        self._create_column_configuration_group(left_layout)
+        
+        # Add stretch to push action buttons to bottom
         left_layout.addStretch()
+        
+        # Action buttons at the bottom
+        self._create_action_buttons_group(left_layout)
         
         main_splitter.addWidget(left_panel)
         
@@ -212,35 +213,22 @@ class ParseWizardWindow(QMainWindow):
         group = QGroupBox("Advanced Parsing")
         group.setStyleSheet("QGroupBox { font-weight: bold; }")
         group_layout = QFormLayout(group)
-        
-        # Quote character
-        self.quote_char_input = QLineEdit('"')
-        self.quote_char_input.setMaxLength(1)
-        self.quote_char_input.setToolTip("Character used to quote fields")
-        self.quote_char_input.textChanged.connect(self._trigger_preview_update)
-        group_layout.addRow("Quote Char:", self.quote_char_input)
-        
-        # Escape character
-        self.escape_char_input = QLineEdit('\\')
-        self.escape_char_input.setMaxLength(1)
-        self.escape_char_input.setToolTip("Character used to escape quotes")
-        self.escape_char_input.textChanged.connect(self._trigger_preview_update)
-        group_layout.addRow("Escape Char:", self.escape_char_input)
+        group_layout.setVerticalSpacing(8)  # Increase spacing between rows
         
         # Decimal separator
-        self.decimal_combo = QComboBox()
-        self.decimal_combo.addItems(['.', ','])
-        self.decimal_combo.currentTextChanged.connect(self._trigger_preview_update)
-        group_layout.addRow("Decimal:", self.decimal_combo)
+        self.decimal_input = QLineEdit('.')
+        self.decimal_input.setMaxLength(1)
+        self.decimal_input.setToolTip("Character used as decimal separator (e.g., . or ,)")
+        self.decimal_input.textChanged.connect(self._trigger_preview_update)
+        group_layout.addRow("Decimal:", self.decimal_input)
         
         # Thousands separator
-        self.thousands_combo = QComboBox()
-        self.thousands_combo.addItems(['', ',', '.', ' ', "'"])
-        self.thousands_combo.currentTextChanged.connect(self._trigger_preview_update)
-        group_layout.addRow("Thousands:", self.thousands_combo)
-        
-        # Add tooltip to explain thousands separator options
-        self.thousands_combo.setToolTip("Thousands separator character (leave empty for none)")
+        self.thousands_input = QLineEdit()
+        self.thousands_input.setMaxLength(1)
+        self.thousands_input.setPlaceholderText("Leave empty for none")
+        self.thousands_input.setToolTip("Character used as thousands separator (e.g., , or . or space)")
+        self.thousands_input.textChanged.connect(self._trigger_preview_update)
+        group_layout.addRow("Thousands:", self.thousands_input)
         
         # NA values
         self.na_values_input = QLineEdit('NA,N/A,null,NULL,nan,NaN')
@@ -248,8 +236,29 @@ class ParseWizardWindow(QMainWindow):
         self.na_values_input.textChanged.connect(self._trigger_preview_update)
         group_layout.addRow("NA Values:", self.na_values_input)
         
+        # Delete rows with NA
+        self.delete_na_rows_checkbox = QCheckBox("Delete rows containing any NA values")
+        self.delete_na_rows_checkbox.setChecked(False)
+        self.delete_na_rows_checkbox.toggled.connect(self._trigger_preview_update)
+        self.delete_na_rows_checkbox.setToolTip("Remove entire rows that contain any NA/null values")
+        group_layout.addRow("", self.delete_na_rows_checkbox)
+        
+        # Replace NA values
+        self.replace_na_input = QLineEdit()
+        self.replace_na_input.setPlaceholderText("e.g., 0, -999, Unknown, or leave empty")
+        self.replace_na_input.setToolTip("Replace all NA/null values with this value (leave empty to keep as NaN)")
+        self.replace_na_input.textChanged.connect(self._trigger_preview_update)
+        group_layout.addRow("Replace NA with:", self.replace_na_input)
+        
+        # Zero X column checkbox
+        self.zero_x_column_checkbox = QCheckBox("Zero X column (start from 0)")
+        self.zero_x_column_checkbox.setChecked(True)
+        self.zero_x_column_checkbox.toggled.connect(self._trigger_preview_update)
+        self.zero_x_column_checkbox.setToolTip("If checked, X column starts from 0. If unchecked, uses absolute time values")
+        group_layout.addRow("", self.zero_x_column_checkbox)
+        
         # Date formats
-        self.date_formats_input = QLineEdit('%Y-%m-%d,%m/%d/%Y,%d/%m/%Y,%Y-%m-%d %H:%M:%S,%m/%d/%Y %H:%M:%S,%d/%m/%Y %H:%M:%S')
+        self.date_formats_input = QLineEdit('%H:%M:%S,%m/%d/%Y,%Y-%m-%d %H:%M:%S')
         self.date_formats_input.setToolTip("Comma-separated list of datetime formats to attempt parsing. Add your own formats as needed.")
         self.date_formats_input.textChanged.connect(self._trigger_preview_update)
         group_layout.addRow("Date Formats:", self.date_formats_input)
@@ -312,9 +321,7 @@ class ParseWizardWindow(QMainWindow):
         group_layout = QVBoxLayout(group)
         
         # Column types table - compact version for left panel
-        types_label = QLabel("Column Types:")
-        types_label.setStyleSheet("font-weight: bold; margin-top: 5px;")
-        group_layout.addWidget(types_label)
+        # Removed "Column Types:" label as requested
         
         # Add info label about column name editing
         info_label = QLabel("Tip: Double-click column names to edit them. Channel types are auto-detected and read-only.")
@@ -323,10 +330,22 @@ class ParseWizardWindow(QMainWindow):
         
         self.column_types_table = QTableWidget()
         self.column_types_table.setColumnCount(4)
-        self.column_types_table.setHorizontalHeaderLabels(["Column", "Detected Type", "Auto-Detected Type", "X-Axis Column"])
+        self.column_types_table.setHorizontalHeaderLabels(["Column Name", "X-Axis", "Channel Type", "Data Type"])
+        
+        # Configure table to stretch to full width
         self.column_types_table.horizontalHeader().setStretchLastSection(True)
+        self.column_types_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)  # Column Name stretches
+        self.column_types_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Fixed)    # X-Axis fixed
+        self.column_types_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Fixed)    # Channel Type fixed
+        self.column_types_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Fixed)    # Data Type fixed
+        
+        # Set fixed column widths for non-stretching columns
+        self.column_types_table.setColumnWidth(1, 50)   # X-Axis - narrowest
+        self.column_types_table.setColumnWidth(2, 80)   # Channel Type  
+        self.column_types_table.setColumnWidth(3, 80)   # Data Type
+        
         # Compact height for left panel
-        self.column_types_table.setMinimumHeight(200)
+        self.column_types_table.setMinimumHeight(150)
         
         # Enable editing only for column names (first column)
         self.column_types_table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -334,10 +353,10 @@ class ParseWizardWindow(QMainWindow):
         # Add tooltip to explain column name editing
         self.column_types_table.setToolTip(
             "Column Configuration Table:\n"
-            "• Column: Click to edit column names (double-click or press F2)\n"
-            "• Detected Type: Original pandas data type (read-only)\n"
-            "• Auto-Detected Type: Auto-detected channel type (read-only)\n"
-            "• X-Axis Column: Select which column to use as X-axis (radio button)\n\n"
+            "• Column Name: Click to edit column names (double-click or press F2)\n"
+            "• Data Type: Original pandas data type (read-only)\n"
+            "• Channel Type: Auto-detected channel type (read-only)\n"
+            "• X-Axis: Select which column to use as X-axis (radio button)\n\n"
             "Tip: Edit column names to customize channel names when created!"
         )
         
@@ -352,17 +371,33 @@ class ParseWizardWindow(QMainWindow):
         self.x_axis_button_group.setExclusive(True)  # Only one radio button can be selected
         self.x_axis_button_group.buttonClicked.connect(self._on_x_axis_selection_changed)
         
-        group_layout.addWidget(self.column_types_table)
+        # Add the table with stretch to make it expand vertically
+        group_layout.addWidget(self.column_types_table, 1)  # Stretch factor of 1
         
         layout.addWidget(group)
         
     def _create_action_buttons_group(self, layout):
         """Create action buttons group"""
-        group = QGroupBox("Actions")
-        group.setStyleSheet("QGroupBox { font-weight: bold; }")
-        group_layout = QVBoxLayout(group)
+        # Remove group box, just use layout directly
+        group_layout = QHBoxLayout()
         
-
+        # Refresh preview button
+        self.refresh_button = QPushButton("Refresh Preview")
+        self.refresh_button.setStyleSheet("""
+            QPushButton {
+                background-color: #2196F3;
+                color: white;
+                font-weight: bold;
+                padding: 8px;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #1976D2;
+            }
+        """)
+        self.refresh_button.clicked.connect(self._force_refresh_preview)
+        self.refresh_button.setToolTip("Force immediate preview update, bypassing caches and timers")
+        group_layout.addWidget(self.refresh_button)
         
         # Parse and create channels button
         self.parse_button = QPushButton("Parse and Create Channels")
@@ -381,7 +416,7 @@ class ParseWizardWindow(QMainWindow):
         self.parse_button.clicked.connect(self._parse_and_create_channels)
         group_layout.addWidget(self.parse_button)
         
-        layout.addWidget(group)
+        layout.addLayout(group_layout)
         
     def _build_right_panel(self, main_splitter):
         """Build the right panel with data preview and column configuration"""
@@ -390,10 +425,7 @@ class ParseWizardWindow(QMainWindow):
         right_layout.setContentsMargins(5, 5, 5, 5)
         right_layout.setSpacing(10)
         
-        # Title
-        title_label = QLabel("Data Preview")
-        title_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #2c3e50; padding: 5px;")
-        right_layout.addWidget(title_label)
+        # Removed "Data Preview" title as requested
         
         # Data Preview Section
         self._create_data_preview_section(right_layout)
@@ -407,6 +439,11 @@ class ParseWizardWindow(QMainWindow):
         self.preview_info_label.setStyleSheet("color: #666; font-size: 11px; padding: 5px;")
         layout.addWidget(self.preview_info_label)
         
+        # Parse status (moved above table)
+        self.parse_status_label = QLabel("Status: Ready")
+        self.parse_status_label.setStyleSheet("padding: 5px; background-color: #f0f0f0; border: 1px solid #ccc;")
+        layout.addWidget(self.parse_status_label)
+        
         # Data table
         self.data_table = QTableWidget()
         self.data_table.setAlternatingRowColors(True)
@@ -415,11 +452,6 @@ class ParseWizardWindow(QMainWindow):
         self.data_table.setSelectionBehavior(QTableWidget.SelectRows)
         # Remove height limit to fill entire right panel
         layout.addWidget(self.data_table)
-        
-        # Parse status
-        self.parse_status_label = QLabel("Status: Ready")
-        self.parse_status_label.setStyleSheet("padding: 5px; background-color: #f0f0f0; border: 1px solid #ccc;")
-        layout.addWidget(self.parse_status_label)
     
 
         
@@ -427,8 +459,46 @@ class ParseWizardWindow(QMainWindow):
         
     def _connect_signals(self):
         """Connect all signal handlers"""
-        # Signals are connected in the individual control creation methods
-        pass
+        # Ensure all parsing-related controls are connected to trigger preview updates
+        self._ensure_all_controls_connected()
+        
+    def _ensure_all_controls_connected(self):
+        """Ensure all controls that affect parsing are connected to _trigger_preview_update"""
+        # Basic parsing controls
+        if hasattr(self, 'header_row_spin'):
+            self.header_row_spin.valueChanged.connect(self._trigger_preview_update)
+        if hasattr(self, 'delete_rows_input'):
+            self.delete_rows_input.textChanged.connect(self._trigger_preview_update)
+        if hasattr(self, 'encoding_combo'):
+            self.encoding_combo.currentTextChanged.connect(self._on_encoding_changed)
+            
+        # Advanced parsing controls
+        if hasattr(self, 'decimal_input'):
+            self.decimal_input.textChanged.connect(self._trigger_preview_update)
+        if hasattr(self, 'thousands_input'):
+            self.thousands_input.textChanged.connect(self._trigger_preview_update)
+        if hasattr(self, 'na_values_input'):
+            self.na_values_input.textChanged.connect(self._trigger_preview_update)
+        if hasattr(self, 'delete_na_rows_checkbox'):
+            self.delete_na_rows_checkbox.toggled.connect(self._trigger_preview_update)
+        if hasattr(self, 'replace_na_input'):
+            self.replace_na_input.textChanged.connect(self._trigger_preview_update)
+        if hasattr(self, 'zero_x_column_checkbox'):
+            self.zero_x_column_checkbox.toggled.connect(self._trigger_preview_update)
+        if hasattr(self, 'date_formats_input'):
+            self.date_formats_input.textChanged.connect(self._trigger_preview_update)
+            
+        # Downsampling controls
+        if hasattr(self, 'downsample_checkbox'):
+            self.downsample_checkbox.toggled.connect(self._trigger_preview_update)
+        if hasattr(self, 'downsample_method_combo'):
+            self.downsample_method_combo.currentTextChanged.connect(self._trigger_preview_update)
+        if hasattr(self, 'downsample_factor_spin'):
+            self.downsample_factor_spin.valueChanged.connect(self._trigger_preview_update)
+        if hasattr(self, 'downsample_window_spin'):
+            self.downsample_window_spin.valueChanged.connect(self._trigger_preview_update)
+            
+        print(f"[ParseWizard] All control signals connected to preview updates")
         
 
         
@@ -720,16 +790,26 @@ class ParseWizardWindow(QMainWindow):
         # Check if parameters actually changed to prevent infinite loops
         current_params = {
             'delimiter': self.parse_params.get('delimiter'),
-            'header_row': self.parse_params.get('header_row'),
-            'delete_rows': self.parse_params.get('delete_rows', ''),
-            'encoding': self.parse_params.get('encoding'),
-            'column_names': self.parse_params.get('column_names', [])
+            'header_row': self.header_row_spin.value(),
+            'delete_rows': self.delete_rows_input.text().strip(),
+            'encoding': self.encoding_combo.currentText(),
+            'decimal': self.decimal_input.text(),
+            'thousands': self.thousands_input.text(),
+            'delete_na_rows': self.delete_na_rows_checkbox.isChecked(),
+            'replace_na_value': self.replace_na_input.text().strip(),
         }
         
-        if current_params == self._last_parse_params:
-            print(f"[ParseWizard] Parameters unchanged, skipping preview update")
+        # Only skip if EXACTLY the same AND we have recent valid data
+        if (current_params == self._last_parse_params and 
+            hasattr(self, 'preview_data') and 
+            self.preview_data is not None and 
+            not self.preview_data.empty):
+            print(f"[ParseWizard] Parameters unchanged and preview data exists, skipping update")
             return
             
+        print(f"[ParseWizard] Parameters changed, triggering preview update")
+        print(f"[ParseWizard] New params: delimiter='{current_params['delimiter']}', header={current_params['header_row']}")
+        
         self._last_parse_params = current_params.copy()
         self.update_timer.stop()
         self.update_timer.start(self.update_delay)
@@ -739,12 +819,54 @@ class ParseWizardWindow(QMainWindow):
         self.update_timer.stop()
         self._update_preview()
         
+    def _force_refresh_preview(self):
+        """Force immediate preview refresh, bypassing all caches and timers"""
+        try:
+            # Visual feedback - show we're working
+            original_text = self.refresh_button.text()
+            self.refresh_button.setText("Refreshing...")
+            self.refresh_button.setEnabled(False)
+            
+            print(f"[ParseWizard] Force refresh requested by user")
+            
+            # Reset any cached state that might block updates
+            self._last_parse_params = {}
+            
+            # Stop any pending timer updates
+            self.update_timer.stop()
+            
+            # Force immediate update
+            self._update_preview()
+            
+            # Update status
+            if hasattr(self, 'parse_status_label'):
+                self.parse_status_label.setText("Preview refreshed successfully")
+                self.parse_status_label.setStyleSheet("padding: 5px; background-color: #e8f5e8; border: 1px solid #4CAF50;")
+            
+            print(f"[ParseWizard] Force refresh completed successfully")
+            
+        except Exception as e:
+            # Show error to user
+            error_msg = str(e)
+            if hasattr(self, 'parse_status_label'):
+                self.parse_status_label.setText(f"Refresh failed: {error_msg}")
+                self.parse_status_label.setStyleSheet("padding: 5px; background-color: #ffe8e8; border: 1px solid #f44336;")
+            print(f"[ParseWizard] Force refresh error: {error_msg}")
+            
+        finally:
+            # Restore button state
+            self.refresh_button.setText(original_text)
+            self.refresh_button.setEnabled(True)
+        
     def _update_preview(self):
         """Update the data preview table"""
         if not self.raw_lines:
+            if hasattr(self, 'parse_status_label'):
+                self.parse_status_label.setText("No file data loaded")
+                self.parse_status_label.setStyleSheet("padding: 5px; background-color: #ffe8e8; border: 1px solid #f44336;")
             return
             
-        print(f"[ParseWizard] Updating preview with {len(self.raw_lines)} raw lines")
+        print(f"[ParseWizard] Starting preview update with {len(self.raw_lines)} raw lines")
         
         try:
             # Update parse parameters from UI
@@ -778,12 +900,22 @@ class ParseWizardWindow(QMainWindow):
                 
                 # Update readiness status
                 self._update_readiness_status()
+                print(f"[ParseWizard] Preview update completed successfully")
+                
             else:
-                print(f"[ParseWizard] Preview parse failed - no data returned")
+                error_msg = "Preview parse failed - no data returned"
+                print(f"[ParseWizard] {error_msg}")
+                if hasattr(self, 'parse_status_label'):
+                    self.parse_status_label.setText(f"{error_msg}")
+                    self.parse_status_label.setStyleSheet("padding: 5px; background-color: #ffe8e8; border: 1px solid #f44336;")
                 self._update_readiness_status()
                 
         except Exception as e:
-            print(f"[ParseWizard] Preview update error: {str(e)}")
+            error_details = f"Preview update failed: {str(e)}"
+            print(f"[ParseWizard] {error_details}")
+            if hasattr(self, 'parse_status_label'):
+                self.parse_status_label.setText(f"{error_details}")
+                self.parse_status_label.setStyleSheet("padding: 5px; background-color: #ffe8e8; border: 1px solid #f44336;")
             self._update_readiness_status()
             
     def _update_parse_params_from_ui(self):
@@ -791,11 +923,12 @@ class ParseWizardWindow(QMainWindow):
         self.parse_params.update({
             'header_row': self.header_row_spin.value() if self.header_row_spin.value() >= 0 else None,
             'delete_rows': self.delete_rows_input.text().strip(),
-            'quote_char': self.quote_char_input.text() or '"',
-            'escape_char': self.escape_char_input.text() or '\\',
-            'decimal': self.decimal_combo.currentText(),
-            'thousands': self.thousands_combo.currentText(),
+            'decimal': self.decimal_input.text() or '.',
+            'thousands': self.thousands_input.text(),
             'na_values': [v.strip() for v in self.na_values_input.text().split(',') if v.strip()],
+            'delete_na_rows': self.delete_na_rows_checkbox.isChecked(),
+            'replace_na_value': self.replace_na_input.text().strip(),
+            'zero_x_column': self.zero_x_column_checkbox.isChecked(),
             'parse_dates': True,  # Always parse dates
             'date_formats': [v.strip() for v in self.date_formats_input.text().split(',') if v.strip()],
             'downsample_enabled': self.downsample_checkbox.isChecked(),
@@ -903,6 +1036,94 @@ class ParseWizardWindow(QMainWindow):
             print(f"Error applying downsampling: {e}")
             return df  # Return original data if downsampling fails
     
+    def _apply_na_handling_to_raw_lines(self, data_lines: List[str]) -> List[str]:
+        """Apply NA/null value handling to raw text lines BEFORE parsing"""
+        if not data_lines:
+            return data_lines
+            
+        try:
+            original_count = len(data_lines)
+            na_values = self.parse_params.get('na_values', [])
+            replace_value = self.parse_params.get('replace_na_value', '').strip()
+            delete_na_rows = self.parse_params.get('delete_na_rows', False)
+            delimiter = self.parse_params.get('delimiter', ',')
+            
+            # Skip if no NA handling is requested
+            if not replace_value and not delete_na_rows:
+                return data_lines
+            
+            print(f"[ParseWizard] Applying NA handling to {len(data_lines)} raw lines")
+            
+            processed_lines = []
+            header_processed = False
+            
+            for line_idx, line in enumerate(data_lines):
+                # Skip header row processing for NA values (keep as-is)
+                header_row = self.parse_params.get('header_row', 0)
+                if header_row is not None and line_idx == header_row and not header_processed:
+                    processed_lines.append(line)
+                    header_processed = True
+                    continue
+                
+                # Split line into fields based on delimiter
+                if delimiter and delimiter in line:
+                    fields = line.split(delimiter)
+                else:
+                    # Handle case where delimiter is not found or is None
+                    fields = [line]
+                
+                # Check for NA values in this line
+                has_na = False
+                for field in fields:
+                    field_stripped = field.strip().strip('"\'')  # Remove quotes and whitespace
+                    if field_stripped in na_values or field_stripped == '':
+                        has_na = True
+                        break
+                
+                # Handle delete rows with NA
+                if delete_na_rows and has_na:
+                    # Skip this line (don't add to processed_lines)
+                    continue
+                
+                # Handle replace NA values
+                if replace_value and has_na:
+                    # Replace NA values in the line
+                    processed_fields = []
+                    for field in fields:
+                        field_stripped = field.strip().strip('"\'')
+                        if field_stripped in na_values or field_stripped == '':
+                            # Preserve any quotes around the field when replacing
+                            if field.startswith('"') and field.endswith('"'):
+                                processed_fields.append(f'"{replace_value}"')
+                            elif field.startswith("'") and field.endswith("'"):
+                                processed_fields.append(f"'{replace_value}'")
+                            else:
+                                processed_fields.append(replace_value)
+                        else:
+                            processed_fields.append(field)
+                    
+                    processed_line = delimiter.join(processed_fields) if delimiter else processed_fields[0]
+                    processed_lines.append(processed_line)
+                else:
+                    # No NA handling needed for this line
+                    processed_lines.append(line)
+            
+            removed_count = original_count - len(processed_lines)
+            
+            if delete_na_rows and removed_count > 0:
+                print(f"[ParseWizard] Removed {removed_count} rows containing NA values ({original_count} → {len(processed_lines)} rows)")
+            elif delete_na_rows:
+                print(f"[ParseWizard] No rows contained NA values")
+                
+            if replace_value:
+                print(f"[ParseWizard] Replaced NA values with '{replace_value}' in raw text")
+            
+            return processed_lines
+            
+        except Exception as e:
+            print(f"[ParseWizard] Error applying NA handling to raw lines: {e}")
+            return data_lines  # Return original data if NA handling fails
+    
     def _parse_preview_data(self) -> Optional[pd.DataFrame]:
         """Parse preview data using current parameters"""
         try:
@@ -922,6 +1143,12 @@ class ParseWizardWindow(QMainWindow):
                     data_lines.append(line)
                 if len(data_lines) >= max_rows:
                     break
+            
+            if not data_lines:
+                return None
+            
+            # Apply NA handling to raw text lines BEFORE parsing
+            data_lines = self._apply_na_handling_to_raw_lines(data_lines)
             
             if not data_lines:
                 return None
@@ -949,8 +1176,6 @@ class ParseWizardWindow(QMainWindow):
                     io.StringIO(temp_content),
                     sep=self.parse_params['delimiter'],
                     header=header_row,
-                    quotechar=self.parse_params['quote_char'],
-                    escapechar=self.parse_params['escape_char'],
                     decimal=self.parse_params['decimal'],
                     thousands=self.parse_params['thousands'] if self.parse_params['thousands'] else None,
                     na_values=self.parse_params['na_values'],
@@ -959,7 +1184,7 @@ class ParseWizardWindow(QMainWindow):
                     on_bad_lines='skip'
                 )
             
-            # Apply downsampling if enabled
+            # Apply downsampling if enabled (AFTER parsing)
             df = self._apply_downsampling(df)
             
             return df
@@ -1036,43 +1261,43 @@ class ParseWizardWindow(QMainWindow):
         
         # 1. File loaded
         if not hasattr(self, 'file_path') or self.file_path is None:
-            self.parse_status_label.setText("❌ No file loaded")
+            self.parse_status_label.setText("No file loaded")
             self.parse_status_label.setStyleSheet("padding: 5px; background-color: #ffe8e8; border: 1px solid #f44336;")
             return
-        conditions.append("✅ File loaded")
+        conditions.append("File loaded")
         
         # 2. Preview data available
         if self.preview_data is None or len(self.preview_data) == 0:
-            self.parse_status_label.setText("❌ No preview data available")
+            self.parse_status_label.setText("No preview data available")
             self.parse_status_label.setStyleSheet("padding: 5px; background-color: #ffe8e8; border: 1px solid #f44336;")
             return
-        conditions.append("✅ Preview data available")
+        conditions.append("Preview data available")
         
         # 3. At least one column detected
         if len(self.preview_data.columns) == 0:
-            self.parse_status_label.setText("❌ No columns detected")
+            self.parse_status_label.setText("No columns detected")
             self.parse_status_label.setStyleSheet("padding: 5px; background-color: #ffe8e8; border: 1px solid #f44336;")
             return
-        conditions.append(f"✅ {len(self.preview_data.columns)} columns detected")
+        conditions.append(f"{len(self.preview_data.columns)} columns detected")
         
         # 4. X-axis column selected
         selected_button = self.x_axis_button_group.checkedButton()
         if not selected_button:
-            self.parse_status_label.setText("❌ No X-axis column selected")
+            self.parse_status_label.setText("No X-axis column selected")
             self.parse_status_label.setStyleSheet("padding: 5px; background-color: #ffe8e8; border: 1px solid #f44336;")
             return
-        conditions.append("✅ X-axis column selected")
+        conditions.append("X-axis column selected")
         
         # 5. Basic parsing configuration
         if not hasattr(self, 'delimiter_combo') or not self.delimiter_combo.currentText():
-            self.parse_status_label.setText("❌ Delimiter not configured")
+            self.parse_status_label.setText("Delimiter not configured")
             self.parse_status_label.setStyleSheet("padding: 5px; background-color: #ffe8e8; border: 1px solid #f44336;")
             return
-        conditions.append("✅ Parsing configured")
+        conditions.append("Parsing configured")
         
         # All conditions met - ready for channel creation
         total_rows = len(self.preview_data)
-        status_text = f"✅ Ready to create channels ({total_rows} rows, {len(self.preview_data.columns)} columns)"
+        status_text = f"Ready to create channels ({total_rows} rows, {len(self.preview_data.columns)} columns)"
         self.parse_status_label.setText(status_text)
         self.parse_status_label.setStyleSheet("padding: 5px; background-color: #e8f5e8; border: 1px solid #4CAF50;")
         
@@ -1242,29 +1467,15 @@ class ParseWizardWindow(QMainWindow):
                 name_item.setBackground(QColor(240, 248, 255))  # Light blue for editable names
                 name_item.setToolTip("Double-click to edit column name")
             
-            # Detected pandas type (for debugging)
-            detected_type = str(self.preview_data[col].dtype)
-            type_item = self.column_types_table.item(i, 1)
-            if not type_item or type_item.text() != detected_type:
-                self.column_types_table.setItem(i, 1, QTableWidgetItem(detected_type))
-            
             # Auto-detect channel type using original data
             auto_detected_channel_type = self._detect_channel_type(data_for_detection[col])
             
-            # Auto-detected type text item (read-only)
-            type_item = self.column_types_table.item(i, 2)
-            if not type_item or type_item.text() != auto_detected_channel_type:
-                type_item = QTableWidgetItem(auto_detected_channel_type)
-                type_item.setFlags(type_item.flags() & ~Qt.ItemIsEditable)  # Make read-only
-                type_item.setBackground(QColor(240, 240, 240))  # Light gray background for read-only
-                self.column_types_table.setItem(i, 2, type_item)
-            
             # X-axis column radio button
-            x_axis_radio = self.column_types_table.cellWidget(i, 3)
+            x_axis_radio = self.column_types_table.cellWidget(i, 1)
             if not x_axis_radio or not isinstance(x_axis_radio, QRadioButton):
                 x_axis_radio = QRadioButton()
                 self.x_axis_button_group.addButton(x_axis_radio, i)
-                self.column_types_table.setCellWidget(i, 3, x_axis_radio)
+                self.column_types_table.setCellWidget(i, 1, x_axis_radio)
             
             # Enable/disable radio button based on column type
             if auto_detected_channel_type == 'category':
@@ -1280,6 +1491,20 @@ class ParseWizardWindow(QMainWindow):
                     x_axis_radio.setChecked(True)
                 elif auto_detected_channel_type == 'numeric' and not self.x_axis_button_group.checkedButton():
                     x_axis_radio.setChecked(True)
+            
+            # Auto-detected type text item (read-only)
+            type_item = self.column_types_table.item(i, 2)
+            if not type_item or type_item.text() != auto_detected_channel_type:
+                type_item = QTableWidgetItem(auto_detected_channel_type)
+                type_item.setFlags(type_item.flags() & ~Qt.ItemIsEditable)  # Make read-only
+                type_item.setBackground(QColor(240, 240, 240))  # Light gray background for read-only
+                self.column_types_table.setItem(i, 2, type_item)
+            
+            # Detected pandas type (for debugging)
+            detected_type = str(self.preview_data[col].dtype)
+            type_item = self.column_types_table.item(i, 3)
+            if not type_item or type_item.text() != detected_type:
+                self.column_types_table.setItem(i, 3, QTableWidgetItem(detected_type))
         
         # Remember the column names for next update
         self._last_column_names = current_columns
@@ -1311,14 +1536,15 @@ class ParseWizardWindow(QMainWindow):
             'header_row': 0,
             'delete_rows': '',
             'max_rows': 1000,
-            'quote_char': '"',
-            'escape_char': '\\',
             'encoding': 'utf-8',
             'decimal': '.',
             'thousands': '',
             'na_values': ['', 'NA', 'N/A', 'null', 'NULL', 'nan', 'NaN'],
+            'delete_na_rows': False,
+            'replace_na_value': '',
+            'zero_x_column': True,
             'parse_dates': True,
-            'date_formats': ['%Y-%m-%d', '%m/%d/%Y', '%d/%m/%Y', '%Y-%m-%d %H:%M:%S', '%m/%d/%Y %H:%M:%S', '%d/%m/%Y %H:%M:%S'],
+            'date_formats': ['%H:%M:%S', '%m/%d/%Y','%Y-%m-%d %H:%M:%S'],
             'time_column': None,
             'column_types': {},
             'downsample_enabled': False,
@@ -1331,12 +1557,13 @@ class ParseWizardWindow(QMainWindow):
         self.delimiter_combo.setCurrentText('Comma (,)')
         self.header_row_spin.setValue(0)
         self.delete_rows_input.setText('')
-        self.quote_char_input.setText('"')
-        self.escape_char_input.setText('\\')
-        self.decimal_combo.setCurrentText('.')
-        self.thousands_combo.setCurrentText('')
+        self.decimal_input.setText('.')
+        self.thousands_input.setText('')
         self.na_values_input.setText('NA,N/A,null,NULL,nan,NaN')
-        self.date_formats_input.setText('%Y-%m-%d,%m/%d/%Y,%d/%m/%Y,%Y-%m-%d %H:%M:%S,%m/%d/%Y %H:%M:%S,%d/%m/%Y %H:%M:%S')
+        self.delete_na_rows_checkbox.setChecked(False)
+        self.replace_na_input.setText('')
+        self.zero_x_column_checkbox.setChecked(True)
+        self.date_formats_input.setText('%Y-%m-%d %H:%M:%S,%H:%M:%S,%m/%d/%Y')
         self.encoding_combo.setCurrentText('utf-8')
         
         # Reset downsampling controls
@@ -1502,6 +1729,12 @@ class ParseWizardWindow(QMainWindow):
                     if i not in rows_to_delete:
                         filtered_lines.append(line)
                         
+                # Apply NA handling to raw text lines BEFORE parsing
+                filtered_lines = self._apply_na_handling_to_raw_lines(filtered_lines)
+                
+                if not filtered_lines:
+                    return None
+                        
                 # Create temporary file content
                 import io
                 temp_content = '\n'.join(filtered_lines)
@@ -1509,8 +1742,16 @@ class ParseWizardWindow(QMainWindow):
                 # Use StringIO for parsing
                 file_input = io.StringIO(temp_content)
             else:
-                # No rows to delete, use original file
-                file_input = self.file_path
+                # No rows to delete, but still apply NA handling to all lines
+                processed_lines = self._apply_na_handling_to_raw_lines(self.raw_lines.copy())
+                
+                if not processed_lines:
+                    return None
+                
+                # Create temporary file content with NA handling applied
+                import io
+                temp_content = '\n'.join(processed_lines)
+                file_input = io.StringIO(temp_content)
             
             # Header row position (no adjustment needed since we already removed deleted rows)
             header_row = self.parse_params['header_row'] if self.parse_params['header_row'] is not None else None
@@ -1531,8 +1772,6 @@ class ParseWizardWindow(QMainWindow):
                     file_input,
                     sep=self.parse_params['delimiter'],
                     header=header_row,
-                    quotechar=self.parse_params['quote_char'],
-                    escapechar=self.parse_params['escape_char'],
                     decimal=self.parse_params['decimal'],
                     thousands=self.parse_params['thousands'] if self.parse_params['thousands'] else None,
                     na_values=self.parse_params['na_values'],
@@ -1541,7 +1780,7 @@ class ParseWizardWindow(QMainWindow):
                     on_bad_lines='skip'
                 )
             
-            # Apply downsampling if enabled
+            # Apply downsampling if enabled (AFTER parsing)
             df = self._apply_downsampling(df)
             
             return df
@@ -1781,9 +2020,14 @@ class ParseWizardWindow(QMainWindow):
                     if not datetime_series.isnull().all():
                         # Store original datetime values as metadata
                         df[f'{col}_datetime'] = datetime_series
-                        # Convert to numeric for plotting (days since first date)
-                        first_date = datetime_series.dropna().iloc[0]
-                        df[col] = (datetime_series - first_date).dt.total_seconds() / 86400  # Days
+                        # Convert to numeric for plotting
+                        if self.parse_params.get('zero_x_column', False):
+                            # Zero the column (seconds since first date)
+                            first_date = datetime_series.dropna().iloc[0]
+                            df[col] = (datetime_series - first_date).dt.total_seconds()  # Seconds
+                        else:
+                            # Use absolute time values (Unix timestamp in seconds)
+                            df[col] = datetime_series.astype('int64') // 10**9  # Convert nanoseconds to seconds
                         
                         success_rate = (valid_dates / total_values) * 100
                         print(f"[ParseWizard] Datetime conversion successful: {valid_dates}/{total_values} values ({success_rate:.1f}%)")

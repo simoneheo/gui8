@@ -2136,7 +2136,7 @@ class ComparisonWizardWindow(QWidget):
             print(f"[ComparisonWizard] Error handling test file change: {e}")
     
     def _update_channel_dropdown_for_file(self, file_obj, channel_combo):
-        """Update a channel dropdown to show only channels from the selected file"""
+        """Update a channel dropdown to show all channels from the selected file"""
         try:
             # Store current selection
             current_channel = channel_combo.currentData() if channel_combo.currentIndex() >= 0 else None
@@ -2148,13 +2148,30 @@ class ComparisonWizardWindow(QWidget):
                 # Get channels for this specific file
                 file_channels = self.channel_manager.get_channels_by_file(file_obj.file_id)
                 
-                # Filter for channels that should be shown (typically RAW channels for comparison)
-                filtered_channels = [ch for ch in file_channels if ch.type == SourceType.RAW]
+                # Filter for channels that should be shown (RAW, MIXED, and PROCESSED channels for comparison)
+                filtered_channels = [ch for ch in file_channels if ch.type in [SourceType.RAW, SourceType.MIXED, SourceType.PROCESSED]]
                 
-                # Add filtered channels to combo
+                # Sort channels by type and step for better organization
+                # RAW channels first, then MIXED, then PROCESSED, and within each type sort by step
+                def sort_key(ch):
+                    type_order = {SourceType.RAW: 0, SourceType.MIXED: 1, SourceType.PROCESSED: 2}
+                    return (type_order.get(ch.type, 3), ch.step)
+                
+                filtered_channels.sort(key=sort_key)
+                
+                # Add filtered channels to combo with type indicators
                 for ch in filtered_channels:
                     # Use legend_label if available, otherwise channel_id
-                    label = getattr(ch, 'legend_label', None) or getattr(ch, 'channel_id', str(ch))
+                    base_label = getattr(ch, 'legend_label', None) or getattr(ch, 'channel_id', str(ch))
+                    
+                    # Add type indicator for non-RAW channels
+                    if ch.type == SourceType.MIXED:
+                        label = f"{base_label} [Mixed]"
+                    elif ch.type == SourceType.PROCESSED:
+                        label = f"{base_label} [Processed]"
+                    else:
+                        label = base_label
+                    
                     channel_combo.addItem(label, ch)
                 
                 # Try to restore previous selection if the channel is still available

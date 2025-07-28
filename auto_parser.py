@@ -778,9 +778,9 @@ class AutoParser:
                     if not datetime_series.isnull().all():
                         # Store original datetime values as metadata
                         df[f'{col}_datetime'] = datetime_series
-                        # Convert to numeric for plotting (days since first date)
+                        # Convert to numeric for plotting (seconds since first date)
                         first_date = datetime_series.dropna().iloc[0]
-                        df[col] = (datetime_series - first_date).dt.total_seconds() / 86400  # Days
+                        df[col] = (datetime_series - first_date).dt.total_seconds()  # Seconds
                     else:
                         # Fallback to numeric if datetime conversion fails
                         df[col] = pd.to_numeric(df[col], errors='ignore')
@@ -984,7 +984,7 @@ class AutoParser:
                 # Check if this is a datetime column (has corresponding _datetime column)
                 datetime_col_name = f'{x_col_name}_datetime'
                 if datetime_col_name in df.columns:
-                    xlabel = f"{x_col_name} (days from {df[datetime_col_name].dropna().iloc[0].strftime('%Y-%m-%d')})"
+                    xlabel = f"{x_col_name} (seconds from {df[datetime_col_name].dropna().iloc[0].strftime('%Y-%m-%d %H:%M:%S')})"
                 elif x_col_info.get('method') in ['datetime_data', 'exact_time_name']:
                     xlabel = f"{x_col_name} (datetime)"
             else:
