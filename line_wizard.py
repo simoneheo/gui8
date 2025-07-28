@@ -69,7 +69,7 @@ class LineWizard(QDialog):
         
         self.setWindowTitle(f"Line Properties - {channel.ylabel or 'Unnamed'}")
         self.setModal(True)
-        self.setFixedSize(400, 500)
+        self.setFixedSize(400, 300)  # Reduced height since we removed preview box
         
         self.init_ui()
         self.load_channel_properties()
@@ -81,7 +81,6 @@ class LineWizard(QDialog):
             'style': self.channel.style,
             'marker': self.channel.marker,
             'yaxis': self.channel.yaxis,
-            'xaxis': getattr(self.channel, 'xaxis', 'x-bottom'),
             'legend_label': self.channel.legend_label,
             'z_order': getattr(self.channel, 'z_order', 0)
         }
@@ -115,16 +114,51 @@ class LineWizard(QDialog):
         color_layout.addWidget(self.color_combo)
         form_layout.addRow("Line Color:", color_layout)
         
-        # Line Style
+        # Line Style - Show symbols instead of names
         self.style_combo = QComboBox()
-        for name, value in PLOT_STYLES['Line Styles'].items():
-            self.style_combo.addItem(name, value)
+        # Map symbols to values for display
+        style_symbols = {
+            '─': 'Solid',
+            '┄┄': 'Dashed', 
+            '┄─┄': 'Dash-dot',
+            '┄┄┄': 'Dotted',
+            '━━━': 'Solid (thick)',
+            '┅┅┅': 'Dashed (long)',
+            '┄┄┄┄': 'Dotted (sparse)',
+            '┄─┄─': 'Dash-dot-dot',
+            '━┄━┄': 'Dash-dash-dot',
+            'None': 'None'
+        }
+        for symbol, name in style_symbols.items():
+            if name in PLOT_STYLES['Line Styles']:
+                self.style_combo.addItem(symbol, PLOT_STYLES['Line Styles'][name])
+            elif name == 'Solid (thick)':
+                self.style_combo.addItem(symbol, '-')  # Will be handled by linewidth
+            elif name == 'Dashed (long)':
+                self.style_combo.addItem(symbol, '--')  # Will be handled by dash pattern
+            elif name == 'Dotted (sparse)':
+                self.style_combo.addItem(symbol, ':')  # Will be handled by dot spacing
+            elif name == 'Dash-dot-dot':
+                self.style_combo.addItem(symbol, '-.')  # Will be handled by custom pattern
+            elif name == 'Dash-dash-dot':
+                self.style_combo.addItem(symbol, '--')  # Will be handled by custom pattern
         form_layout.addRow("Line Style:", self.style_combo)
         
-        # Marker
+        # Marker - Show symbols instead of names
         self.marker_combo = QComboBox()
-        for name, value in PLOT_STYLES['Markers'].items():
-            self.marker_combo.addItem(name, value)
+        # Map symbols to values for display
+        marker_symbols = {
+            '●': 'Circle',
+            '■': 'Square',
+            '▲': 'Triangle',
+            '◆': 'Diamond',
+            '+': 'Plus',
+            '✕': 'X',
+            '★': 'Star',
+            'None': 'None'
+        }
+        for symbol, name in marker_symbols.items():
+            self.marker_combo.addItem(symbol, PLOT_STYLES['Markers'][name])
         form_layout.addRow("Marker:", self.marker_combo)
         
         # Bring to Front checkbox
@@ -133,59 +167,6 @@ class LineWizard(QDialog):
         form_layout.addRow("", self.bring_to_front_checkbox)
         
         layout.addLayout(form_layout)
-        
-        # Axis Selection Group
-        axis_group = QGroupBox("Axis Position")
-        axis_layout = QVBoxLayout(axis_group)
-        
-        # Y-Axis Selection
-        y_axis_label = QLabel("Y-Axis:")
-        y_axis_label.setStyleSheet("font-weight: bold;")
-        axis_layout.addWidget(y_axis_label)
-        
-        self.axis_button_group = QButtonGroup()
-        self.left_axis_radio = QRadioButton("Left Axis")
-        self.right_axis_radio = QRadioButton("Right Axis")
-        
-        self.axis_button_group.addButton(self.left_axis_radio, 0)
-        self.axis_button_group.addButton(self.right_axis_radio, 1)
-        
-        axis_layout.addWidget(self.left_axis_radio)
-        axis_layout.addWidget(self.right_axis_radio)
-        
-        # X-Axis Selection
-        x_axis_label = QLabel("X-Axis:")
-        x_axis_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
-        axis_layout.addWidget(x_axis_label)
-        
-        self.x_axis_button_group = QButtonGroup()
-        self.bottom_x_axis_radio = QRadioButton("Bottom Axis")
-        self.top_x_axis_radio = QRadioButton("Top Axis")
-        
-        self.x_axis_button_group.addButton(self.bottom_x_axis_radio, 0)
-        self.x_axis_button_group.addButton(self.top_x_axis_radio, 1)
-        
-        axis_layout.addWidget(self.bottom_x_axis_radio)
-        axis_layout.addWidget(self.top_x_axis_radio)
-        
-        layout.addWidget(axis_group)
-        
-        # Preview section
-        preview_group = QGroupBox("Preview")
-        preview_layout = QVBoxLayout(preview_group)
-        
-        self.preview_label = QLabel("Line preview will appear here")
-        self.preview_label.setMinimumHeight(40)
-        self.preview_label.setStyleSheet("""
-            QLabel {
-                border: 1px solid #ccc;
-                background-color: white;
-                padding: 10px;
-                border-radius: 4px;
-            }
-        """)
-        preview_layout.addWidget(self.preview_label)
-        layout.addWidget(preview_group)
         
         # Spacer
         layout.addStretch()
@@ -199,14 +180,6 @@ class LineWizard(QDialog):
         button_box.button(QDialogButtonBox.Apply).clicked.connect(self.apply_changes)
         
         layout.addWidget(button_box)
-        
-        # Connect change signals for live preview
-        self.legend_edit.textChanged.connect(self.update_preview)
-        self.style_combo.currentTextChanged.connect(self.update_preview)
-        self.marker_combo.currentTextChanged.connect(self.update_preview)
-        self.axis_button_group.buttonToggled.connect(self.update_preview)
-        self.x_axis_button_group.buttonToggled.connect(self.update_preview)
-        self.bring_to_front_checkbox.toggled.connect(self.update_preview)
     
     def load_channel_properties(self):
         """Load current channel properties into the UI"""
@@ -222,77 +195,34 @@ class LineWizard(QDialog):
                     self.color_combo.setCurrentText(name)
                     break
         
-        # Line style
+        # Line style - Find matching style and set to symbol
         if self.channel.style:
             for i in range(self.style_combo.count()):
                 if self.style_combo.itemData(i) == self.channel.style:
                     self.style_combo.setCurrentIndex(i)
                     break
         
-        # Marker
+        # Marker - Find matching marker and set to symbol
         if self.channel.marker:
             for i in range(self.marker_combo.count()):
                 if self.marker_combo.itemData(i) == self.channel.marker:
                     self.marker_combo.setCurrentIndex(i)
                     break
         
-        # Axis
-        if self.channel.yaxis == "y-left":
-            self.left_axis_radio.setChecked(True)
-        else:
-            self.right_axis_radio.setChecked(True)
-        
-        # X-axis
-        channel_xaxis = getattr(self.channel, 'xaxis', 'x-bottom')
-        if channel_xaxis == "x-bottom":
-            self.bottom_x_axis_radio.setChecked(True)
-        else:
-            self.top_x_axis_radio.setChecked(True)
-        
         # Z-order (Bring to Front)
         z_order = getattr(self.channel, 'z_order', 0)
         self.bring_to_front_checkbox.setChecked(z_order > 0)
-        
-        # Initial preview update
-        self.update_preview()
     
     def on_color_combo_changed(self, color_name: str):
         """Handle color combo box changes"""
         if color_name in PLOT_STYLES['Colors']:
             color_value = PLOT_STYLES['Colors'][color_name]
             self.color_button.set_color(color_value)
-            self.update_preview()
     
     def on_color_button_changed(self, color: str):
         """Handle color button changes"""
         # Update combo to "Custom" or find matching color
         self.color_combo.setCurrentIndex(-1)  # Clear selection for custom color
-        self.update_preview()
-    
-    def update_preview(self):
-        """Update the preview display"""
-        # Get current settings
-        color = self.color_button.get_color()
-        style_name = self.style_combo.currentText()
-        marker_name = self.marker_combo.currentText()
-        axis = "Left" if self.left_axis_radio.isChecked() else "Right"
-        x_axis = "Bottom" if self.bottom_x_axis_radio.isChecked() else "Top"
-        legend_name = self.legend_edit.text() or self.channel.ylabel or "Unnamed"
-        bring_to_front = "Yes" if self.bring_to_front_checkbox.isChecked() else "No"
-        
-        # Create preview text
-        preview_text = f"""
-        <div style="padding: 5px;">
-            <b>Legend:</b> {legend_name}<br>
-            <b>Color:</b> <span style="color: {color};">████</span> {color}<br>
-            <b>Style:</b> {style_name}<br>
-            <b>Marker:</b> {marker_name}<br>
-            <b>Axis:</b> {axis} - {x_axis}<br>
-            <b>Bring to Front:</b> {bring_to_front}
-        </div>
-        """
-        
-        self.preview_label.setText(preview_text)
     
     def apply_changes(self):
         """Apply changes to the channel without closing dialog"""
@@ -333,9 +263,8 @@ class LineWizard(QDialog):
             self.channel.style = "-"
             self.channel.marker = "None"
         
-        # Axis
-        self.channel.yaxis = "y-left" if self.left_axis_radio.isChecked() else "y-right"
-        self.channel.xaxis = "x-bottom" if self.bottom_x_axis_radio.isChecked() else "x-top"
+        # Always use left Y-axis (no axis selection option)
+        self.channel.yaxis = "y-left"
         
         # Z-order (Bring to Front)
         self.channel.z_order = 10 if self.bring_to_front_checkbox.isChecked() else 0
@@ -350,7 +279,6 @@ class LineWizard(QDialog):
         self.channel.style = self.original_properties['style']
         self.channel.marker = self.original_properties['marker']
         self.channel.yaxis = self.original_properties['yaxis']
-        self.channel.xaxis = self.original_properties['xaxis']
         self.channel.legend_label = self.original_properties['legend_label']
         self.channel.z_order = self.original_properties['z_order']
     

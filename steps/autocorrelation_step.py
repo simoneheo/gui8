@@ -7,11 +7,8 @@ from channel import Channel
 class autocorrelation_step(BaseStep):
     name = "autocorrelation"
     category = "Features"
-    description = (
-        "Compute autocorrelation to analyze signal periodicity.\n"
-        "If time axis is uniformly sampled, lags are returned in seconds; "
-        "otherwise, lags are returned in samples."
-    )
+    description = """Compute autocorrelation to analyze signal periodicity.
+If time axis is uniformly sampled, lags are returned in seconds; otherwise, lags are returned in samples."""
     tags = ["autocorrelation", "periodicity", "correlation", "lag", "scipy"]
     params = [
         {"name": "max_lag", "type": "int", "default": "100", "help": "Maximum lag in samples for autocorrelation"}

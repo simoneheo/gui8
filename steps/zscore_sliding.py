@@ -5,7 +5,7 @@ from channel import Channel
 
 @register_step
 class zscore_sliding_step(BaseStep):
-    name = "zscore_sliding"
+    name = "zscore sliding"
     category = "Transform"
     description = """Standardize signal using sliding window z-score normalization.
 Centers data around local mean and standard deviation."""

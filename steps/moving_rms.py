@@ -6,7 +6,7 @@ from channel import Channel
 
 @register_step
 class moving_rms_step(BaseStep):
-    name = "moving_rms"
+    name = "moving rms"
     category = "Filter"
     description = """Compute moving root-mean-square (RMS) over a sliding window.
 Useful for measuring signal power and energy variations over time."""

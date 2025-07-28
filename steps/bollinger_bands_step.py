@@ -6,7 +6,7 @@ from channel import Channel
 
 @register_step
 class bollinger_bands_step(BaseStep):
-    name = "bollinger_bands"
+    name = "bollinger bands"
     category = "Features"
     description = """Compute Bollinger Bands (moving average with standard deviation bands)."""
     tags = ["bollinger", "bands", "volatility", "moving-average", "statistics"]

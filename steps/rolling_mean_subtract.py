@@ -5,7 +5,7 @@ from channel import Channel
 
 @register_step
 class rolling_mean_subtract_step(BaseStep):
-    name = "rolling_mean_subtract"
+    name = "rolling mean subtract"
     category = "Filter"
     description = """Subtract rolling mean from signal to remove local trends.
 Useful for detrending and removing slow-varying components."""

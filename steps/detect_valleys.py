@@ -6,7 +6,7 @@ from scipy.signal import find_peaks
 
 @register_step
 class detect_valleys_step(BaseStep):
-    name = "detect_valleys"
+    name = "detect valleys"
     category = "Features"
     description = """Detect valleys (minima) in the signal by inverting and finding peaks.
 Creates a binary signal marking valley locations."""

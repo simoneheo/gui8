@@ -5,7 +5,7 @@ from channel import Channel
 
 @register_step
 class boxcox_transform_step(BaseStep):
-    name = "boxcox_transform"
+    name = "boxcox transform"
     category = "Transform"
     description = """Apply Box-Cox transformation to make data more normally distributed.
 Useful for stabilizing variance and normalizing skewed distributions."""

@@ -5,9 +5,10 @@ from channel import Channel
 
 @register_step
 class count_samples_step(BaseStep):
-    name = "count_samples"
+    name = "count samples"
     category = "Features"
-    description = "Count samples within sliding windows and report counts in various units (count/window, count/s, count/min)"
+    description = """Count samples within sliding windows and report counts in various units.
+Supports counting based on thresholds, peaks, or all samples with flexible output units (count/window, count/s, count/min)."""
     tags = ["feature", "peak", "count", "threshold", "detection", "events"]
     params = [
         {

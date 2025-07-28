@@ -5,9 +5,10 @@ from channel import Channel
 
 @register_step
 class lowpass_butter_step(BaseStep):
-    name = "lowpass_butter"
+    name = "lowpass butter"
     category = "Filter"
-    description = "Apply lowpass Butterworth filter with flat frequency response to remove high frequencies above the cutoff."
+    description = """Apply lowpass Butterworth filter with flat frequency response.
+Removes high frequencies above the cutoff while maintaining minimal passband ripple."""
     tags = ["time-series", "filter", "lowpass", "scipy", "butter", "butterworth", "frequency", "cutoff"]
     params = [
         {"name": "cutoff", "type": "float", "default": "2.0", "help": "Cutoff frequency in Hz"},

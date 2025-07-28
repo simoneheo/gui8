@@ -5,7 +5,7 @@ from channel import Channel
 
 @register_step
 class loess_smooth_step(BaseStep):
-    name = "loess_smooth"
+    name = "loess smooth"
     category = "Filter"
     description = """Apply LOESS (Locally Weighted Scatterplot Smoothing) to the signal.
 Non-parametric smoothing that fits local polynomials."""

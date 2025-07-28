@@ -5,7 +5,7 @@ from channel import Channel
 
 @register_step
 class savitzky_golay_step(BaseStep):
-    name = "savitzky_golay"
+    name = "savitzky golay"
     category = "Filter"
     description = """Apply Savitzky-Golay smoothing filter that preserves features like peaks.
 Better than simple smoothing for maintaining signal characteristics."""

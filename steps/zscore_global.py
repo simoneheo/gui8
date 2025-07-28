@@ -5,7 +5,7 @@ from channel import Channel
 
 @register_step
 class zscore_global_step(BaseStep):
-    name = "zscore_global"
+    name = "zscore global"
     category = "Transform"
     description = """Standardize signal using global z-score normalization.
 Centers data around mean with unit standard deviation."""

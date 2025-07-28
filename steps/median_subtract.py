@@ -5,7 +5,7 @@ from channel import Channel
 
 @register_step
 class median_subtract_step(BaseStep):
-    name = "median_subtract"
+    name = "median subtract"
     category = "Filter"
     description = """Subtract rolling median from signal to remove local trends.
 More robust than mean subtraction for signals with outliers."""

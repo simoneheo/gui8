@@ -5,7 +5,7 @@ from channel import Channel
 
 @register_step
 class percentile_clip_step(BaseStep):
-    name = "percentile_clip"
+    name = "percentile clip"
     category = "Transform"
     description = """Clip signal values based on global percentiles.
 Removes outliers based on overall signal statistics."""

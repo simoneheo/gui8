@@ -5,7 +5,7 @@ from channel import Channel
 
 @register_step
 class median_sliding_step(BaseStep):
-    name = "median_sliding"
+    name = "median sliding"
     category = "Filter"
     description = """Compute median values over sliding sample windows to reduce noise and identify trends."""
     tags = ["time-series", "smoothing", "noise-reduction", "median", "sliding", "robust"]

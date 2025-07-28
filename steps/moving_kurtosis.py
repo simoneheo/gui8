@@ -6,7 +6,7 @@ from channel import Channel
 
 @register_step
 class moving_kurtosis_step(BaseStep):
-    name = "moving_kurtosis"
+    name = "moving kurtosis"
     category = "Features"
     description = """Compute moving kurtosis over a sliding window.
 Measures the 'tailedness' of the signal distribution in each window."""

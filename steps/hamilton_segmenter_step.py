@@ -5,7 +5,7 @@ from channel import Channel
 
 @register_step
 class hamilton_segmenter_step(BaseStep):
-    name = "hamilton_segmenter"
+    name = "hamilton segmenter"
     category = "BioSignal"
     description = """Detect QRS complexes in ECG signal using BioSPPy's Hamilton segmenter algorithm."""
     tags = ["time-series", "biosignal", "ecg", "qrs", "peak-detection", "r-peaks"]

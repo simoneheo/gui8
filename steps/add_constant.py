@@ -5,9 +5,10 @@ from channel import Channel
 
 @register_step
 class add_constant_step(BaseStep):
-    name = "add_constant"
+    name = "add constant"
     category = "Transform"
-    description = """Add a constant value to the signal."""
+    description = """Add a constant value to the signal.
+Useful for offsetting signals or adjusting baseline levels."""
     tags = ["time-series", "add", "constant", "transform"]
     params = [
         {"name": "constant", "type": "float", "default": "1.0", "help": "Constant value to add"}

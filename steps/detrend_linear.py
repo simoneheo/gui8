@@ -5,7 +5,7 @@ from channel import Channel
 
 @register_step
 class detrend_linear_step(BaseStep):
-    name = "detrend_linear"
+    name = "detrend linear"
     category = "Transform"
     description = """Remove linear trend from signal by subtracting the best-fit line.
 Useful for removing drift and baseline shifts."""

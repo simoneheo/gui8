@@ -45,7 +45,7 @@ class StylePreviewWidget(QLabel):
         # Create pen with style
         pen = QPen(color, 2)
         
-        # Map matplotlib line styles to Qt pen styles
+        # Map matplotlib line styles to Qt pen styles and handle custom styles
         style_map = {
             '-': Qt.PenStyle.SolidLine,
             '--': Qt.PenStyle.DashLine,
@@ -53,7 +53,25 @@ class StylePreviewWidget(QLabel):
             ':': Qt.PenStyle.DotLine,
             'None': Qt.PenStyle.NoPen,
         }
-        pen.setStyle(style_map.get(self.line_style, Qt.PenStyle.SolidLine))
+        
+        # Handle custom line styles
+        if self.line_style == "Solid (thick)":
+            pen.setStyle(Qt.PenStyle.SolidLine)
+            pen.setWidth(3)
+        elif self.line_style == "Dashed (long)":
+            pen.setStyle(Qt.PenStyle.DashLine)
+            pen.setWidth(2)
+        elif self.line_style == "Dotted (sparse)":
+            pen.setStyle(Qt.PenStyle.DotLine)
+            pen.setWidth(1)
+        elif self.line_style == "Dash-dot-dot":
+            pen.setStyle(Qt.PenStyle.DashDotLine)
+            pen.setWidth(2)
+        elif self.line_style == "Dash-dash-dot":
+            pen.setStyle(Qt.PenStyle.DashLine)
+            pen.setWidth(2)
+        else:
+            pen.setStyle(style_map.get(self.line_style, Qt.PenStyle.SolidLine))
         
         painter.setPen(pen)
         
@@ -167,16 +185,14 @@ class PlotCanvas(FigureCanvas):
         super().__init__(self.fig)
         self.setParent(parent)
         
-        # Create primary and secondary axes
-        self.ax_left = self.fig.add_subplot(111)
-        self.ax_right = self.ax_left.twinx()
+        # Create only primary axis (no secondary axis)
+        self.ax = self.fig.add_subplot(111)
         
         # Configure axes (no labels for preview)
         # Labels removed for cleaner preview interface
         
         # Track plotted lines
         self.plotted_lines = {}  # channel_id -> line object
-        self.channel_axes = {}   # channel_id -> axis (left/right)
         
         # Default colors and styles
         self.default_colors = itertools.cycle([
@@ -189,10 +205,8 @@ class PlotCanvas(FigureCanvas):
     
     def clear_plot(self):
         """Clear all plotted data"""
-        self.ax_left.clear()
-        self.ax_right.clear()
+        self.ax.clear()
         self.plotted_lines.clear()
-        self.channel_axes.clear()
         
         # No axis labels for preview
         
@@ -203,8 +217,12 @@ class PlotCanvas(FigureCanvas):
         if channel.xdata is None or channel.ydata is None:
             return None
         
-        # Determine which axis to use
-        axis = self.ax_left if channel.yaxis == "y-left" else self.ax_right
+        print(f"PlotCanvas.plot_channel called for {channel.channel_id}")
+        print(f"  Data points: {len(channel.ydata) if channel.ydata is not None else 0}")
+        print(f"  Y range: {np.min(channel.ydata):.6g} to {np.max(channel.ydata):.6g}" if channel.ydata is not None else "No data")
+        
+        # Always use the primary axis (no secondary axis)
+        axis = self.ax
         
         # Get line properties
         color = channel.color or next(self.default_colors)
@@ -221,6 +239,24 @@ class PlotCanvas(FigureCanvas):
             style = next(self.default_styles)
             marker = None
         
+        # Determine linewidth based on style
+        linewidth = 1.5  # Default
+        if style == "Solid (thick)":
+            linewidth = 3.0
+            style = "-"
+        elif style == "Dashed (long)":
+            linewidth = 2.0
+            style = "--"
+        elif style == "Dotted (sparse)":
+            linewidth = 1.5
+            style = ":"
+        elif style == "Dash-dot-dot":
+            linewidth = 1.5
+            style = "-."
+        elif style == "Dash-dash-dot":
+            linewidth = 1.5
+            style = "--"
+        
         # Plot the data
         line, = axis.plot(
             channel.xdata, 
@@ -229,7 +265,7 @@ class PlotCanvas(FigureCanvas):
             linestyle=style,
             marker=marker,
             label=label,
-            linewidth=1.5,
+            linewidth=linewidth,
             markersize=4
         )
         
@@ -240,7 +276,6 @@ class PlotCanvas(FigureCanvas):
         
         # Store references
         self.plotted_lines[channel.channel_id] = line
-        self.channel_axes[channel.channel_id] = channel.yaxis
         
         return line
     
@@ -250,7 +285,6 @@ class PlotCanvas(FigureCanvas):
             line = self.plotted_lines[channel_id]
             line.remove()
             del self.plotted_lines[channel_id]
-            del self.channel_axes[channel_id]
     
     def update_channel_style(self, channel: Channel):
         """Update the visual style of a plotted channel"""
@@ -262,10 +296,34 @@ class PlotCanvas(FigureCanvas):
         # Update line properties
         if channel.color:
             line.set_color(channel.color)
+        
+        # Handle line style and width
         if channel.style and channel.style not in ["None", "none"]:
-            line.set_linestyle(channel.style)
+            # Determine linewidth based on style
+            linewidth = 1.5  # Default
+            style = channel.style
+            
+            if style == "Solid (thick)":
+                linewidth = 3.0
+                style = "-"
+            elif style == "Dashed (long)":
+                linewidth = 2.0
+                style = "--"
+            elif style == "Dotted (sparse)":
+                linewidth = 1.5
+                style = ":"
+            elif style == "Dash-dot-dot":
+                linewidth = 1.5
+                style = "-."
+            elif style == "Dash-dash-dot":
+                linewidth = 1.5
+                style = "--"
+            
+            line.set_linestyle(style)
+            line.set_linewidth(linewidth)
         else:
             line.set_linestyle('none')  # No line (matplotlib expects 'none')
+        
         if channel.marker and channel.marker != "None":
             line.set_marker(channel.marker)
         else:
@@ -274,15 +332,6 @@ class PlotCanvas(FigureCanvas):
         # Update label
         label = channel.legend_label or channel.ylabel or "Unnamed"
         line.set_label(label)
-        
-        # Handle axis change
-        old_axis = self.channel_axes.get(channel.channel_id)
-        new_axis = channel.yaxis
-        
-        if old_axis != new_axis:
-            # Remove from old axis and re-plot on new axis
-            self.remove_channel(channel.channel_id)
-            self.plot_channel(channel)
         
         # Handle z_order change - bring line to front if needed
         z_order = getattr(channel, 'z_order', 0)
@@ -293,14 +342,12 @@ class PlotCanvas(FigureCanvas):
     
     def update_plot(self):
         """Refresh the plot display"""
-        # Auto-scale axes
-        self.ax_left.relim()
-        self.ax_left.autoscale()
-        self.ax_right.relim()
-        self.ax_right.autoscale()
+        # Auto-scale axis
+        self.ax.relim()
+        self.ax.autoscale()
         
         # Add grid
-        self.ax_left.grid(True, alpha=0.3)
+        self.ax.grid(True, alpha=0.3)
         
         self.fig.canvas.draw()
 
@@ -340,9 +387,19 @@ class PlotManager(QWidget):
     
     def update_plot(self, channels: List[Channel]):
         """Update the plot with visible channels"""
+        print(f"PlotManager.update_plot called with {len(channels)} channels")
+        
         # Get visible channels
         visible_channels = [ch for ch in channels if ch.show]
         visible_ids = {ch.channel_id for ch in visible_channels}
+        
+        print(f"Visible channels: {len(visible_channels)}, IDs: {list(visible_ids)}")
+        print(f"Currently plotted: {list(self.currently_plotted)}")
+        
+        # Debug: Print data ranges for visible channels
+        for ch in visible_channels:
+            if ch.ydata is not None:
+                print(f"  Channel {ch.channel_id}: Y range {np.min(ch.ydata):.6g} to {np.max(ch.ydata):.6g}")
         
         # Remove channels that are no longer visible
         for channel_id in list(self.currently_plotted):
@@ -356,6 +413,7 @@ class PlotManager(QWidget):
         # Add or update visible channels
         for channel in visible_channels:
             if channel.channel_id not in self.currently_plotted:
+                print(f"Adding new channel {channel.channel_id} to plot")
                 # New channel - assign default style if not set
                 if not channel.color:
                     channel.color = next(self.color_cycle)
@@ -366,8 +424,10 @@ class PlotManager(QWidget):
                 self.plot_canvas.plot_channel(channel)
                 self.currently_plotted.add(channel.channel_id)
             else:
-                # Update existing channel style
-                self.plot_canvas.update_channel_style(channel)
+                print(f"Replotting existing channel {channel.channel_id} (data may have changed)")
+                # Update existing channel - need to replot if data changed
+                self.plot_canvas.remove_channel(channel.channel_id)
+                self.plot_canvas.plot_channel(channel)
         
         # Refresh the display
         self.plot_canvas.update_plot()
@@ -394,16 +454,12 @@ class PlotManager(QWidget):
             )
             legend_table.setCellWidget(row, 1, style_widget)
             
-            # Axis
-            axis_text = "Left" if channel.yaxis == "y-left" else "Right"
-            legend_table.setItem(row, 2, QTableWidgetItem(axis_text))
-            
             # Gear button
             gear_button = QPushButton("⚙")
             gear_button.setMaximumWidth(30)
             # Use default parameter to properly capture channel_id value (not reference)
             gear_button.clicked.connect(lambda checked=False, ch_id=channel.channel_id: self._handle_gear_button_clicked(ch_id))
-            legend_table.setCellWidget(row, 3, gear_button)
+            legend_table.setCellWidget(row, 2, gear_button)
     
     def refresh_plot_for_file(self, file_id: str):
         """Refresh plot showing only channels from specified file"""
@@ -442,7 +498,12 @@ PLOT_STYLES = {
         'Solid': '-',
         'Dashed': '--', 
         'Dash-dot': '-.',
-        'Dotted': ':'
+        'Dotted': ':',
+        'Solid (thick)': '-',
+        'Dashed (long)': '--',
+        'Dash-dot-dot': '-.',
+        'Dotted (sparse)': ':',
+        'Dash-dash-dot': '--'
     },
     'Markers': {
         'None': 'None',

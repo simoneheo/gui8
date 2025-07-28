@@ -657,7 +657,7 @@ class MainWindowUI(QWidget):
         channel = self.channel_manager.get_channel(channel_id)
         if channel:
             # Open the comprehensive metadata wizard
-            wizard = MetadataWizard(channel, self)
+            wizard = MetadataWizard(channel, self, self.file_manager)
             wizard.exec()
 
     
@@ -673,18 +673,31 @@ class MainWindowUI(QWidget):
     
     def handle_channel_data_updated(self, channel_id: str):
         """Handle when channel data is updated via inspection/transform wizards"""
+        print(f"Main window received data_updated signal for channel: {channel_id}")
         channel = self.channel_manager.get_channel(channel_id)
         if channel and self.selected_file_id:
+            print(f"Updating plot for channel: {channel_id}")
             # Get filtered channels respecting the current filter toggle
             channels = self._get_filtered_channels()
             
-            # Refresh all UI components immediately
-            self.refresh_channel_table()  # Update channel table with new statistics
-            self.plot_manager.update_plot(channels)  # Update plot canvas with filtered channels
+            # Force a complete plot refresh by clearing and rebuilding
+            self.plot_manager.plot_canvas.clear_plot()
+            self.plot_manager.currently_plotted.clear()
             
-            # Force plot canvas to redraw immediately
+            # Refresh all UI components immediately
+            self.refresh_channel_table()  # Update channel table with new statistics (this also updates the plot)
+            
+            # Force plot canvas to redraw immediately with multiple refresh calls
             self.plot_manager.plot_canvas.fig.canvas.draw()
             self.plot_manager.plot_canvas.fig.canvas.flush_events()
+            
+            # Additional force refresh
+            self.plot_manager.plot_canvas.fig.canvas.draw_idle()
+            self.plot_manager.plot_canvas.fig.canvas.flush_events()
+            
+            print(f"Plot update completed for channel: {channel_id}")
+        else:
+            print(f"Channel not found or no file selected: channel_id={channel_id}, selected_file_id={self.selected_file_id}")
             
 
     
@@ -740,27 +753,14 @@ class MainWindowUI(QWidget):
             info_text = f"""
 File Information:
 • Name: {file_obj.filename}
-• File ID: {file_id}
 • Size: {size_str} ({file_obj.filesize:,} bytes)
-• Status: {file_obj.state.status.value}
-• Channels: {len(channels)}
 • Last Modified: {last_modified_str}
 • Path: {file_obj.filepath}
 
 Parse Statistics:
 • Processing Time: {processing_time}
-• Parse Method: {parse_method}
 • Data Rows: {data_rows}
-• Metadata Lines Skipped: {metadata_lines}
 • Encoding: {encoding}
-
-Channel Summary:
-• Total Channels: {len(channels)}
-• Visible Channels: {len([ch for ch in channels if ch.show])}
-• Modified Channels: {len([ch for ch in channels if hasattr(ch, 'modified_at') and ch.modified_at])}
-
-Error Information:
-{file_obj.state.error_message or 'No errors'}
             """
             
             QMessageBox.information(self, f"File Info - {file_obj.filename}", info_text.strip())

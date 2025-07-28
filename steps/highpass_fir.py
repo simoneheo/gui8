@@ -5,9 +5,10 @@ from channel import Channel
 
 @register_step
 class highpass_fir_step(BaseStep):
-    name = "highpass_fir"
+    name = "highpass fir"
     category = "Filter"
-    description = "Apply highpass FIR filter with linear phase response and precise frequency control to remove low frequencies below the cutoff."
+    description = """Apply highpass FIR filter with linear phase response and precise frequency control.
+Removes low frequencies below the cutoff while maintaining linear phase characteristics."""
     tags = ["time-series", "filter", "highpass", "scipy", "fir", "linear-phase", "frequency", "cutoff"]
     params = [
         {"name": "cutoff", "type": "float", "default": "0.5", "help": "Cutoff frequency in Hz"},

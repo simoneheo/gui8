@@ -5,7 +5,7 @@ from channel import Channel
 
 @register_step
 class area_envelope_step(BaseStep):
-    name = "area_envelope"
+    name = "area envelope"
     category = "Features"
     description = """Compute area envelope by integrating signal over sliding windows.
 Measures cumulative signal energy/area in each window."""

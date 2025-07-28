@@ -5,7 +5,7 @@ from channel import Channel
 
 @register_step
 class hilbert_envelope_step(BaseStep):
-    name = "hilbert_envelope"
+    name = "hilbert envelope"
     category = "Transform"
     description = """Extract signal envelope using Hilbert transform.
 Computes the analytic signal and returns its magnitude (envelope)."""

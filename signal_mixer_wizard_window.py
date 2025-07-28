@@ -1723,7 +1723,7 @@ class SignalMixerWizardWindow(QMainWindow):
     def _show_channel_info(self, channel):
         """Show channel information"""
         from metadata_wizard import MetadataWizard
-        wizard = MetadataWizard(channel, self)
+        wizard = MetadataWizard(channel, self, self.file_manager)
         wizard.exec()
 
 

@@ -5,7 +5,7 @@ from channel import Channel
 
 @register_step
 class threshold_clip_step(BaseStep):
-    name = "threshold_clip"
+    name = "threshold clip"
     category = "Transform"
     description = """Clip signal values above/below thresholds to specified values.
 Useful for removing outliers and limiting extreme values."""

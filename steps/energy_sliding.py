@@ -5,7 +5,7 @@ from channel import Channel
 
 @register_step
 class energy_sliding_step(BaseStep):
-    name = "energy_sliding"
+    name = "energy sliding"
     category = "Features"
     description = """Compute signal energy over sliding windows.
 Measures the power/energy content of the signal in each window."""

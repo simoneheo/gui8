@@ -5,9 +5,10 @@ from channel import Channel
 
 @register_step
 class bandpass_butter_step(BaseStep):
-    name = "bandpass_butter"
+    name = "bandpass butter"
     category = "Filter"
-    description = "Apply bandpass Butterworth filter with flat frequency response to remove frequencies outside the specified range."
+    description = """Apply bandpass Butterworth filter with flat frequency response.
+Removes frequencies outside the specified range while maintaining minimal passband ripple."""
     tags = ["filter", "bandpass", "scipy", "butter", "butterworth", "frequency", "passband"]
     params = [
         {"name": "low_cutoff", "type": "float", "default": "0.5", "help": "Low cutoff frequency (Hz)"},

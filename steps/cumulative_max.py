@@ -6,7 +6,7 @@ from channel import Channel
 
 @register_step
 class cumulative_max_step(BaseStep):
-    name = "cumulative_max"
+    name = "cumulative max"
     category = "Features"
     description = """Compute cumulative maximum of the signal.
 Shows the running maximum value up to each point in time."""

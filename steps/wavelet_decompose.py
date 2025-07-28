@@ -6,7 +6,7 @@ from channel import Channel
 
 @register_step
 class wavelet_decompose_step(BaseStep):
-    name = "wavelet_decompose"
+    name = "wavelet decompose"
     category = "Transform"
     description = """Decompose signal using discrete wavelet transform (DWT) into approximation and detail coefficients.
 Creates multiple channels for different frequency components of the signal."""

@@ -305,7 +305,7 @@ class InspectionWizard(QDialog):
         # Title and info
         header_layout = QHBoxLayout()
         
-        title = QLabel(f"🔍 Data Inspector")
+        title = QLabel(f"Data Inspector")
         title_font = QFont()
         title_font.setPointSize(14)
         title_font.setBold(True)
@@ -347,11 +347,11 @@ class InspectionWizard(QDialog):
         
         # Left side buttons
         if not self.is_pair_data:
-            self.reset_button = QPushButton("🔄 Reset")
+            self.reset_button = QPushButton("Reset")
             self.reset_button.setToolTip("Reset all changes to original data")
             button_layout.addWidget(self.reset_button)
         
-        self.export_button = QPushButton("💾 Export")
+        self.export_button = QPushButton("Export")
         self.export_button.setToolTip("Export current data to file")
         button_layout.addWidget(self.export_button)
         
@@ -359,24 +359,27 @@ class InspectionWizard(QDialog):
         
         # Right side buttons
         if not self.is_pair_data:
-            self.apply_button = QPushButton("✅ Apply Changes")
+            self.apply_button = QPushButton("Apply Changes")
             self.apply_button.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
             self.apply_button.setEnabled(False)
             button_layout.addWidget(self.apply_button)
         
-        self.cancel_button = QPushButton("❌ Cancel")
+        self.cancel_button = QPushButton("Cancel")
         button_layout.addWidget(self.cancel_button)
         
         layout.addLayout(button_layout)
     
     def create_controls_section(self) -> QWidget:
-        """Create the controls and statistics section"""
+        """Create the controls section"""
         widget = QWidget()
         layout = QHBoxLayout(widget)
         
-        # Data loading controls group
-        loading_group = QGroupBox("Data Loading Options")
-        loading_layout = QVBoxLayout(loading_group)
+        # Combined Data Loading and Operations group
+        combined_group = QGroupBox("Data Loading and Operations")
+        combined_layout = QVBoxLayout(combined_group)
+        
+        # Data loading controls
+        loading_layout = QVBoxLayout()
         
         # Row selection controls
         row_controls_layout = QHBoxLayout()
@@ -400,7 +403,7 @@ class InspectionWizard(QDialog):
         row_controls_layout.addWidget(self.last_m_spin)
         
         # Reload button
-        self.reload_button = QPushButton("🔄 Reload")
+        self.reload_button = QPushButton("Reload")
         self.reload_button.setToolTip("Reload data with current settings")
         self.reload_button.clicked.connect(self.reload_data_with_settings)
         row_controls_layout.addWidget(self.reload_button)
@@ -409,7 +412,7 @@ class InspectionWizard(QDialog):
         
         # Load all checkbox with warning
         load_all_layout = QHBoxLayout()
-        self.load_all_checkbox = QCheckBox("⚠️ Load all rows (may be slow for large files)")
+        self.load_all_checkbox = QCheckBox("Load all rows (may be slow for large files)")
         self.load_all_checkbox.setStyleSheet("color: #d32f2f; font-weight: bold;")
         self.load_all_checkbox.setToolTip("WARNING: Loading all rows may take a long time for large datasets.\nRecommended only for files with < 10,000 rows.")
         self.load_all_checkbox.toggled.connect(self.on_load_all_toggled)
@@ -418,48 +421,16 @@ class InspectionWizard(QDialog):
         
         loading_layout.addLayout(load_all_layout)
         
-        layout.addWidget(loading_group)
+        combined_layout.addLayout(loading_layout)
         
-        # Data statistics group
-        stats_group = QGroupBox("Data Statistics")
-        stats_layout = QGridLayout(stats_group)
+        # Separator line
+        separator = QFrame()
+        separator.setFrameShape(QFrame.HLine)
+        separator.setFrameShadow(QFrame.Sunken)
+        combined_layout.addWidget(separator)
         
-        self.stats_labels = {}
-        
-        # Adapt statistics labels based on data type
-        if self.is_pair_data:
-            stats_info = [
-                ("Total Points", "total_points"),
-                ("Loaded Rows", "loaded_rows"),
-                ("Reference Range", "ref_range"),
-                ("Test Range", "test_range"),
-                ("Invalid Values", "invalid_values")
-            ]
-        else:
-            stats_info = [
-                ("Total Points", "total_points"),
-                ("Loaded Rows", "loaded_rows"),
-                ("X Range", "x_range"),
-                ("Y Range", "y_range"),
-                ("Modified Points", "modified_points"),
-                ("Invalid Values", "invalid_values")
-            ]
-        
-        for i, (label_text, key) in enumerate(stats_info):
-            label = QLabel(f"{label_text}:")
-            label.setStyleSheet("font-weight: bold;")
-            value_label = QLabel("Computing...")
-            value_label.setStyleSheet("color: #666;")
-            
-            stats_layout.addWidget(label, i, 0)
-            stats_layout.addWidget(value_label, i, 1)
-            self.stats_labels[key] = value_label
-        
-        layout.addWidget(stats_group)
-        
-        # Data operations group
-        ops_group = QGroupBox("Data Operations")
-        ops_layout = QVBoxLayout(ops_group)
+        # Data operations
+        ops_layout = QVBoxLayout()
         
         # Row operations
         row_ops_layout = QHBoxLayout()
@@ -486,7 +457,7 @@ class InspectionWizard(QDialog):
         search_layout.addWidget(QLabel("Search:"))
         search_layout.addWidget(self.search_input)
         
-        self.search_button = QPushButton("🔍")
+        self.search_button = QPushButton("Search")
         self.search_button.clicked.connect(self.search_data)
         search_layout.addWidget(self.search_button)
         
@@ -506,7 +477,9 @@ class InspectionWizard(QDialog):
         
         ops_layout.addLayout(filter_layout)
         
-        layout.addWidget(ops_group)
+        combined_layout.addLayout(ops_layout)
+        
+        layout.addWidget(combined_group)
         
         return widget
     
@@ -518,16 +491,16 @@ class InspectionWizard(QDialog):
         # Table header with help text
         header_layout = QHBoxLayout()
         if self.is_pair_data:
-            table_header = QLabel("📊 Aligned Pair Data (Read-Only)")
+            table_header = QLabel("Aligned Pair Data (Read-Only)")
         else:
-            table_header = QLabel("📊 Channel Data (Editable)")
+            table_header = QLabel("Channel Data (Editable)")
         table_header.setStyleSheet("font-weight: bold; font-size: 12px; margin: 5px;")
         header_layout.addWidget(table_header)
         
         header_layout.addStretch()
         
         # Help text for large files
-        help_label = QLabel("💡 For large files, only first/last rows are shown by default")
+        help_label = QLabel("For large files, only first/last rows are shown by default")
         help_label.setStyleSheet("color: #666; font-size: 10px; font-style: italic;")
         header_layout.addWidget(help_label)
         
@@ -605,9 +578,6 @@ class InspectionWizard(QDialog):
             
             # Update controls
             self.goto_row_input.setMaximum(data_length - 1)
-            
-            # Update statistics
-            self.update_statistics()
             
         else:
             self.table_status.setText("No data available")
@@ -739,11 +709,6 @@ class InspectionWizard(QDialog):
             # Store aligned data for later use
             self.aligned_data = aligned_data
             
-            print(f"[InspectionWizard] About to call update_statistics()")
-            
-            # Update statistics
-            self.update_statistics()
-            
             print(f"[InspectionWizard] Pair data loading complete")
             
         except Exception as e:
@@ -781,9 +746,6 @@ class InspectionWizard(QDialog):
                 self.table_status.setText(f"Loaded all {len(self.channel.ydata):,} data points")
             else:
                 self.table_status.setText(f"Loaded first {first_n} and last {last_m} rows of {len(self.channel.ydata):,} total rows")
-            
-            # Update statistics
-            self.update_statistics()
     
     def _reload_pair_data_with_settings(self):
         """Reload pair data with current UI settings"""
@@ -813,9 +775,6 @@ class InspectionWizard(QDialog):
                 self.table_status.setText(f"Loaded all {len(ref_data):,} aligned data points")
             else:
                 self.table_status.setText(f"Loaded first {first_n} and last {last_m} rows of {len(ref_data):,} aligned rows")
-            
-            # Update statistics
-            self.update_statistics()
         else:
             # If no aligned data available, try to reload from scratch
             self._load_pair_data()
@@ -853,148 +812,13 @@ class InspectionWizard(QDialog):
             self.first_n_spin.setEnabled(True)
             self.last_m_spin.setEnabled(True)
     
-    def update_statistics(self):
-        """Update the statistics display"""
-        print(f"[InspectionWizard] update_statistics called, is_pair_data: {self.is_pair_data}")
-        if self.is_pair_data:
-            self._update_pair_statistics()
-        else:
-            self._update_channel_statistics()
-    
-    def _update_channel_statistics(self):
-        """Update statistics for channel data"""
-        if self.channel.xdata is None or self.channel.ydata is None:
-            return
-        
-        # Basic statistics
-        total_points = len(self.channel.ydata)
-        self.stats_labels["total_points"].setText(f"{total_points:,}")
-        
-        # Loaded rows
-        loaded_rows = self.data_table.rowCount()
-        if self.data_table.is_subset_loaded:
-            # Subtract separator row if present
-            separator_count = 0
-            for row in range(self.data_table.rowCount()):
-                item = self.data_table.item(row, 1)
-                if item and "skipped" in item.text():
-                    separator_count += 1
-                    break
-            actual_loaded = loaded_rows - separator_count
-            self.stats_labels["loaded_rows"].setText(f"{actual_loaded:,} (subset)")
-        else:
-            self.stats_labels["loaded_rows"].setText(f"{loaded_rows:,} (all)")
-        
-        # Ranges (use full dataset for accurate ranges)
-        x_min, x_max = np.min(self.channel.xdata), np.max(self.channel.xdata)
-        y_min, y_max = np.min(self.channel.ydata), np.max(self.channel.ydata)
-        
-        self.stats_labels["x_range"].setText(f"{x_min:.6g} to {x_max:.6g}")
-        self.stats_labels["y_range"].setText(f"{y_min:.6g} to {y_max:.6g}")
-        
-        # Modified points (only count visible modifications)
-        modified_count = len(self.data_table.modified_rows)
-        self.stats_labels["modified_points"].setText(f"{modified_count}")
-        
-        # Count invalid values (only in loaded data)
-        invalid_count = 0
-        for row in range(self.data_table.rowCount()):
-            for col in [1, 2]:  # X and Y columns
-                item = self.data_table.item(row, col)
-                if item and "skipped" not in item.text():
-                    try:
-                        float(item.text())
-                    except ValueError:
-                        invalid_count += 1
-        
-        self.stats_labels["invalid_values"].setText(f"{invalid_count}")
-    
-    def _update_pair_statistics(self):
-        """Update statistics for pair data"""
-        print(f"[InspectionWizard] Updating pair statistics...")
-        
-        if not hasattr(self, 'aligned_data') or not self.aligned_data:
-            print(f"[InspectionWizard] No aligned data available")
-            return
-        
-        ref_data = self.aligned_data.get('ref_data', [])
-        test_data = self.aligned_data.get('test_data', [])
-        
-        print(f"[InspectionWizard] Ref data length: {len(ref_data)}, Test data length: {len(test_data)}")
-        
-        if len(ref_data) == 0 or len(test_data) == 0:
-            print(f"[InspectionWizard] Empty data arrays")
-            return
-        
-        # Basic statistics
-        total_points = len(ref_data)
-        print(f"[InspectionWizard] Total points: {total_points}")
-        
-        if "total_points" in self.stats_labels:
-            self.stats_labels["total_points"].setText(f"{total_points:,}")
-        else:
-            print(f"[InspectionWizard] Warning: total_points label not found")
-        
-        # Loaded rows
-        loaded_rows = self.data_table.rowCount()
-        if self.data_table.is_subset_loaded:
-            # Subtract separator row if present
-            separator_count = 0
-            for row in range(self.data_table.rowCount()):
-                item = self.data_table.item(row, 1)
-                if item and "skipped" in item.text():
-                    separator_count += 1
-                    break
-            actual_loaded = loaded_rows - separator_count
-            if "loaded_rows" in self.stats_labels:
-                self.stats_labels["loaded_rows"].setText(f"{actual_loaded:,} (subset)")
-        else:
-            if "loaded_rows" in self.stats_labels:
-                self.stats_labels["loaded_rows"].setText(f"{loaded_rows:,} (all)")
-        
-        # Ranges for reference and test data
-        ref_min, ref_max = np.min(ref_data), np.max(ref_data)
-        test_min, test_max = np.min(test_data), np.max(test_data)
-        
-        print(f"[InspectionWizard] Ref range: {ref_min:.6g} to {ref_max:.6g}")
-        print(f"[InspectionWizard] Test range: {test_min:.6g} to {test_max:.6g}")
-        
-        if "ref_range" in self.stats_labels:
-            self.stats_labels["ref_range"].setText(f"{ref_min:.6g} to {ref_max:.6g}")
-        else:
-            print(f"[InspectionWizard] Warning: ref_range label not found")
-            
-        if "test_range" in self.stats_labels:
-            self.stats_labels["test_range"].setText(f"{test_min:.6g} to {test_max:.6g}")
-        else:
-            print(f"[InspectionWizard] Warning: test_range label not found")
-        
-        # Count invalid values (only in loaded data)
-        invalid_count = 0
-        for row in range(self.data_table.rowCount()):
-            for col in [1, 2]:  # Reference and Test columns
-                item = self.data_table.item(row, col)
-                if item and "skipped" not in item.text():
-                    try:
-                        float(item.text())
-                    except ValueError:
-                        invalid_count += 1
-        
-        print(f"[InspectionWizard] Invalid values: {invalid_count}")
-        
-        if "invalid_values" in self.stats_labels:
-            self.stats_labels["invalid_values"].setText(f"{invalid_count}")
-        else:
-            print(f"[InspectionWizard] Warning: invalid_values label not found")
-        
-        print(f"[InspectionWizard] Available stats labels: {list(self.stats_labels.keys())}")
+
     
     def on_data_changed(self):
         """Handle when data in the table changes"""
         self.has_unsaved_changes = True
         if not self.is_pair_data:
             self.apply_button.setEnabled(True)
-        self.update_statistics()
         
         # Update status
         modified_count = len(self.data_table.modified_rows)
@@ -1096,7 +920,6 @@ class InspectionWizard(QDialog):
                 self.has_unsaved_changes = False
                 if not self.is_pair_data:
                     self.apply_button.setEnabled(False)
-                self.update_statistics()
                 self.table_status.setText("Data reset to original values")
                 if self.is_pair_data:
                     pair_name = self.pair_config.get('name', 'Unnamed Pair')

@@ -5,7 +5,7 @@ from channel import Channel
 
 @register_step
 class moving_average_step(BaseStep):
-    name = "moving_average"
+    name = "moving average"
     category = "Filter"
     description = """Apply moving average smoothing using overlapping windows to reduce noise and smooth signal variations."""
     tags = ["time-series", "smoothing", "noise-reduction", "window", "sliding", "average", "moving"]

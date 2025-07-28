@@ -5,7 +5,7 @@ from channel import Channel
 
 @register_step
 class sign_only_step(BaseStep):
-    name = "sign_only"
+    name = "sign only"
     category = "Transform"
     description = """Extract only the sign of signal values (-1, 0, +1).
 Useful for analyzing signal direction and zero crossings."""

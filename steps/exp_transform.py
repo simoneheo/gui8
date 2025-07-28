@@ -5,7 +5,7 @@ from channel import Channel
 
 @register_step
 class exp_transform_step(BaseStep):
-    name = "exp_transform"
+    name = "exp transform"
     category = "Transform"
     description = """Apply exponential transformation to the signal. 
     

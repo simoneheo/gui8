@@ -5,7 +5,7 @@ from channel import Channel
 
 @register_step
 class wavelet_filter_band_step(BaseStep):
-    name = "wavelet_filter_band"
+    name = "wavelet filter band"
     category = "Filter"
     description = """Filter signal to specific frequency band using wavelet decomposition.
 Extracts frequency components within specified band."""

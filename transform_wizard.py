@@ -2,7 +2,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTextEdit, QLineEdit, QGroupBox, QGridLayout, QMessageBox,
     QSplitter, QScrollArea, QFrame, QTabWidget, QWidget,
-    QCheckBox, QSpinBox, QComboBox
+    QCheckBox, QSpinBox, QComboBox, QTableWidget, QTableWidgetItem, QHeaderView
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QTextCharFormat, QColor, QSyntaxHighlighter
@@ -84,6 +84,9 @@ class TransformWizard(QDialog):
     
     # Safe math namespace for expression evaluation
     MATH_NAMESPACE = {
+        # Numpy alias
+        'np': np,
+        
         # Basic functions
         'abs': np.abs,
         'round': np.round,
@@ -151,6 +154,10 @@ class TransformWizard(QDialog):
     def __init__(self, channel: Channel, parent=None):
         super().__init__(parent)
         self.channel = channel
+        # Store the truly original data (never changes)
+        self.truly_original_xdata = channel.xdata.copy() if channel.xdata is not None else None
+        self.truly_original_ydata = channel.ydata.copy() if channel.ydata is not None else None
+        # Store current "original" data (changes as transforms are applied)
         self.original_xdata = channel.xdata.copy() if channel.xdata is not None else None
         self.original_ydata = channel.ydata.copy() if channel.ydata is not None else None
         self.preview_xdata = None
@@ -163,7 +170,7 @@ class TransformWizard(QDialog):
         self.resize(1100, 800)
         
         self.init_ui()
-        self.update_data_summary()
+        self.update_data_table()  # Initialize the data table
         self.connect_signals()
     
     def init_ui(self):
@@ -171,7 +178,7 @@ class TransformWizard(QDialog):
         layout = QVBoxLayout(self)
         
         # Title
-        title = QLabel(f"🔨 Data Transform Wizard")
+        title = QLabel(f"Data Transform Wizard")
         title_font = QFont()
         title_font.setPointSize(14)
         title_font.setBold(True)
@@ -192,15 +199,11 @@ class TransformWizard(QDialog):
         
         # Tab 1: Transform
         self.transform_tab = self.create_transform_tab()
-        self.tab_widget.addTab(self.transform_tab, "🔨 Transform")
+        self.tab_widget.addTab(self.transform_tab, "Transform")
         
-        # Tab 2: Functions Reference
-        self.reference_tab = self.create_reference_tab()
-        self.tab_widget.addTab(self.reference_tab, "📚 Functions")
-        
-        # Tab 3: Examples
+        # Tab 2: Examples
         self.examples_tab = self.create_examples_tab()
-        self.tab_widget.addTab(self.examples_tab, "💡 Examples")
+        self.tab_widget.addTab(self.examples_tab, "Examples")
         
         layout.addWidget(self.tab_widget)
         
@@ -208,22 +211,23 @@ class TransformWizard(QDialog):
         button_layout = QHBoxLayout()
         
         # Left side buttons
-        self.reset_button = QPushButton("🔄 Reset")
+        self.reset_button = QPushButton("Reset")
         self.reset_button.setToolTip("Reset to original data")
         button_layout.addWidget(self.reset_button)
         
-        self.preview_button = QPushButton("👁️ Preview")
+        self.preview_button = QPushButton("Preview")
         self.preview_button.setToolTip("Preview transformations without applying")
         button_layout.addWidget(self.preview_button)
         
         button_layout.addStretch()
         
         # Right side buttons
-        self.apply_button = QPushButton("✅ Apply Transform")
+        self.apply_button = QPushButton("Apply Transform")
         self.apply_button.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
+        self.apply_button.setEnabled(False)  # Initially disabled until preview is successful
         button_layout.addWidget(self.apply_button)
         
-        self.cancel_button = QPushButton("❌ Cancel")
+        self.cancel_button = QPushButton("Cancel")
         button_layout.addWidget(self.cancel_button)
         
         layout.addLayout(button_layout)
@@ -255,39 +259,9 @@ class TransformWizard(QDialog):
         widget = QWidget()
         layout = QVBoxLayout(widget)
         
-        # Data summary group
-        summary_group = QGroupBox("Current Data Summary")
-        summary_layout = QGridLayout(summary_group)
-        
-        self.summary_labels = {}
-        summary_info = [
-            ("Data Points", "points"),
-            ("X Range", "x_range"),
-            ("Y Range", "y_range"),
-            ("X Mean", "x_mean"),
-            ("Y Mean", "y_mean")
-        ]
-        
-        for i, (label_text, key) in enumerate(summary_info):
-            label = QLabel(f"{label_text}:")
-            label.setStyleSheet("font-weight: bold;")
-            value_label = QLabel("Computing...")
-            value_label.setStyleSheet("color: #666;")
-            
-            summary_layout.addWidget(label, i, 0)
-            summary_layout.addWidget(value_label, i, 1)
-            self.summary_labels[key] = value_label
-        
-        layout.addWidget(summary_group)
-        
-        # Transformation group
-        transform_group = QGroupBox("Mathematical Transformations")
-        transform_layout = QVBoxLayout(transform_group)
-        
-        # X transformation
-        x_label = QLabel("X Transformation:")
-        x_label.setStyleSheet("font-weight: bold; color: #2980b9;")
-        transform_layout.addWidget(x_label)
+        # X Transformations section
+        x_group = QGroupBox("X Transformations")
+        x_layout = QVBoxLayout(x_group)
         
         self.x_transform_input = QTextEdit()
         self.x_transform_input.setPlaceholderText("e.g., x = x / 1000  (leave empty for no change)")
@@ -297,12 +271,103 @@ class TransformWizard(QDialog):
         # Add syntax highlighter
         self.x_highlighter = ExpressionHighlighter(self.x_transform_input.document())
         
-        transform_layout.addWidget(self.x_transform_input)
+        x_layout.addWidget(self.x_transform_input)
         
-        # Y transformation
-        y_label = QLabel("Y Transformation:")
-        y_label.setStyleSheet("font-weight: bold; color: #e74c3c;")
-        transform_layout.addWidget(y_label)
+        # Quick X buttons - Row 1
+        quick_x_layout1 = QHBoxLayout()
+        
+        quick_x_label = QLabel("Quick X:")
+        quick_x_label.setStyleSheet("font-size: 10px; color: #666;")
+        quick_x_layout1.addWidget(quick_x_label)
+        
+        x_buttons1 = [
+            ("÷1000", "x = x / 1000"),
+            ("×1000", "x = x * 1000"),
+            ("÷100", "x = x / 100"),
+            ("×100", "x = x * 100"),
+            ("÷10", "x = x / 10"),
+            ("×10", "x = x * 10")
+        ]
+        
+        for text, transform in x_buttons1:
+            btn = QPushButton(text)
+            btn.setMaximumWidth(50)
+            btn.setStyleSheet("font-size: 9px; padding: 2px;")
+            btn.clicked.connect(lambda checked=False, t=transform: self.x_transform_input.setPlainText(t))
+            quick_x_layout1.addWidget(btn)
+        
+        x_layout.addLayout(quick_x_layout1)
+        
+        # Quick X buttons - Row 2
+        quick_x_layout2 = QHBoxLayout()
+        quick_x_layout2.addWidget(QLabel(""))  # Spacer
+        
+        x_buttons2 = [
+            ("Log", "x = log(x)"),
+            ("Log10", "x = log10(x)"),
+            ("Log2", "x = log2(x)"),
+            ("Exp", "x = exp(x)"),
+            ("Sqrt", "x = sqrt(x)"),
+            ("Square", "x = x ** 2")
+        ]
+        
+        for text, transform in x_buttons2:
+            btn = QPushButton(text)
+            btn.setMaximumWidth(50)
+            btn.setStyleSheet("font-size: 9px; padding: 2px;")
+            btn.clicked.connect(lambda checked=False, t=transform: self.x_transform_input.setPlainText(t))
+            quick_x_layout2.addWidget(btn)
+        
+        x_layout.addLayout(quick_x_layout2)
+        
+        # Quick X buttons - Row 3
+        quick_x_layout3 = QHBoxLayout()
+        quick_x_layout3.addWidget(QLabel(""))  # Spacer
+        
+        x_buttons3 = [
+            ("Abs", "x = abs(x)"),
+            ("Floor", "x = floor(x)"),
+            ("Ceil", "x = ceil(x)"),
+            ("Sign", "x = sign(x)"),
+            ("Round", "x = round(x)"),
+            ("Power", "x = power(x, 2)")
+        ]
+        
+        for text, transform in x_buttons3:
+            btn = QPushButton(text)
+            btn.setMaximumWidth(50)
+            btn.setStyleSheet("font-size: 9px; padding: 2px;")
+            btn.clicked.connect(lambda checked=False, t=transform: self.x_transform_input.setPlainText(t))
+            quick_x_layout3.addWidget(btn)
+        
+        x_layout.addLayout(quick_x_layout3)
+        
+        # Quick X buttons - Row 4
+        quick_x_layout4 = QHBoxLayout()
+        quick_x_layout4.addWidget(QLabel(""))  # Spacer
+        
+        x_buttons4 = [
+            ("Sin", "x = sin(x)"),
+            ("Cos", "x = cos(x)"),
+            ("Tan", "x = tan(x)"),
+            ("Arcsin", "x = arcsin(x)"),
+            ("Arccos", "x = arccos(x)"),
+            ("Arctan", "x = arctan(x)")
+        ]
+        
+        for text, transform in x_buttons4:
+            btn = QPushButton(text)
+            btn.setMaximumWidth(50)
+            btn.setStyleSheet("font-size: 9px; padding: 2px;")
+            btn.clicked.connect(lambda checked=False, t=transform: self.x_transform_input.setPlainText(t))
+            quick_x_layout4.addWidget(btn)
+        
+        x_layout.addLayout(quick_x_layout4)
+        layout.addWidget(x_group)
+        
+        # Y Transformations section
+        y_group = QGroupBox("Y Transformations")
+        y_layout = QVBoxLayout(y_group)
         
         self.y_transform_input = QTextEdit()
         self.y_transform_input.setPlaceholderText("e.g., y = abs(y)  (leave empty for no change)")
@@ -312,102 +377,109 @@ class TransformWizard(QDialog):
         # Add syntax highlighter
         self.y_highlighter = ExpressionHighlighter(self.y_transform_input.document())
         
-        transform_layout.addWidget(self.y_transform_input)
+        y_layout.addWidget(self.y_transform_input)
         
-        # Quick transform buttons
-        quick_layout = QHBoxLayout()
-        
-        quick_x_label = QLabel("Quick X:")
-        quick_x_label.setStyleSheet("font-size: 10px; color: #666;")
-        quick_layout.addWidget(quick_x_label)
-        
-        x_buttons = [
-            ("÷1000", "x = x / 1000"),
-            ("×1000", "x = x * 1000"),
-            ("+Offset", "x = x + "),
-            ("Log", "x = log(x)")
-        ]
-        
-        for text, transform in x_buttons:
-            btn = QPushButton(text)
-            btn.setMaximumWidth(60)
-            btn.setStyleSheet("font-size: 10px; padding: 2px;")
-            btn.clicked.connect(lambda checked=False, t=transform: self.x_transform_input.setPlainText(t))
-            quick_layout.addWidget(btn)
-        
-        transform_layout.addLayout(quick_layout)
-        
-        quick_layout2 = QHBoxLayout()
+        # Quick Y buttons - Row 1
+        quick_y_layout1 = QHBoxLayout()
         
         quick_y_label = QLabel("Quick Y:")
         quick_y_label.setStyleSheet("font-size: 10px; color: #666;")
-        quick_layout2.addWidget(quick_y_label)
+        quick_y_layout1.addWidget(quick_y_label)
         
-        y_buttons = [
+        y_buttons1 = [
             ("Abs", "y = abs(y)"),
             ("1/Y", "y = 1 / y"),
             ("Y²", "y = y ** 2"),
-            ("√Y", "y = sqrt(abs(y))")
+            ("√Y", "y = sqrt(abs(y))"),
+            ("Log", "y = log(abs(y) + 1)"),
+            ("Log10", "y = log10(abs(y) + 1)")
         ]
         
-        for text, transform in y_buttons:
+        for text, transform in y_buttons1:
             btn = QPushButton(text)
-            btn.setMaximumWidth(60)
-            btn.setStyleSheet("font-size: 10px; padding: 2px;")
+            btn.setMaximumWidth(50)
+            btn.setStyleSheet("font-size: 9px; padding: 2px;")
             btn.clicked.connect(lambda checked=False, t=transform: self.y_transform_input.setPlainText(t))
-            quick_layout2.addWidget(btn)
+            quick_y_layout1.addWidget(btn)
         
-        transform_layout.addLayout(quick_layout2)
+        y_layout.addLayout(quick_y_layout1)
         
-        layout.addWidget(transform_group)
+        # Quick Y buttons - Row 2
+        quick_y_layout2 = QHBoxLayout()
+        quick_y_layout2.addWidget(QLabel(""))  # Spacer
         
-        # Options group
-        options_group = QGroupBox("Transform Options")
-        options_layout = QVBoxLayout(options_group)
+        y_buttons2 = [
+            ("Exp", "y = exp(y)"),
+            ("Log2", "y = log2(abs(y) + 1)"),
+            ("Sqrt", "y = sqrt(abs(y))"),
+            ("Square", "y = y ** 2"),
+            ("Floor", "y = floor(y)"),
+            ("Ceil", "y = ceil(y)")
+        ]
         
-        self.safe_mode_checkbox = QCheckBox("Safe mode (handle NaN/Inf values)")
-        self.safe_mode_checkbox.setChecked(True)
-        self.safe_mode_checkbox.setToolTip("Automatically handle NaN and infinite values")
-        options_layout.addWidget(self.safe_mode_checkbox)
+        for text, transform in y_buttons2:
+            btn = QPushButton(text)
+            btn.setMaximumWidth(50)
+            btn.setStyleSheet("font-size: 9px; padding: 2px;")
+            btn.clicked.connect(lambda checked=False, t=transform: self.y_transform_input.setPlainText(t))
+            quick_y_layout2.addWidget(btn)
         
-        self.preserve_shape_checkbox = QCheckBox("Preserve data shape")
-        self.preserve_shape_checkbox.setChecked(True)
-        self.preserve_shape_checkbox.setToolTip("Ensure output has same number of points as input")
-        options_layout.addWidget(self.preserve_shape_checkbox)
+        y_layout.addLayout(quick_y_layout2)
         
-        layout.addWidget(options_group)
+        # Quick Y buttons - Row 3
+        quick_y_layout3 = QHBoxLayout()
+        quick_y_layout3.addWidget(QLabel(""))  # Spacer
         
-        return widget
-    
-    def create_preview_panel(self) -> QWidget:
-        """Create the preview and results panel"""
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
+        y_buttons3 = [
+            ("Sin", "y = sin(y)"),
+            ("Cos", "y = cos(y)"),
+            ("Tan", "y = tan(y)"),
+            ("Arcsin", "y = arcsin(y)"),
+            ("Arccos", "y = arccos(y)"),
+            ("Arctan", "y = arctan(y)")
+        ]
         
-        # Preview group
-        preview_group = QGroupBox("Transformation Preview")
-        preview_layout = QVBoxLayout(preview_group)
+        for text, transform in y_buttons3:
+            btn = QPushButton(text)
+            btn.setMaximumWidth(50)
+            btn.setStyleSheet("font-size: 9px; padding: 2px;")
+            btn.clicked.connect(lambda checked=False, t=transform: self.y_transform_input.setPlainText(t))
+            quick_y_layout3.addWidget(btn)
         
-        self.preview_text = QTextEdit()
-        self.preview_text.setMaximumHeight(150)
-        self.preview_text.setReadOnly(True)
-        self.preview_text.setStyleSheet("font-family: 'Courier New', monospace; font-size: 10px;")
-        preview_layout.addWidget(self.preview_text)
+        y_layout.addLayout(quick_y_layout3)
         
-        layout.addWidget(preview_group)
+        # Quick Y buttons - Row 4
+        quick_y_layout4 = QHBoxLayout()
+        quick_y_layout4.addWidget(QLabel(""))  # Spacer
         
-        # Results group
-        results_group = QGroupBox("Transform Results")
+        y_buttons4 = [
+            ("Sinh", "y = sinh(y)"),
+            ("Cosh", "y = cosh(y)"),
+            ("Tanh", "y = tanh(y)"),
+            ("Sign", "y = sign(y)"),
+            ("Round", "y = round(y)"),
+            ("Power", "y = power(y, 2)")
+        ]
+        
+        for text, transform in y_buttons4:
+            btn = QPushButton(text)
+            btn.setMaximumWidth(50)
+            btn.setStyleSheet("font-size: 9px; padding: 2px;")
+            btn.clicked.connect(lambda checked=False, t=transform: self.y_transform_input.setPlainText(t))
+            quick_y_layout4.addWidget(btn)
+        
+        y_layout.addLayout(quick_y_layout4)
+        layout.addWidget(y_group)
+        
+        # Transformation results section (moved from right panel)
+        results_group = QGroupBox("Transformation Results")
         results_layout = QGridLayout(results_group)
         
         self.result_labels = {}
         result_info = [
             ("Status", "status"),
             ("New X Range", "new_x_range"),
-            ("New Y Range", "new_y_range"),
-            ("X Change", "x_change"),
             ("Y Change", "y_change"),
-            ("Data Points", "new_points"),
             ("Warnings", "warnings")
         ]
         
@@ -426,71 +498,56 @@ class TransformWizard(QDialog):
         
         return widget
     
-    def create_reference_tab(self) -> QWidget:
-        """Create the functions reference tab"""
+    def create_preview_panel(self) -> QWidget:
+        """Create the preview and results panel"""
         widget = QWidget()
         layout = QVBoxLayout(widget)
         
-        scroll_area = QScrollArea()
-        scroll_widget = QWidget()
-        scroll_layout = QVBoxLayout(scroll_widget)
+        # Data table group
+        data_group = QGroupBox("Data Table")
+        data_layout = QVBoxLayout(data_group)
         
-        # Available functions
-        functions_data = [
-            ("Basic Math", [
-                ("abs(x)", "Absolute value"),
-                ("round(x)", "Round to nearest integer"),
-                ("min(x)", "Minimum value"),
-                ("max(x)", "Maximum value"),
-                ("sum(x)", "Sum of all values"),
-                ("mean(x)", "Average value"),
-                ("std(x)", "Standard deviation"),
-                ("median(x)", "Median value")
-            ]),
-            ("Advanced Math", [
-                ("sqrt(x)", "Square root"),
-                ("exp(x)", "Exponential (e^x)"),
-                ("log(x)", "Natural logarithm"),
-                ("log10(x)", "Base-10 logarithm"),
-                ("log2(x)", "Base-2 logarithm"),
-                ("power(x, n)", "x raised to power n"),
-                ("square(x)", "x squared")
-            ]),
-            ("Trigonometric", [
-                ("sin(x), cos(x), tan(x)", "Trigonometric functions"),
-                ("arcsin(x), arccos(x), arctan(x)", "Inverse trigonometric"),
-                ("sinh(x), cosh(x), tanh(x)", "Hyperbolic functions")
-            ]),
-            ("Rounding & Clipping", [
-                ("floor(x)", "Round down to integer"),
-                ("ceil(x)", "Round up to integer"),
-                ("sign(x)", "Sign of x (-1, 0, or 1)"),
-                ("clip(x, min, max)", "Clip values to range")
-            ]),
-            ("Constants", [
-                ("pi", "π ≈ 3.14159"),
-                ("e", "Euler's number ≈ 2.71828"),
-                ("inf", "Infinity"),
-                ("nan", "Not a Number")
-            ])
-        ]
+        # Add info label about previewing first 100 rows
+        info_label = QLabel("Previewing first 100 rows...")
+        info_label.setStyleSheet("color: #666; font-size: 10px; font-style: italic; margin-bottom: 5px;")
+        data_layout.addWidget(info_label)
         
-        for category, functions in functions_data:
-            group = QGroupBox(category)
-            group_layout = QVBoxLayout(group)
-            
-            for func_name, description in functions:
-                func_label = QLabel(f"<b>{func_name}</b> - {description}")
-                func_label.setStyleSheet("margin: 2px; padding: 2px;")
-                group_layout.addWidget(func_label)
-            
-            scroll_layout.addWidget(group)
+        # Create table widget for data display
+        self.data_table = QTableWidget()
+        self.data_table.setMinimumHeight(300)  # Increased height for better visibility
+        self.data_table.setStyleSheet("font-family: 'Courier New', monospace; font-size: 9px;")
         
-        scroll_area.setWidget(scroll_widget)
-        scroll_area.setWidgetResizable(True)
-        layout.addWidget(scroll_area)
+        # Set up table headers
+        self.data_table.setColumnCount(2)
+        self.data_table.setHorizontalHeaderLabels(["X", "Y"])
+        self.data_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        
+        # Enable scrolling
+        self.data_table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.data_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        
+        data_layout.addWidget(self.data_table)
+        layout.addWidget(data_group)
+        
+        # Transformation options group (moved from left panel)
+        options_group = QGroupBox("Transformation Options")
+        options_layout = QVBoxLayout(options_group)
+        
+        self.safe_mode_checkbox = QCheckBox("Safe mode (handle NaN/Inf values)")
+        self.safe_mode_checkbox.setChecked(True)
+        self.safe_mode_checkbox.setToolTip("Automatically handle NaN and infinite values")
+        options_layout.addWidget(self.safe_mode_checkbox)
+        
+        self.preserve_shape_checkbox = QCheckBox("Preserve data shape")
+        self.preserve_shape_checkbox.setChecked(True)
+        self.preserve_shape_checkbox.setToolTip("Ensure output has same number of points as input")
+        options_layout.addWidget(self.preserve_shape_checkbox)
+        
+        layout.addWidget(options_group)
         
         return widget
+    
+
     
     def create_examples_tab(self) -> QWidget:
         """Create the examples tab"""
@@ -573,38 +630,38 @@ class TransformWizard(QDialog):
         # Clear previous results
         self.result_labels["status"].setText("Expression changed - click Preview")
         self.result_labels["status"].setStyleSheet("color: #f39c12;")
+        
+        # Disable apply button until preview is successful
+        self.apply_button.setEnabled(False)
     
-    def update_data_summary(self):
-        """Update the data summary display"""
+
+    
+    def update_data_table(self, preview_x=None, preview_y=None):
+        """Update the data table with transformed data"""
         if self.original_xdata is None or self.original_ydata is None:
             return
         
-        self.summary_labels["points"].setText(f"{len(self.original_ydata):,}")
+        # Use transformed data if available, otherwise use original data
+        x_data = preview_x if preview_x is not None else self.original_xdata
+        y_data = preview_y if preview_y is not None else self.original_ydata
         
-        x_min, x_max = np.min(self.original_xdata), np.max(self.original_xdata)
-        y_min, y_max = np.min(self.original_ydata), np.max(self.original_ydata)
+        # Determine how many rows to show (first 100 rows)
+        num_rows = min(100, len(y_data))
+        self.data_table.setRowCount(num_rows)
         
-        self.summary_labels["x_range"].setText(f"{x_min:.6g} to {x_max:.6g}")
-        self.summary_labels["y_range"].setText(f"{y_min:.6g} to {y_max:.6g}")
-        self.summary_labels["x_mean"].setText(f"{np.mean(self.original_xdata):.6g}")
-        self.summary_labels["y_mean"].setText(f"{np.mean(self.original_ydata):.6g}")
+        for i in range(num_rows):
+            # X data
+            x_item = QTableWidgetItem(f"{x_data[i]:.6g}")
+            self.data_table.setItem(i, 0, x_item)
+            
+            # Y data
+            y_item = QTableWidgetItem(f"{y_data[i]:.6g}")
+            self.data_table.setItem(i, 1, y_item)
     
     def update_applied_preview(self):
-        """Update the preview to show that a transform was successfully applied"""
-        preview_lines = [
-            "✅ TRANSFORM APPLIED SUCCESSFULLY",
-            "",
-            f"Channel: {self.channel.ylabel or 'Unnamed'}",
-            f"Data points: {len(self.channel.ydata):,}",
-            "",
-            f"Current X range: {np.min(self.channel.xdata):.6g} to {np.max(self.channel.xdata):.6g}",
-            f"Current Y range: {np.min(self.channel.ydata):.6g} to {np.max(self.channel.ydata):.6g}",
-            "",
-            "Ready for next transformation...",
-            "The main plot has been updated with the new data."
-        ]
-        
-        self.preview_text.setPlainText("\n".join(preview_lines))
+        """Update the data table to show that a transform was successfully applied"""
+        # Update table with current channel data
+        self.update_data_table(self.channel.xdata, self.channel.ydata)
     
     def preview_transform(self):
         """Preview the transformation without applying it"""
@@ -612,7 +669,9 @@ class TransformWizard(QDialog):
             x_expr = self.x_transform_input.toPlainText().strip()
             y_expr = self.y_transform_input.toPlainText().strip()
             
-            # Start with original data
+            print(f"Preview transform called - X expr: '{x_expr}', Y expr: '{y_expr}'")
+            
+            # Start with current original data (may have been modified by previous transforms)
             x = self.original_xdata.copy()
             y = self.original_ydata.copy()
             
@@ -622,7 +681,7 @@ class TransformWizard(QDialog):
             if x_expr:
                 x = self._safe_eval_transform(x_expr, x, y, 'x')
                 if x is None:
-                    self.result_labels["status"].setText("❌ X transformation failed")
+                    self.result_labels["status"].setText("X transformation failed")
                     self.result_labels["status"].setStyleSheet("color: #e74c3c;")
                     return
             
@@ -630,7 +689,7 @@ class TransformWizard(QDialog):
             if y_expr:
                 y = self._safe_eval_transform(y_expr, x, y, 'y')
                 if y is None:
-                    self.result_labels["status"].setText("❌ Y transformation failed")
+                    self.result_labels["status"].setText("Y transformation failed")
                     self.result_labels["status"].setStyleSheet("color: #e74c3c;")
                     return
             
@@ -651,48 +710,34 @@ class TransformWizard(QDialog):
             self.preview_ydata = y
             
             # Update results
-            self.result_labels["status"].setText("✅ Preview successful")
+            self.result_labels["status"].setText("Preview successful")
             self.result_labels["status"].setStyleSheet("color: #27ae60;")
             
             if len(x) > 0 and len(y) > 0:
                 self.result_labels["new_x_range"].setText(f"{np.min(x):.6g} to {np.max(x):.6g}")
-                self.result_labels["new_y_range"].setText(f"{np.min(y):.6g} to {np.max(y):.6g}")
                 
-                # Calculate changes
-                orig_x_range = np.max(self.original_xdata) - np.min(self.original_xdata)
-                new_x_range = np.max(x) - np.min(x)
+                # Calculate Y change
                 orig_y_range = np.max(self.original_ydata) - np.min(self.original_ydata)
                 new_y_range = np.max(y) - np.min(y)
-                
-                x_change = ((new_x_range / orig_x_range) - 1) * 100 if orig_x_range != 0 else 0
                 y_change = ((new_y_range / orig_y_range) - 1) * 100 if orig_y_range != 0 else 0
                 
-                self.result_labels["x_change"].setText(f"{x_change:+.1f}% range change")
                 self.result_labels["y_change"].setText(f"{y_change:+.1f}% range change")
             
-            self.result_labels["new_points"].setText(f"{len(y):,}")
             self.result_labels["warnings"].setText("; ".join(warnings) if warnings else "None")
             
-            # Update preview text
-            preview_lines = []
-            if x_expr:
-                preview_lines.append(f"X Transform: {x_expr}")
-            if y_expr:
-                preview_lines.append(f"Y Transform: {y_expr}")
-            
-            preview_lines.append(f"\nFirst 5 original X values: {self.original_xdata[:5]}")
-            preview_lines.append(f"First 5 transformed X values: {x[:5]}")
-            preview_lines.append(f"\nFirst 5 original Y values: {self.original_ydata[:5]}")
-            preview_lines.append(f"First 5 transformed Y values: {y[:5]}")
-            
-            self.preview_text.setPlainText("\n".join(preview_lines))
+            # Update data table
+            self.update_data_table(x, y)
             
             self.has_unsaved_changes = True
             
+            # Enable apply button after successful preview
+            self.apply_button.setEnabled(True)
+            
         except Exception as e:
-            self.result_labels["status"].setText(f"❌ Error: {str(e)}")
+            self.result_labels["status"].setText(f"Error: {str(e)}")
             self.result_labels["status"].setStyleSheet("color: #e74c3c;")
-            self.preview_text.setPlainText(f"Error during preview:\n{traceback.format_exc()}")
+            # Clear the data table on error
+            self.data_table.setRowCount(0)
     
     def _safe_eval_transform(self, expression: str, x: np.ndarray, y: np.ndarray, target_var: str) -> Optional[np.ndarray]:
         """Safely evaluate a transformation expression"""
@@ -731,15 +776,19 @@ class TransformWizard(QDialog):
             return result
             
         except Exception as e:
-            QMessageBox.critical(self, "Transform Error", f"Error in {target_var} expression:\n{str(e)}")
+            print(f"Transform error in {target_var}: {str(e)}")
+            # Don't show message box here - let the calling method handle it
             return None
     
     def apply_transform(self):
         """Apply the transformation to the channel"""
+        print("Apply transform called")
         if self.preview_xdata is None or self.preview_ydata is None:
             # Need to preview first
+            print("No preview data, running preview first")
             self.preview_transform()
             if self.preview_xdata is None or self.preview_ydata is None:
+                print("Preview failed, returning")
                 return
         
         try:
@@ -753,10 +802,8 @@ class TransformWizard(QDialog):
             self.original_ydata = self.channel.ydata.copy()
             
             # Emit signal that data was updated (this will update the main window plot)
+            print(f"Emitting data_updated signal for channel: {self.channel.channel_id}")
             self.data_updated.emit(self.channel.channel_id)
-            
-            # Update the data summary with new values
-            self.update_data_summary()
             
             # Get the expressions before clearing them
             x_expr = self.x_transform_input.toPlainText().strip()
@@ -781,7 +828,7 @@ class TransformWizard(QDialog):
                 self.result_labels[key].setStyleSheet("color: #27ae60;")
             
             # Show success message without closing the dialog
-            self.result_labels["status"].setText("✅ Transform applied successfully!")
+            self.result_labels["status"].setText("Transform applied successfully!")
             self.result_labels["status"].setStyleSheet("color: #27ae60; font-weight: bold;")
             
             # Update window title to remove asterisk
@@ -798,20 +845,47 @@ class TransformWizard(QDialog):
     
     def reset_transform(self):
         """Reset to original data"""
-        self.x_transform_input.clear()
-        self.y_transform_input.clear()
-        self.preview_xdata = None
-        self.preview_ydata = None
-        self.has_unsaved_changes = False
-        
-        # Clear results
-        for key in self.result_labels:
-            self.result_labels[key].setText("Not previewed")
-            self.result_labels[key].setStyleSheet("color: #666;")
-        
-        self.preview_text.clear()
-        
-        QMessageBox.information(self, "Reset", "Transform expressions cleared.")
+        try:
+            # Restore truly original data (from when wizard first opened)
+            if self.truly_original_xdata is not None and self.truly_original_ydata is not None:
+                self.channel.xdata = self.truly_original_xdata.copy()
+                self.channel.ydata = self.truly_original_ydata.copy()
+                self.channel.modified_at = datetime.now()
+                
+                # Also reset the current "original" data to truly original
+                self.original_xdata = self.truly_original_xdata.copy()
+                self.original_ydata = self.truly_original_ydata.copy()
+                
+                # Emit signal that data was updated (this will update the main window plot)
+                print(f"Emitting data_updated signal for channel: {self.channel.channel_id} (reset)")
+                self.data_updated.emit(self.channel.channel_id)
+            
+            # Clear transform inputs
+            self.x_transform_input.clear()
+            self.y_transform_input.clear()
+            self.preview_xdata = None
+            self.preview_ydata = None
+            self.has_unsaved_changes = False
+            
+            # Clear results
+            for key in self.result_labels:
+                self.result_labels[key].setText("Reset to original data")
+                self.result_labels[key].setStyleSheet("color: #27ae60;")
+            
+            # Update data table
+            self.update_data_table()
+            
+            # Disable apply button since no transform is pending
+            self.apply_button.setEnabled(False)
+            
+            QMessageBox.information(self, "Reset", "Channel data restored to original values.")
+            
+        except Exception as e:
+            QMessageBox.critical(
+                self, 
+                "Error Resetting Data", 
+                f"An error occurred while resetting the data:\n{str(e)}"
+            )
     
     def closeEvent(self, event):
         """Handle close event"""

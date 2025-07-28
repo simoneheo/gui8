@@ -9,12 +9,10 @@ from channel import Channel
 
 @register_step
 class stft_spectrogram(BaseStep):
-    name = "stft_spectrogram"
+    name = "stft spectrogram"
     category = "Spectrogram"
-    description = """Compute a spectrogram using Short-Time Fourier Transform (STFT) and output both:
-1. A 2D spectrogram channel for visualizing frequency over time.
-2. A 1D time-series channel summarizing the spectrogram using a reduction method.
-
+    description = """Compute a spectrogram using Short-Time Fourier Transform (STFT).
+    
 Reduction methods:
 • **max_intensity**: Maximum power in each time slice
 • **sum_intensity**: Total power in each time slice  

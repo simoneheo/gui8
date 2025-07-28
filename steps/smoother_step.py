@@ -5,7 +5,7 @@ from channel import Channel
 
 @register_step
 class smoother_step(BaseStep):
-    name = "smoother_step"
+    name = "smoother step"
     category = "Filter"
     description = """Apply various smoothing methods to the signal.
 Supports multiple smoothing algorithms with configurable parameters."""

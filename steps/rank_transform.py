@@ -5,7 +5,7 @@ from channel import Channel
 
 @register_step
 class rank_transform_step(BaseStep):
-    name = "rank_transform"
+    name = "rank transform"
     category = "Transform"
     description = """Transform signal values to their ranks.
 Converts values to their position in the sorted array."""

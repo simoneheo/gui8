@@ -5,9 +5,10 @@ from channel import Channel
 
 @register_step
 class multiply_constant_step(BaseStep):
-    name = "multiply_constant"
+    name = "multiply constant"
     category = "Transform"
-    description = """Multiply the signal by a constant value."""
+    description = """Multiply the signal by a constant value.
+Useful for scaling signals or applying gain/attenuation."""
     tags = ["time-series", "multiply", "constant", "transform"]
     params = [
         {"name": "constant", "type": "float", "default": "2.0", "help": "Constant value to multiply"}

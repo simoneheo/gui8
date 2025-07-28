@@ -5,7 +5,7 @@ from channel import Channel
 
 @register_step
 class threshold_binary_step(BaseStep):
-    name = "threshold_binary"
+    name = "threshold binary"
     category = "Transform"
     description = """Convert signal to binary (0/1) based on threshold comparison.
 Values above threshold become 1, values below become 0."""

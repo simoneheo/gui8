@@ -6,7 +6,7 @@ from scipy.signal import find_peaks
 
 @register_step
 class detect_peaks_step(BaseStep):
-    name = "detect_peaks"
+    name = "detect peaks"
     category = "Features"
     description = """Detects peaks in the signal using height, distance, and prominence criteria.
 Automatically adjusts parameters if not specified to ensure robust peak detection."""

@@ -5,7 +5,7 @@ from channel import Channel
 
 @register_step
 class impute_missing_step(BaseStep):
-    name = "impute_missing"
+    name = "impute missing"
     category = "Transform"
     description = """Fill missing values (NaN) in the signal using various interpolation methods.
 Useful for handling gaps and missing data points."""

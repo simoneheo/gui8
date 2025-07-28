@@ -5,9 +5,10 @@ from channel import Channel
 
 @register_step
 class abs_val_step(BaseStep):
-    name = "abs_val"
+    name = "absolute value"
     category = "Transform"
-    description = """Take the absolute value of the signal."""
+    description = """Compute the absolute value of the signal.
+Converts all negative values to positive while preserving magnitudes."""
     tags = ["time-series", "absolute", "abs", "transform"]
     params = []
 

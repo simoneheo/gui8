@@ -6,7 +6,7 @@ from channel import Channel
 
 @register_step
 class volatility_estimation_step(BaseStep):
-    name = "volatility_estimation"
+    name = "volatility estimation"
     category = "Features"
     description = """Estimate signal volatility using various methods.
 Measures the variability and uncertainty in the signal over time."""

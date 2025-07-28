@@ -767,6 +767,10 @@ def _generate_param_default(param_name, param_type, param_default, fs, total_sam
     elif param_name == "eps":
         return _get_eps_default(channel)
     
+    # Box-Cox specific parameters
+    elif param_name == "shift" and step_name == "boxcox_transform":
+        return _get_boxcox_shift_default(channel)
+    
     # Percentile parameters
     elif param_name in ["lower_percentile", "lower"]:
         return "5.0"
@@ -951,6 +955,27 @@ def _get_eps_default(channel):
         pass
     return "0.5"
 
+def _get_boxcox_shift_default(channel):
+    """Generate intelligent shift for Box-Cox transform."""
+    try:
+        if hasattr(channel, 'ydata') and channel.ydata is not None:
+            y_data = np.array(channel.ydata)
+            if len(y_data) > 0 and np.any(np.isfinite(y_data)):
+                finite_data = y_data[np.isfinite(y_data)]
+                if len(finite_data) > 0:
+                    min_val = np.min(finite_data)
+                    if min_val <= 0:
+                        # Calculate shift to make all values positive
+                        # Add small epsilon for numerical stability
+                        shift = abs(min_val) + 1e-6
+                        return str(round(shift, 6))
+                    else:
+                        # If all values are already positive, use small shift for safety
+                        return str(1e-6)
+    except:
+        pass
+    return "0.0"
+
 def _get_legacy_step_defaults(step_name, fs, total_samples, channel):
     """Fallback to old step-specific default functions."""
     # Step-specific intelligent defaults (legacy support)
@@ -1024,6 +1049,8 @@ def _get_legacy_step_defaults(step_name, fs, total_samples, channel):
         return _get_moving_skewness_defaults(fs, total_samples)
     elif step_name == "moving_kurtosis":
         return _get_moving_kurtosis_defaults(fs, total_samples)
+    elif step_name == "boxcox_transform":
+        return _get_boxcox_transform_defaults(fs, total_samples, channel)
     # Add more legacy steps as needed
     else:
         return {}  # Return empty dict for unknown steps
@@ -1147,10 +1174,32 @@ def _get_bandpass_fir_defaults(fs, total_samples, channel):
 def _get_boxcox_transform_defaults(fs, total_samples, channel):
     """Calculate intelligent defaults for boxcox_transform step."""
     try:
-        # Default lambda for Box-Cox transform
-        return {"lmbda": "0.5"}
+        # Calculate intelligent shift based on signal minimum value
+        shift = 0.0
+        if channel and hasattr(channel, 'ydata') and channel.ydata is not None:
+            y_data = np.array(channel.ydata)
+            if len(y_data) > 0 and np.any(np.isfinite(y_data)):
+                finite_data = y_data[np.isfinite(y_data)]
+                if len(finite_data) > 0:
+                    min_val = np.min(finite_data)
+                    if min_val <= 0:
+                        # Calculate shift to make all values positive
+                        # Add small epsilon for numerical stability
+                        shift = abs(min_val) + 1e-6
+                    else:
+                        # If all values are already positive, use small shift for safety
+                        shift = 1e-6
+        
+        return {
+            "lambda": "0.5",
+            "shift": str(round(shift, 6))
+        }
     except Exception as e:
-        return {"lmbda": "0.5"}
+        # Safe fallback
+        return {
+            "lambda": "0.5", 
+            "shift": "0.0"
+        }
 
 def _get_clip_values_defaults(fs, total_samples, channel):
     """Calculate intelligent defaults for clip_values step."""

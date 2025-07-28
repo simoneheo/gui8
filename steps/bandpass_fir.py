@@ -5,9 +5,10 @@ from channel import Channel
 
 @register_step
 class bandpass_fir_step(BaseStep):
-    name = "bandpass_fir"
+    name = "bandpass fir"
     category = "Filter"
-    description = "Apply bandpass FIR filter with linear phase response and precise frequency control to remove frequencies outside the specified range."
+    description = """Apply bandpass FIR filter with linear phase response and precise frequency control.
+Removes frequencies outside the specified range while maintaining linear phase characteristics."""
     tags = [ "filter", "bandpass", "scipy", "fir", "linear-phase", "frequency", "passband"]
     params = [
         {"name": "low_cutoff", "type": "float", "default": "0.5", "help": "Low cutoff frequency (Hz)"},

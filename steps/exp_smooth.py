@@ -5,7 +5,7 @@ from channel import Channel
 
 @register_step
 class exp_smooth_step(BaseStep):
-    name = "exp_smooth"
+    name = "exp smooth"
     category = "Filter"
     description = """Apply exponential smoothing to the signal.
 Uses a weighted average where recent samples have more influence."""

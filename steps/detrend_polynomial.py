@@ -5,7 +5,7 @@ from channel import Channel
 
 @register_step
 class detrend_polynomial_step(BaseStep):
-    name = "detrend_polynomial"
+    name = "detrend polynomial"
     category = "Transform"
     description = """Remove polynomial trend from signal by fitting and subtracting a polynomial.
 Useful for removing non-linear trends and drift."""

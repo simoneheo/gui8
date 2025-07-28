@@ -5,7 +5,7 @@ from channel import Channel
 
 @register_step
 class moving_absmax_step(BaseStep):
-    name = "moving_absmax"
+    name = "moving absmax"
     category = "Filter"
     description = """Compute moving maximum of absolute values over a sliding window.
 Useful for tracking peak amplitudes and signal envelope."""

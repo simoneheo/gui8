@@ -5,7 +5,7 @@ from channel import Channel
 
 @register_step
 class envelope_peaks_step(BaseStep):
-    name = "envelope_peaks"
+    name = "envelope peaks"
     category = "Features"
     description = """Extract the envelope of signal peaks to show the overall amplitude trend.
 Uses peak detection and interpolation to create a smooth envelope."""

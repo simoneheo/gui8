@@ -1226,7 +1226,7 @@ class ProcessWizardWindow(QMainWindow):
         if channel:
             # Open the comprehensive metadata wizard
             from metadata_wizard import MetadataWizard
-            wizard = MetadataWizard(channel, self)
+            wizard = MetadataWizard(channel, self, self.file_manager)
             wizard.exec()
 
 

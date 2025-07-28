@@ -5,7 +5,7 @@ from channel import Channel
 
 @register_step
 class cumulative_sum_step(BaseStep):
-    name = "cumulative_sum"
+    name = "cumulative sum"
     category = "Features"
     description = """Compute cumulative sum of the signal.
 Shows the running total up to each point in time."""

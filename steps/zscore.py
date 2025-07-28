@@ -7,7 +7,8 @@ from channel import Channel
 class zscore_step(BaseStep):
     name = "zscore"
     category = "Transform"
-    description = """Standardize signal to zero mean and unit variance."""
+    description = """Standardize signal to zero mean and unit variance.
+Transforms signal to have statistical properties of a standard normal distribution."""
     tags = ["standardize", "normalize", "zscore", "transform"]
     params = []
 

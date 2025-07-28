@@ -6,7 +6,7 @@ from channel import Channel
 
 @register_step
 class standard_scaler_step(BaseStep):
-    name = "standard_scaler"
+    name = "standard scaler"
     category = "ML"
     description = """Scale signal to zero mean and unit variance using StandardScaler from scikit-learn."""
     tags = ["time-series", "scaling", "normalization", "standardization", "z-score"]

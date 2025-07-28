@@ -5,7 +5,7 @@ from channel import Channel
 
 @register_step
 class log_transform_step(BaseStep):
-    name = "log_transform"
+    name = "log transform"
     category = "Transform"
     description = """Apply logarithmic transformation to the signal."""
     tags = ["time-series", "log", "transform", "nonlinear"]

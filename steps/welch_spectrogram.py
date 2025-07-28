@@ -7,24 +7,14 @@ from channel import Channel
 
 @register_step
 class welch_spectrogram(BaseStep):
-    name = "welch_spectrogram"
+    name = "welch spectrogram"
     category = "Spectrogram"
     description = """Compute a sliding Welch Power Spectral Density (PSD) over time windows.
     
-This step computes Welch PSD estimates for overlapping time windows and outputs both:
-1. A 2D spectrogram channel showing frequency content evolution over time.
-2. A 1D time-series channel based on reduction method.
-
 Reduction methods:
 • **max_intensity**: Maximum PSD in each time window
 • **sum_intensity**: Total PSD in each time window
-• **mean_intensity**: Average PSD across frequencies
-
-Useful for:
-• **Time-frequency analysis**: Track frequency content changes over time
-• **Power spectral analysis**: Estimate power distribution across frequencies
-• **Signal characterization**: Identify dominant frequency components
-• **Noise analysis**: Analyze frequency content of non-stationary signals"""
+• **mean_intensity**: Average PSD across frequencies"""
     tags = ["stft", "welch", "psd", "scipy", "frequency", "power", "window"]
     params = [
         {

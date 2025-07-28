@@ -1141,6 +1141,15 @@ class ParseWizardWindow(QMainWindow):
         
         # Check for numeric types
         if series.dtype.kind in 'biufc':  # bool, int, uint, float, complex
+            # NEW CHECK: Try to convert all values to float first
+            try:
+                # If all non-null values can be converted to float, it's numerical
+                test_series = pd.to_numeric(series.dropna(), errors='raise')
+                return 'numeric'  # All values are convertible to numbers
+            except (ValueError, TypeError):
+                # If conversion fails, then apply the categorical heuristics
+                pass
+            
             # Check if this might be categorical data (small number of unique values)
             unique_count = series.nunique()
             total_count = len(series.dropna())

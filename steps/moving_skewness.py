@@ -8,7 +8,7 @@ from channel import Channel
 
 @register_step
 class moving_skewness_step(BaseStep):
-    name = "moving_skewness"
+    name = "moving skewness"
     category = "Features"
     description = """Compute moving skewness over a sliding window.
 Measures the asymmetry of the signal distribution in each window."""

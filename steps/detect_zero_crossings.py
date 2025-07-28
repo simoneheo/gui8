@@ -5,7 +5,7 @@ from channel import Channel
 
 @register_step
 class detect_zero_crossings_step(BaseStep):
-    name = "detect_zero_crossings"
+    name = "detect zero crossings"
     category = "Features"
     description = """Detect zero crossings in the signal where values change sign.
 Returns interpolated X-values where the signal crosses zero (Y=0)."""

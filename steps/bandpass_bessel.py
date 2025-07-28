@@ -5,9 +5,10 @@ from channel import Channel
 
 @register_step
 class bandpass_bessel_step(BaseStep):
-    name = "bandpass_bessel"
+    name = "bandpass bessel"
     category = "Filter"
-    description = "Apply bandpass Bessel filter with linear phase response to remove frequencies outside the specified range while preserving waveform shape."
+    description = """Apply bandpass Bessel filter with linear phase response.
+Removes frequencies outside the specified range while preserving waveform shape and minimizing group delay distortion."""
     tags = ["filter", "bandpass", "scipy", "bessel", "linear-phase", "frequency", "passband"]
     params = [
         {"name": "low_cutoff", "type": "float", "default": "0.5", "help": "Low cutoff frequency (Hz)"},
