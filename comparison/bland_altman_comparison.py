@@ -75,7 +75,6 @@ class BlandAltmanComparison(BaseComparison):
                 metadata: Plot configuration dictionary
         """
         
-        # === CORE BLAND-ALTMAN TRANSFORMATION ===
         means = (ref_data + test_data) / 2
         differences = test_data - ref_data
         
@@ -88,7 +87,6 @@ class BlandAltmanComparison(BaseComparison):
             differences_pct[nonzero_mask] = (differences[nonzero_mask] / means[nonzero_mask]) * 100
             differences = differences_pct
         
-        # === OUTLIER REMOVAL AND ANALYSIS ===
         # Remove NaN values first
         valid_mask = np.isfinite(differences) & np.isfinite(means)
         if np.sum(valid_mask) < len(differences):

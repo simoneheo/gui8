@@ -62,11 +62,9 @@ class ResidualComparison(BaseComparison):
                 metadata: Plot configuration dictionary
         """
 
-        # ---------- initial sanitation -------------------------------------- #
         valid = np.isfinite(ref_data) & np.isfinite(test_data)
         ref, test = ref_data[valid], test_data[valid]
 
-        # ---------- optional transforms ------------------------------------- #
         if params.get("log_transform", False):
             if (ref <= 0).any() or (test <= 0).any():
                 raise ValueError("Log transform requested but data contain non‑positive values")
@@ -77,7 +75,6 @@ class ResidualComparison(BaseComparison):
                 raise ValueError("Sqrt transform requested but data contain negative values")
             ref, test = np.sqrt(ref), np.sqrt(test)
 
-        # ---------- regression + residuals ---------------------------------- #
         # Fit regression model (previously _fit_regression function)
         fit_method = params.get("fit_method", "linear")
 
@@ -103,13 +100,11 @@ class ResidualComparison(BaseComparison):
         model_info["r_squared"] = 1 - ss_res / ss_tot if ss_tot else 0.0
         model_info["residual_std"] = residuals.std(ddof=1) if residuals.size > 1 else 0.0
 
-        # ---------- standardize residuals if requested ------------------- #
         if params.get("standardize_residuals", False):
             # Standardize residuals (previously _standardise function)
             sigma = model_info.get("residual_std", 1.0)
             residuals = residuals / sigma if sigma else residuals
 
-        # ---------- outlier handling ---------------------------------------- #
         # Create outlier mask (previously _outlier_mask function)
         if params.get("remove_outliers", False):
             method = params.get("outlier_method", "iqr")
@@ -147,8 +142,7 @@ class ResidualComparison(BaseComparison):
             # No outlier removal
             mask = np.ones_like(residuals, dtype=bool)
             out_stats = None
-
-        # ---------- metadata ------------------------------------------------ #
+            
         meta = {
             "x_label": "Fitted Values",
             "y_label": "Standardised Residuals" if params.get("standardize_residuals", False) else "Residuals",

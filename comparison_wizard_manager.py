@@ -1526,6 +1526,34 @@ class RenderPlotOp:
                 mincnt=1  # Minimum count to display
             )
             
+            # Add colorbar for hexbin plots
+            try:
+                # Get the current figure
+                fig = self.current_axes.get_figure()
+                
+                # Remove any existing colorbars to prevent duplication
+                if hasattr(fig, '_colorbar_list'):
+                    for cb in fig._colorbar_list:
+                        try:
+                            cb.remove()
+                        except:
+                            pass
+                    fig._colorbar_list = []
+                else:
+                    fig._colorbar_list = []
+                
+                # Create new colorbar
+                cbar = plt.colorbar(artist, ax=self.current_axes)
+                cbar.set_label('Count', rotation=270, labelpad=15)
+                
+                # Store colorbar reference for cleanup
+                fig._colorbar_list.append(cbar)
+                
+                print(f"[RenderPlotOp] Added colorbar to hexbin plot for pair '{pair_name}'")
+                
+            except Exception as cbar_error:
+                print(f"[RenderPlotOp] Could not add colorbar to hexbin plot: {cbar_error}")
+            
             # Store artist reference for visibility toggling
             self.pair_artists[pair_id] = artist
             
@@ -1560,6 +1588,36 @@ class RenderPlotOp:
                     levels=10
                 )
                 
+                # Add colorbar for seaborn KDE plots
+                try:
+                    # Get the current figure
+                    fig = self.current_axes.get_figure()
+                    
+                    # Remove any existing colorbars to prevent duplication
+                    if hasattr(fig, '_colorbar_list'):
+                        for cb in fig._colorbar_list:
+                            try:
+                                cb.remove()
+                            except:
+                                pass
+                        fig._colorbar_list = []
+                    else:
+                        fig._colorbar_list = []
+                    
+                    # For seaborn KDE, we need to get the contour collection
+                    if hasattr(artist, 'collections') and artist.collections:
+                        contour_collection = artist.collections[0]
+                        cbar = plt.colorbar(contour_collection, ax=self.current_axes)
+                        cbar.set_label('Density', rotation=270, labelpad=15)
+                        
+                        # Store colorbar reference for cleanup
+                        fig._colorbar_list.append(cbar)
+                        
+                        print(f"[RenderPlotOp] Added colorbar to seaborn KDE plot for pair '{pair_name}'")
+                    
+                except Exception as cbar_error:
+                    print(f"[RenderPlotOp] Could not add colorbar to seaborn KDE plot: {cbar_error}")
+                
                 # Store artist reference for visibility toggling
                 self.pair_artists[pair_id] = artist
                 
@@ -1591,6 +1649,34 @@ class RenderPlotOp:
                 
                 # Create contour plot
                 artist = self.current_axes.contourf(X, Y, Z, levels=10, alpha=0.6, cmap='Blues')
+                
+                # Add colorbar for matplotlib KDE plots
+                try:
+                    # Get the current figure
+                    fig = self.current_axes.get_figure()
+                    
+                    # Remove any existing colorbars to prevent duplication
+                    if hasattr(fig, '_colorbar_list'):
+                        for cb in fig._colorbar_list:
+                            try:
+                                cb.remove()
+                            except:
+                                pass
+                        fig._colorbar_list = []
+                    else:
+                        fig._colorbar_list = []
+                    
+                    # Create new colorbar
+                    cbar = plt.colorbar(artist, ax=self.current_axes)
+                    cbar.set_label('Density', rotation=270, labelpad=15)
+                    
+                    # Store colorbar reference for cleanup
+                    fig._colorbar_list.append(cbar)
+                    
+                    print(f"[RenderPlotOp] Added colorbar to matplotlib KDE plot for pair '{pair_name}'")
+                    
+                except Exception as cbar_error:
+                    print(f"[RenderPlotOp] Could not add colorbar to matplotlib KDE plot: {cbar_error}")
                 
                 # Store artist reference for visibility toggling
                 self.pair_artists[pair_id] = artist
@@ -1939,6 +2025,23 @@ class ComparisonWizardManager(QMainWindow):
     def closeEvent(self, event):
         """Handle window close event"""
         try:
+            # Show warning dialog about data loss
+            from PySide6.QtWidgets import QMessageBox
+            
+            reply = QMessageBox.question(
+                self,
+                "Close Comparison Wizard",
+                "Any analysis performed in this wizard will be lost.\n\n"
+                "Are you sure you want to close?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            
+            if reply == QMessageBox.No:
+                # User cancelled, don't close
+                event.ignore()
+                return
+            
             # Mark as inactive
             self.is_active = False
             
@@ -2276,11 +2379,7 @@ class ComparisonWizardManager(QMainWindow):
                         'alignment_result': alignment_result,
                         'alignment_params': pair_data.get('alignment_params')
                     }
-                    
-                    # Update channels table (immediate UI update)
-                    if hasattr(self.comparison_wizard, 'info_output'):
-                        self.comparison_wizard.info_output.append(f"📋 Channels table updated")
-                    
+                                        
                     # Trigger debounced analysis
                     self._trigger_analysis_update()
                     
@@ -2783,7 +2882,7 @@ class ComparisonWizardManager(QMainWindow):
             cache_stats = analysis_results.get('cache_stats', {})
             
             if hasattr(self.comparison_wizard, 'info_output'):
-                self.comparison_wizard.info_output.append(f"Analysis complete. {n_pairs} pairs processed. Cache: {cache_stats.get('hits', 0)} hits, {cache_stats.get('misses', 0)} misses")
+                self.comparison_wizard.info_output.append(f"Analysis complete. {n_pairs} pairs processed.")
             
             print(f"[ComparisonWizardManager] Analysis complete: {n_pairs} pairs, cache stats: {cache_stats}")
             
@@ -3102,11 +3201,6 @@ class ComparisonWizardManager(QMainWindow):
                 paint_btn.clicked.connect(self._create_paint_handler(overlay))
                 actions_layout.addWidget(paint_btn)
                 
-                info_btn = QPushButton("ℹ️")
-                info_btn.setMaximumSize(24, 24)
-                info_btn.clicked.connect(self._create_info_handler(overlay))
-                actions_layout.addWidget(info_btn)
-                
                 overlay_table.setCellWidget(i, 3, actions_widget)
                 
                 print(f"[ComparisonWizardManager] Overlay {i}: {overlay.name} (ID: {overlay.id}, type: {overlay.type}) - Show: {overlay.show}")
@@ -3114,8 +3208,6 @@ class ComparisonWizardManager(QMainWindow):
             # Store the overlays for reference
             self._last_overlays = overlays
             
-            if hasattr(self.comparison_wizard, 'info_output'):
-                self.comparison_wizard.info_output.append(f"Overlay table updated with {len(overlays)} overlays")
                 
         except Exception as e:
             print(f"[ComparisonWizardManager] Error updating overlay table: {e}")

@@ -71,6 +71,7 @@ class PairMarkerWizard(QDialog):
     
     # Signals
     marker_updated = Signal(dict)  # marker properties when changes are applied
+    pair_name_changed = Signal(str)  # pair name when changed
     
     def __init__(self, pair_config: Dict[str, Any], parent=None):
         super().__init__(parent)
@@ -119,10 +120,13 @@ class PairMarkerWizard(QDialog):
         # Transparency
         self._create_transparency_controls(form_layout)
         
-        layout.addLayout(form_layout)
+        # Legend Label
+        self._create_legend_controls(form_layout)
         
-        # Display Options Group
-        self._create_display_options_group(layout)
+        # Bring to Front checkbox
+        self._create_zorder_controls(form_layout)
+        
+        layout.addLayout(form_layout)
         
         # Dialog buttons
         self._create_dialog_buttons(layout)
@@ -138,34 +142,26 @@ class PairMarkerWizard(QDialog):
         # Pair info
         ref_channel = self.pair_config.get('ref_channel', 'Unknown')
         test_channel = self.pair_config.get('test_channel', 'Unknown')
-        info_text = f"{ref_channel} vs {test_channel}"
-        info_label = QLabel(info_text)
-        info_label.setStyleSheet("color: #666; font-size: 10px; margin-bottom: 10px;")
-        layout.addWidget(info_label)
         
-        # Note
-        note_label = QLabel("Visual changes only. Data and analysis are not affected.")
-        note_label.setStyleSheet("color: #2c5aa0; font-size: 10px; font-style: italic; margin-bottom: 10px;")
-        layout.addWidget(note_label)
     
     def _create_marker_shape_controls(self, form_layout: QFormLayout):
         """Create marker shape selection controls"""
         self.marker_combo = QComboBox()
         marker_types = [
-            ('○ Circle', 'o'),
-            ('□ Square', 's'),
-            ('△ Triangle', '^'),
-            ('◇ Diamond', 'D'),
-            ('▽ Inverted Triangle', 'v'),
-            ('◁ Left Triangle', '<'),
-            ('▷ Right Triangle', '>'),
-            ('⬟ Pentagon', 'p'),
-            ('✦ Star', '*'),
-            ('⬢ Hexagon', 'h'),
-            ('+ Plus', '+'),
-            ('× Cross', 'x'),
-            ('| Vertical Line', '|'),
-            ('— Horizontal Line', '_')
+            ('○', 'o'),
+            ('□', 's'),
+            ('△', '^'),
+            ('◇', 'D'),
+            ('▽', 'v'),
+            ('◁', '<'),
+            ('▷', '>'),
+            ('⬟', 'p'),
+            ('✦', '*'),
+            ('⬢', 'h'),
+            ('+', '+'),
+            ('×', 'x'),
+            ('|', '|'),
+            ('—', '_')
         ]
         for name, value in marker_types:
             self.marker_combo.addItem(name, value)
@@ -233,22 +229,18 @@ class PairMarkerWizard(QDialog):
         alpha_layout.addWidget(self.alpha_slider)
         form_layout.addRow("Transparency:", alpha_layout)
     
-    def _create_display_options_group(self, layout: QVBoxLayout):
-        """Create display options group"""
-        display_group = QGroupBox("Display Options")
-        display_layout = QFormLayout(display_group)
-        
-        # Legend Label
+    def _create_legend_controls(self, form_layout: QFormLayout):
+        """Create pair name controls"""
         self.legend_label_edit = QLineEdit()
-        self.legend_label_edit.setPlaceholderText("Custom legend label (optional)")
-        display_layout.addRow("Legend Label:", self.legend_label_edit)
-        
-        # Bring to Front checkbox
+        self.legend_label_edit.setPlaceholderText("Custom pair name (optional)")
+        self.legend_label_edit.textChanged.connect(self._on_pair_name_changed)
+        form_layout.addRow("Pair Name:", self.legend_label_edit)
+    
+    def _create_zorder_controls(self, form_layout: QFormLayout):
+        """Create z-order (bring to front) controls"""
         self.bring_to_front_checkbox = QCheckBox("Bring to Front")
         self.bring_to_front_checkbox.setToolTip("Bring this pair's markers to the top layer in the plot")
-        display_layout.addRow("", self.bring_to_front_checkbox)
-        
-        layout.addWidget(display_group)
+        form_layout.addRow("", self.bring_to_front_checkbox)
     
     def _create_dialog_buttons(self, layout: QVBoxLayout):
         """Create dialog buttons"""
@@ -298,6 +290,11 @@ class PairMarkerWizard(QDialog):
         legend_label = self.pair_config.get('legend_label', '')
         self.legend_label_edit.setText(legend_label)
         
+        # Also load from name field if available
+        pair_name = self.pair_config.get('name', '')
+        if pair_name and not legend_label:
+            self.legend_label_edit.setText(pair_name)
+        
         # Z-order (Bring to Front)
         z_order = self.pair_config.get('z_order', 0)
         self.bring_to_front_checkbox.setChecked(z_order > 0)
@@ -326,6 +323,10 @@ class PairMarkerWizard(QDialog):
     def on_color_button_changed(self, color: str):
         """Handle color button changes"""
         self.color_combo.setCurrentText('Custom')
+    
+    def _on_pair_name_changed(self, new_name: str):
+        """Handle pair name text field changes"""
+        self.pair_name_changed.emit(new_name)
     
     def apply_changes(self):
         """Apply changes to the pair config without closing dialog"""
@@ -356,7 +357,7 @@ class PairMarkerWizard(QDialog):
         self.pair_config['marker_size'] = self.size_spin.value()
         self.pair_config['marker_alpha'] = self.alpha_spin.value()
         
-        # Legend label
+        # Legend label (now pair name)
         self.pair_config['legend_label'] = self.legend_label_edit.text()
         
         # Z-order (Bring to Front)

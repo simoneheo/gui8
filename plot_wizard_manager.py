@@ -589,9 +589,14 @@ class PlotWizardManager(QObject):
         # Set column widths
         header = table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Subplot#
-        header.setSectionResizeMode(1, QHeaderView.Stretch)          # Channel Name
-        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)  # Type
-        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Actions
+        header.setSectionResizeMode(1, QHeaderView.Stretch)          # Channel Name - stretches
+        header.setSectionResizeMode(2, QHeaderView.Fixed)            # Actions - fixed width
+        
+        # Set minimum width for actions column to prevent squishing
+        header.setMinimumSectionSize(80)
+        
+        # Set initial width for actions column
+        header.resizeSection(2, 100)  # Give actions column enough space for 3 buttons
         
     def _setup_subplot_config_table(self):
         """Setup the subplot configuration table"""
@@ -600,7 +605,14 @@ class PlotWizardManager(QObject):
         # Set column widths
         header = table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Subplot#
-        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Actions
+        header.setSectionResizeMode(1, QHeaderView.Stretch)          # Subplot Name - stretches
+        header.setSectionResizeMode(2, QHeaderView.Fixed)            # Actions - fixed width
+        
+        # Set minimum width for actions column to prevent squishing
+        header.setMinimumSectionSize(80)
+        
+        # Set initial width for actions column
+        header.resizeSection(2, 100)  # Give actions column enough space for 2 buttons
         
     def _connect_signals(self):
         """Connect signals to their respective slots"""
@@ -944,6 +956,12 @@ class PlotWizardManager(QObject):
             # Temporarily disconnect signals to prevent recursive calls
             table.blockSignals(True)
             
+            # Store current column widths before clearing
+            header = table.horizontalHeader()
+            current_widths = []
+            for i in range(table.columnCount()):
+                current_widths.append(header.sectionSize(i))
+            
             # Clear existing contents to avoid widget reuse issues
             table.clearContents()
             table.setRowCount(len(self.plot_items))
@@ -963,18 +981,6 @@ class PlotWizardManager(QObject):
                 channel_item.setFlags(channel_item.flags() & ~Qt.ItemIsEditable)
                 table.setItem(i, 1, channel_item)
                 
-                # Type (display only)
-                plot_type = item.get('plot_type', 'Unknown')
-                type_item = QTableWidgetItem(str(plot_type))
-                type_item.setFlags(type_item.flags() & ~Qt.ItemIsEditable)
-                table.setItem(i, 2, type_item)
-                
-                # Size (display only)
-                size = item.get('size', 'Unknown')
-                size_item = QTableWidgetItem(str(size))
-                size_item.setFlags(size_item.flags() & ~Qt.ItemIsEditable)
-                table.setItem(i, 3, size_item)
-                
                 # Actions (buttons)
                 actions_widget = QWidget()
                 actions_layout = QHBoxLayout(actions_widget)
@@ -985,7 +991,7 @@ class PlotWizardManager(QObject):
                 info_button = QPushButton("❗")
                 info_button.setMaximumWidth(25)
                 info_button.setMaximumHeight(25)
-                info_button.setToolTip("Channel information")
+                info_button.setToolTip("Channel information and metadata")
                 info_button.clicked.connect(self._create_line_button_slot(self._on_line_info_clicked, i))
                 actions_layout.addWidget(info_button)
                 
@@ -1005,7 +1011,21 @@ class PlotWizardManager(QObject):
                 delete_button.clicked.connect(self._create_line_button_slot(self._on_line_delete_clicked, i))
                 actions_layout.addWidget(delete_button)
                 
-                table.setCellWidget(i, 4, actions_widget)
+                table.setCellWidget(i, 2, actions_widget)
+            
+            # Restore column widths and ensure proper sizing
+            for i, width in enumerate(current_widths):
+                if i < table.columnCount():
+                    header.setSectionResizeMode(i, QHeaderView.Interactive)
+                    header.resizeSection(i, max(width, 80))  # Ensure minimum width
+            
+            # Re-apply column resize modes
+            header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Subplot#
+            header.setSectionResizeMode(1, QHeaderView.Stretch)          # Channel Name - stretches
+            header.setSectionResizeMode(2, QHeaderView.Fixed)            # Actions - fixed width
+            
+            # Set minimum width for actions column to prevent squishing
+            header.setMinimumSectionSize(80)
             
             # Re-enable signals
             table.blockSignals(False)
@@ -1025,6 +1045,12 @@ class PlotWizardManager(QObject):
             
             # Temporarily disconnect signals to prevent recursive calls
             table.blockSignals(True)
+            
+            # Store current column widths before clearing
+            header = table.horizontalHeader()
+            current_widths = []
+            for i in range(table.columnCount()):
+                current_widths.append(header.sectionSize(i))
             
             # Get unique subplot numbers from plot items
             subplot_nums = sorted(set(item['subplot'] for item in self.plot_items))
@@ -1056,14 +1082,6 @@ class PlotWizardManager(QObject):
                 actions_layout.setContentsMargins(2, 2, 2, 2)
                 actions_layout.setSpacing(2)
                 
-                # Info button - match main window icon
-                info_button = QPushButton("❗")
-                info_button.setMaximumWidth(25)
-                info_button.setMaximumHeight(25)
-                info_button.setToolTip("Subplot information")
-                info_button.clicked.connect(self._create_subplot_button_slot(self._on_subplot_info_clicked, subplot_num))
-                actions_layout.addWidget(info_button)
-                
                 # Paint button - match main window icon
                 paint_button = QPushButton("🎨")
                 paint_button.setMaximumWidth(25)
@@ -1082,8 +1100,25 @@ class PlotWizardManager(QObject):
                 
                 table.setCellWidget(i, 2, actions_widget)
             
+            # Restore column widths and ensure proper sizing
+            for i, width in enumerate(current_widths):
+                if i < table.columnCount():
+                    header.setSectionResizeMode(i, QHeaderView.Interactive)
+                    header.resizeSection(i, max(width, 80))  # Ensure minimum width
+            
+            # Re-apply column resize modes
+            header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Subplot#
+            header.setSectionResizeMode(1, QHeaderView.Stretch)          # Subplot Name - stretches
+            header.setSectionResizeMode(2, QHeaderView.Fixed)            # Actions - fixed width
+            
+            # Set minimum width for actions column to prevent squishing
+            header.setMinimumSectionSize(80)
+            
             # Re-enable signals
             table.blockSignals(False)
+            
+            # Auto-update dimensions based on number of subplots
+            self._auto_update_dimensions()
             
         except Exception as e:
             print(f"[PlotWizard] Error updating subplot config table: {e}")
@@ -1111,6 +1146,9 @@ class PlotWizardManager(QObject):
                     self._update_subplot_config_table()
                     self._update_plot()
                     
+                    # Auto-update dimensions after line deletion
+                    self._auto_update_dimensions()
+                    
                     print(f"[PlotWizard] Removed item {item_index} from plot")
                     
         except Exception as e:
@@ -1118,33 +1156,43 @@ class PlotWizardManager(QObject):
 
     # New action handler methods for the updated table structure
     def _on_line_info_clicked(self, item_index):
-        """Handle line info button click"""
+        """Handle line info button click - opens metadata wizard for the channel"""
         try:
             if 0 <= item_index < len(self.plot_items):
                 item = self.plot_items[item_index]
-                channel_name = item.get('channel_name', item['legend_name'])
-                plot_type = item['plot_type']
-                subplot_num = item['subplot']
+                channel = item.get('channel')
                 
-                # Show info dialog
-                info_text = f"""
-                Channel: {channel_name}
-                Plot Type: {plot_type}
-                Subplot: {subplot_num}
-                Legend: {item['legend_name']}
-                Color: {item['color']}
-                Line Style: {item['line_style']}
-                Marker: {item['marker']}
-                Y-Axis: {item['y_axis']}
-                """
-                
-                from PySide6.QtWidgets import QMessageBox
-                msg = QMessageBox(self.window)
-                msg.setWindowTitle("Line Information")
-                msg.setText(info_text)
-                msg.exec()
+                if channel:
+                    # Open the comprehensive metadata wizard for this channel
+                    from metadata_wizard import MetadataWizard
+                    wizard = MetadataWizard(channel, self.window, self.file_manager)
+                    wizard.exec()
+                else:
+                    # Fallback: show basic info if channel object is not available
+                    channel_name = item.get('channel_name', item['legend_name'])
+                    plot_type = item['plot_type']
+                    subplot_num = item['subplot']
+                    
+                    info_text = f"""
+                    Channel: {channel_name}
+                    Plot Type: {plot_type}
+                    Subplot: {subplot_num}
+                    Legend: {item['legend_name']}
+                    Color: {item['color']}
+                    Line Style: {item['line_style']}
+                    Marker: {item['marker']}
+                    Y-Axis: {item['y_axis']}
+                    """
+                    
+                    from PySide6.QtWidgets import QMessageBox
+                    msg = QMessageBox(self.window)
+                    msg.setWindowTitle("Line Information")
+                    msg.setText(info_text)
+                    msg.exec()
         except Exception as e:
             print(f"[PlotWizard] Error showing line info: {str(e)}")
+            import traceback
+            traceback.print_exc()
     
     def _on_line_paint_clicked(self, item_index):
         """Handle line paint button click - opens appropriate wizard based on plot type"""
@@ -1237,6 +1285,9 @@ class PlotWizardManager(QObject):
                     # Update tables and plot
                     self._update_line_config_table()
                     self._update_plot()
+                    
+                    # Ensure proper column widths after update
+                    self._ensure_table_column_widths()
         except Exception as e:
             print(f"[PlotWizard] Error updating from channel wizard: {str(e)}")
     
@@ -1267,6 +1318,9 @@ class PlotWizardManager(QObject):
                 # Update tables and plot
                 self._update_line_config_table()
                 self._update_plot()
+                
+                # Ensure proper column widths after update
+                self._ensure_table_column_widths()
         except Exception as e:
             print(f"[PlotWizard] Error updating from marker wizard: {str(e)}")
     
@@ -1314,6 +1368,9 @@ class PlotWizardManager(QObject):
                     self._update_line_config_table()
                     self._update_subplot_config_table()
                     self._update_plot()
+                    
+                    # Ensure proper column widths after update
+                    self._ensure_table_column_widths()
         except Exception as e:
             print(f"[PlotWizard] Error updating from spectrogram wizard: {str(e)}")
     
@@ -1416,6 +1473,8 @@ class PlotWizardManager(QObject):
                     self._update_line_config_table()
                     self._update_plot()
                     
+                    # Ensure proper column widths after update
+                    self._ensure_table_column_widths()
         except Exception as e:
             print(f"[PlotWizard] Error showing line properties dialog: {str(e)}")
     
@@ -1908,10 +1967,9 @@ class PlotWizardManager(QObject):
                 n_subplots = len(subplot_nums)
                 
                 if not self.user_set_dimensions:
-                    # User hasn't manually set dimensions - use N×1 layout
-                    rows = n_subplots
-                    cols = 1
-                    print(f"[PlotWizard] Auto-setting dimensions: {rows}×{cols} (N×1 layout)")
+                    # User hasn't manually set dimensions - calculate optimal layout
+                    rows, cols = self._calculate_optimal_dimensions(n_subplots)
+                    print(f"[PlotWizard] Auto-setting dimensions: {rows}×{cols} (optimal layout for {n_subplots} subplots)")
                 else:
                     # User has set dimensions - check if current capacity is sufficient
                     current_capacity = self.subplot_rows * self.subplot_cols
@@ -1922,9 +1980,8 @@ class PlotWizardManager(QObject):
                         cols = self.subplot_cols
                         print(f"[PlotWizard] Keeping user dimensions: {rows}×{cols} (capacity: {current_capacity})")
                     else:
-                        # Need more capacity - increment first dimension (rows)
-                        rows = self.subplot_rows + 1
-                        cols = self.subplot_cols
+                        # Need more capacity - calculate optimal dimensions that can fit all subplots
+                        rows, cols = self._calculate_optimal_dimensions(n_subplots)
                         print(f"[PlotWizard] Expanding user dimensions: {self.subplot_rows}×{self.subplot_cols} → {rows}×{cols}")
                     
                 self.subplot_rows = rows
@@ -1943,7 +2000,48 @@ class PlotWizardManager(QObject):
             
         except Exception as e:
             print(f"[PlotWizard] Error auto-updating dimensions: {str(e)}")
+    
+    def _calculate_optimal_dimensions(self, n_subplots):
+        """Calculate optimal rows and columns for given number of subplots"""
+        try:
+            if n_subplots <= 0:
+                return 1, 1
             
+            # For small numbers, prefer vertical layout
+            if n_subplots <= 3:
+                return n_subplots, 1
+            
+            # For larger numbers, try to make it more square-like
+            # Start with square root and adjust
+            sqrt_n = int(n_subplots ** 0.5)
+            
+            # Try to find factors that are close to each other
+            best_ratio = float('inf')
+            best_rows = n_subplots
+            best_cols = 1
+            
+            for rows in range(1, min(sqrt_n + 3, n_subplots + 1)):
+                if n_subplots % rows == 0:
+                    cols = n_subplots // rows
+                    # Calculate aspect ratio (closer to 1 is better)
+                    ratio = abs(rows - cols)
+                    if ratio < best_ratio:
+                        best_ratio = ratio
+                        best_rows = rows
+                        best_cols = cols
+            
+            # If no perfect factors found, use the best approximation
+            if best_ratio == float('inf'):
+                # Fallback: prefer more rows than columns for better readability
+                best_rows = int(n_subplots ** 0.5)
+                best_cols = (n_subplots + best_rows - 1) // best_rows  # Ceiling division
+            
+            return best_rows, best_cols
+            
+        except Exception as e:
+            print(f"[PlotWizard] Error calculating optimal dimensions: {str(e)}")
+            return n_subplots, 1
+    
     def _apply_figure_settings(self):
         """Apply global figure settings"""
         try:
@@ -2084,85 +2182,67 @@ class PlotWizardManager(QObject):
             # Get tick control settings
             major_tick_spacing = config.get('major_tick_spacing', 'auto')
             major_tick_value = config.get('major_tick_value', 1.0)
-            major_tick_count = config.get('major_tick_count', 10)
             minor_ticks_on = config.get('minor_ticks_on', False)
             minor_tick_spacing = config.get('minor_tick_spacing', 0.2)
+            minor_tick_value = config.get('minor_tick_value', 0.2)
             
             # Apply major tick settings to X axis
             if major_tick_spacing == 'auto':
                 ax_left.xaxis.set_major_locator(AutoLocator())
-            elif major_tick_spacing == 'multiple':
-                ax_left.xaxis.set_major_locator(MultipleLocator(major_tick_value))
-            elif major_tick_spacing == 'fixed':
-                # For fixed mode, we'll use the current axis limits and spacing
-                xlim = ax_left.get_xlim()
-                num_ticks = int((xlim[1] - xlim[0]) / major_tick_value) + 1
-                ticks = [xlim[0] + i * major_tick_value for i in range(num_ticks)]
-                # Filter ticks within axis range
-                ticks = [t for t in ticks if xlim[0] <= t <= xlim[1]]
-                ax_left.xaxis.set_major_locator(FixedLocator(ticks))
-            elif major_tick_spacing == 'max_n':
-                ax_left.xaxis.set_major_locator(MaxNLocator(nbins=major_tick_count))
+            elif major_tick_spacing == 'custom':
+                # Use MultipleLocator for custom spacing
+                if isinstance(major_tick_value, (int, float)):
+                    ax_left.xaxis.set_major_locator(MultipleLocator(major_tick_value))
+                else:
+                    ax_left.xaxis.set_major_locator(AutoLocator())
             
             # Apply major tick settings to Y axis
             if major_tick_spacing == 'auto':
                 ax_left.yaxis.set_major_locator(AutoLocator())
-            elif major_tick_spacing == 'multiple':
-                ax_left.yaxis.set_major_locator(MultipleLocator(major_tick_value))
-            elif major_tick_spacing == 'fixed':
-                # For fixed mode, use current axis limits and spacing
-                ylim = ax_left.get_ylim()
-                num_ticks = int((ylim[1] - ylim[0]) / major_tick_value) + 1
-                ticks = [ylim[0] + i * major_tick_value for i in range(num_ticks)]
-                # Filter ticks within axis range
-                ticks = [t for t in ticks if ylim[0] <= t <= ylim[1]]
-                ax_left.yaxis.set_major_locator(FixedLocator(ticks))
-            elif major_tick_spacing == 'max_n':
-                ax_left.yaxis.set_major_locator(MaxNLocator(nbins=major_tick_count))
+            elif major_tick_spacing == 'custom':
+                # Use MultipleLocator for custom spacing
+                if isinstance(major_tick_value, (int, float)):
+                    ax_left.yaxis.set_major_locator(MultipleLocator(major_tick_value))
+                else:
+                    ax_left.yaxis.set_major_locator(AutoLocator())
             
             # Apply same settings to right axis if it exists
             if ax_right is not None:
                 if major_tick_spacing == 'auto':
                     ax_right.xaxis.set_major_locator(AutoLocator())
                     ax_right.yaxis.set_major_locator(AutoLocator())
-                elif major_tick_spacing == 'multiple':
-                    ax_right.xaxis.set_major_locator(MultipleLocator(major_tick_value))
-                    ax_right.yaxis.set_major_locator(MultipleLocator(major_tick_value))
-                elif major_tick_spacing == 'fixed':
-                    # X axis
-                    xlim = ax_right.get_xlim()
-                    num_ticks = int((xlim[1] - xlim[0]) / major_tick_value) + 1
-                    ticks = [xlim[0] + i * major_tick_value for i in range(num_ticks)]
-                    ticks = [t for t in ticks if xlim[0] <= t <= xlim[1]]
-                    ax_right.xaxis.set_major_locator(FixedLocator(ticks))
-                    
-                    # Y axis
-                    ylim = ax_right.get_ylim()
-                    num_ticks = int((ylim[1] - ylim[0]) / major_tick_value) + 1
-                    ticks = [ylim[0] + i * major_tick_value for i in range(num_ticks)]
-                    ticks = [t for t in ticks if ylim[0] <= t <= ylim[1]]
-                    ax_right.yaxis.set_major_locator(FixedLocator(ticks))
-                elif major_tick_spacing == 'max_n':
-                    ax_right.xaxis.set_major_locator(MaxNLocator(nbins=major_tick_count))
-                    ax_right.yaxis.set_major_locator(MaxNLocator(nbins=major_tick_count))
+                elif major_tick_spacing == 'custom':
+                    # Use MultipleLocator for custom spacing
+                    if isinstance(major_tick_value, (int, float)):
+                        ax_right.xaxis.set_major_locator(MultipleLocator(major_tick_value))
+                        ax_right.yaxis.set_major_locator(MultipleLocator(major_tick_value))
+                    else:
+                        ax_right.xaxis.set_major_locator(AutoLocator())
+                        ax_right.yaxis.set_major_locator(AutoLocator())
             
             # Apply minor tick settings
             if minor_ticks_on:
                 from matplotlib.ticker import MultipleLocator as MinorMultipleLocator
                 
+                # Determine minor tick spacing
+                minor_spacing = minor_tick_value if config.get('minor_tick_spacing') == 'custom' else minor_tick_spacing
+                
                 # Apply minor ticks to X axis
-                ax_left.xaxis.set_minor_locator(MinorMultipleLocator(minor_tick_spacing))
-                ax_left.tick_params(which='minor', length=2, width=0.5)
+                if isinstance(minor_spacing, (int, float)):
+                    ax_left.xaxis.set_minor_locator(MinorMultipleLocator(minor_spacing))
+                    ax_left.tick_params(which='minor', length=2, width=0.5)
                 
                 # Apply minor ticks to Y axis
-                ax_left.yaxis.set_minor_locator(MinorMultipleLocator(minor_tick_spacing))
-                ax_left.tick_params(which='minor', length=2, width=0.5)
+                if isinstance(minor_spacing, (int, float)):
+                    ax_left.yaxis.set_minor_locator(MinorMultipleLocator(minor_spacing))
+                    ax_left.tick_params(which='minor', length=2, width=0.5)
                 
                 # Apply to right axis if it exists
                 if ax_right is not None:
-                    ax_right.xaxis.set_minor_locator(MinorMultipleLocator(minor_tick_spacing))
-                    ax_right.yaxis.set_minor_locator(MinorMultipleLocator(minor_tick_spacing))
-                    ax_right.tick_params(which='minor', length=2, width=0.5)
+                    if isinstance(minor_spacing, (int, float)):
+                        ax_right.xaxis.set_minor_locator(MinorMultipleLocator(minor_spacing))
+                        ax_right.yaxis.set_minor_locator(MinorMultipleLocator(minor_spacing))
+                        ax_right.tick_params(which='minor', length=2, width=0.5)
             else:
                 # Turn off minor ticks
                 ax_left.minorticks_off()
@@ -2171,6 +2251,8 @@ class PlotWizardManager(QObject):
                     
         except Exception as e:
             print(f"[PlotWizard] Error applying tick controls: {e}")
+            import traceback
+            traceback.print_exc()
     
     def _configure_x_axis_positioning(self, ax_left, ax_right, items):
         """Configure x-axis positioning based on channel preferences"""
@@ -2707,6 +2789,10 @@ class PlotWizardManager(QObject):
                     if ax_right is not None and config.get('y_right_label'):
                         ax_right.set_ylabel(config['y_right_label'])
                     
+                    # Set subplot title if specified
+                    if config.get('title'):
+                        ax_left.set_title(config['title'])
+                    
                     # Apply axis styling
                     self._apply_axis_styling(ax_left, has_right_axis=(ax_right is not None))
                     if ax_right is not None:
@@ -2786,6 +2872,33 @@ class PlotWizardManager(QObject):
         """Show the plot wizard window"""
         self.window.show()
         
+        # Ensure proper table column widths after window is shown
+        self._ensure_table_column_widths()
+        
+    def _ensure_table_column_widths(self):
+        """Ensure proper column widths for both tables"""
+        try:
+            # Line config table
+            line_table = self.window.line_config_table
+            line_header = line_table.horizontalHeader()
+            line_header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Subplot#
+            line_header.setSectionResizeMode(1, QHeaderView.Stretch)          # Channel Name
+            line_header.setSectionResizeMode(2, QHeaderView.Fixed)            # Actions
+            line_header.setMinimumSectionSize(80)
+            line_header.resizeSection(2, 100)  # Ensure actions column has proper width
+            
+            # Subplot config table
+            subplot_table = self.window.subplot_config_table
+            subplot_header = subplot_table.horizontalHeader()
+            subplot_header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Subplot#
+            subplot_header.setSectionResizeMode(1, QHeaderView.Stretch)          # Subplot Name
+            subplot_header.setSectionResizeMode(2, QHeaderView.Fixed)            # Actions
+            subplot_header.setMinimumSectionSize(80)
+            subplot_header.resizeSection(2, 100)  # Ensure actions column has proper width
+            
+        except Exception as e:
+            print(f"[PlotWizard] Error ensuring table column widths: {e}")
+    
     def close(self):
         """Close the plot wizard"""
         if self.window:

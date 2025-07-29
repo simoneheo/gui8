@@ -59,14 +59,23 @@ class MainWindowUI(QWidget):
         self.connect_signals()
         
         # Initialize UI state
-        self.log_message("Welcome! Load files by clicking 'Load File' button or drag & drop into the file table")
-        self.log_message("Supported data: CSV, TXT, TSV files with time series or tabular data")
-        self.log_message("")  # Empty line for separation
-        self.log_message("Available Wizards:")
-        self.log_message("• Process Wizard - Apply signal processing filters (resample, smooth, filter, transform)")
-        self.log_message("• Mix Wizard - Combine multiple channels with arithmetic operations (A+B, A-B, A*B, A/B)")
-        self.log_message("• Compare Wizard - Statistical comparison between channels (correlation, Bland-Altman, regression)")
-        self.log_message("• Plot Wizard - Create customized multi-subplot visualizations with advanced styling")
+        welcome_messages = [
+            "Welcome! Load files via 'Load File' or drag & drop into the table.",
+            "Supported formats: CSV, TXT, TSV with time series or tabular data.",
+            "",
+            "Available Wizards:",
+            "• Process Wizard – Apply signal processing (resample, smooth, filter)",
+            "• Mix Wizard – Combine channels using math (A+B, A-B, A*B, A/B)",
+            "• Compare Wizard – EXPERIMENTAL (correlation, Bland-Altman, regression)",
+            "• Plot Wizard – Build multi-subplot visualizations with custom styling",
+            "• Export Wizard – Save processed data to CSV or TXT"
+        ]
+
+        
+        # Log all welcome messages with a single timestamp
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        formatted_messages = f'<span style="color: #000000;">[{timestamp}] ' + '<br>'.join(welcome_messages) + '</span>'
+        self.console.append(formatted_messages)
     
     def init_ui(self):
         main_splitter = QSplitter(Qt.Horizontal, self)
@@ -1305,7 +1314,7 @@ Recommendations:
         color = colors.get(msg_type, "#000000")  # Default to black
         
         # Format with HTML for color and bold
-        formatted_message = f'<span style="color: {color}; font-weight: bold;">[{timestamp}] {message}</span>'
+        formatted_message = f'<span style="color: {color};">[{timestamp}] {message}</span>'
         self.console.append(formatted_message)
         
         # Auto-scroll to bottom
@@ -1458,7 +1467,7 @@ Recommendations:
         # Report statistics
         if new_channels:
             # Overall summary
-            self.log_message(f"Process Wizard created {len(new_channels)} new channels:", "success")
+            self.log_message(f"Process Wizard created {len(new_channels)} new channels", "success")
             
             # # Build tree structure by grouping channels by lineage and sorting by step
             # trees = self._build_channel_tree(new_channels)
@@ -1635,14 +1644,8 @@ Recommendations:
         # Report statistics
         if new_channels:
             # Overall summary
-            self.log_message(f"Mix Wizard created {len(new_channels)} new channels:", "success")
+            self.log_message(f"Mix Wizard created {len(new_channels)} new channels", "success")
             
-            # Build tree structure by grouping channels by lineage and sorting by step
-            trees = self._build_channel_tree(new_channels)
-            
-            # Display each tree
-            for tree in trees:
-                self._display_channel_tree(tree, 0)
         else:
             self.log_message("Mix Wizard closed - no new channels created", "info")
         
@@ -1686,7 +1689,7 @@ Recommendations:
     def _on_comparison_wizard_closed(self):
         """Handle when comparison wizard is closed"""
         try:
-            self.log_message("Comparison Wizard closed", "info")
+            self.log_message("Comparison Wizard closed - no new channels created", "info")
             
             # Clean up the manager reference
             if hasattr(self, 'comparison_wizard_manager'):

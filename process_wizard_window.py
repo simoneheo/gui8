@@ -250,6 +250,18 @@ class ProcessWizardWindow(QMainWindow):
         self.console_output = QTextEdit()
         self.console_output.setPlaceholderText("Output will appear here...")
         self.console_output.setReadOnly(True)
+        self.console_output.setStyleSheet("""
+            QTextEdit {
+                background-color: #f8f9fa;
+                border: 1px solid #dee2e6;
+                border-radius: 4px;
+                padding: 8px;
+                color: #212529;
+            }
+            QTextEdit:focus {
+                border: 1px solid #007bff;
+            }
+        """)
         
         console_layout.addWidget(self.console_output)
         

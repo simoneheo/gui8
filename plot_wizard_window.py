@@ -69,8 +69,8 @@ class PlotWizardWindow(QMainWindow):
         left_layout.addLayout(selector_layout)
 
         # Config Tables
-        self.line_config_table = QTableWidget(0, 6)
-        self.line_config_table.setHorizontalHeaderLabels(["Subplot#", "Channel Name", "Type", "Size", "Actions", ""])
+        self.line_config_table = QTableWidget(0, 3)
+        self.line_config_table.setHorizontalHeaderLabels(["Subplot#", "Channel Name", "Actions"])
         self.subplot_config_table = QTableWidget(0, 3)
         self.subplot_config_table.setHorizontalHeaderLabels(["Subplot#", "Subplot Name", "Actions"])
 

@@ -688,8 +688,11 @@ class ComparisonWizardWindow(QWidget):
                 background-color: #f8f9fa;
                 border: 1px solid #dee2e6;
                 border-radius: 4px;
-                font-family: 'Consolas', 'Monaco', monospace;
-                font-size: 11px;
+                padding: 8px;
+                color: #212529;
+            }
+            QTextEdit:focus {
+                border: 1px solid #007bff;
             }
         """)
         group_layout.addWidget(self.info_output)
@@ -884,10 +887,7 @@ Tips:
         except Exception as e:
             print(f"[ComparisonWizard] Error setting up initial data: {e}")
             
-
-            
-
-            
+                      
     def _update_method_configuration(self, method_name):
         """Update the method configuration section based on selected method"""
         try:
@@ -928,7 +928,6 @@ Tips:
                 self._clear_method_configuration()
                 
         except Exception as e:
-            print(f"[ComparisonWizard] Error updating method configuration: {e}")
             self._clear_method_configuration()
     
     def _on_parameter_changed(self):
@@ -1564,6 +1563,32 @@ Tips:
     def _on_add_pair_clicked(self):
         """Handle add pair button click"""
         try:
+            # Clear console first
+            if hasattr(self, 'info_output'):
+                self.info_output.clear()
+                
+            # Show current info messages
+            if hasattr(self, 'info_output'):
+                self.info_output.append("Processing comparison pair addition...")
+                
+                # Get current selections for info display
+                ref_file = self.ref_file_combo.currentText()
+                ref_channel = self.ref_channel_combo.currentData()
+                test_file = self.test_file_combo.currentText()
+                test_channel = self.test_channel_combo.currentData()
+                method_name = self.get_current_method_name()
+                
+                # Display current configuration info
+                info_msg = f"""Current Configuration:
+• Method: {method_name}
+• Reference: {ref_file} → {getattr(ref_channel, 'legend_label', 'Unknown') if ref_channel else 'None'}
+• Test: {test_file} → {getattr(test_channel, 'legend_label', 'Unknown') if test_channel else 'None'}
+• Pair Name: {self.pair_name_input.text() or 'Auto-generated'}
+
+Starting pair addition process..."""
+                
+                self.info_output.append(info_msg)
+            
             # Get current selections - use currentData() to get Channel objects
             ref_file = self.ref_file_combo.currentText()
             ref_channel = self.ref_channel_combo.currentData()  # Get Channel object
@@ -1578,9 +1603,13 @@ Tips:
             # Perform alignment if we have Channel objects
             alignment_result = None
             if ref_channel and test_channel and self.manager:
+                if hasattr(self, 'info_output'):
+                    self.info_output.append(f"Performing data alignment...")
                 print(f"[DEBUG] _on_add_pair_clicked: Performing alignment for {ref_channel.legend_label} vs {test_channel.legend_label}")
                 alignment_result = self.manager.perform_alignment(ref_channel, test_channel, alignment_params)
             else:
+                if hasattr(self, 'info_output'):
+                    self.info_output.append("Cannot perform alignment - missing channels or manager")
                 print(f"[DEBUG] _on_add_pair_clicked: Cannot perform alignment - missing channels or manager")
             
             # Create pair data (pure data, no method configuration)
@@ -1604,7 +1633,10 @@ Tips:
                     self.info_output.append(f"Added comparison pair: {pair_data['name']}")
                 
         except Exception as e:
-            print(f"[ComparisonWizard] Error adding pair: {e}")
+            error_msg = f"Error adding pair: {e}"
+            print(f"[ComparisonWizard] {error_msg}")
+            if hasattr(self, 'info_output'):
+                self.info_output.append(error_msg)
     
     def _on_manager_comparison_completed(self, result):
         """Handle comparison completion results from the manager"""
@@ -1659,8 +1691,7 @@ Tips:
                 cache_stats = result.get('cache_stats', {})
                 
                 if hasattr(self, 'info_output'):
-                    cache_info = f"Cache: {cache_stats.get('hits', 0)} hits, {cache_stats.get('misses', 0)} misses"
-                    self.info_output.append(f"Plot refreshed successfully - {n_pairs} pairs analyzed. {cache_info}")
+                    self.info_output.append(f"Plot refreshed successfully - {n_pairs} pairs analyzed.")
                     
             elif result_type == 'analysis_refresh_failed':
                 # Analysis refresh failed
@@ -1753,7 +1784,15 @@ Tips:
             
             info_btn = QPushButton("ℹ️")
             info_btn.setMaximumSize(25, 25)
+            info_btn.setToolTip("View pair metadata and statistics")
+            info_btn.clicked.connect(lambda: self._on_pair_info_clicked(pair))
             actions_layout.addWidget(info_btn)
+            
+            inspect_btn = QPushButton("🔍")
+            inspect_btn.setMaximumSize(25, 25)
+            inspect_btn.setToolTip("Inspect aligned pair data")
+            inspect_btn.clicked.connect(lambda: self._on_pair_inspect_clicked(pair))
+            actions_layout.addWidget(inspect_btn)
             
             style_btn = QPushButton("🎨")
             style_btn.setMaximumSize(25, 25)
@@ -1954,6 +1993,7 @@ Tips:
             # Open the pair marker wizard
             wizard = PairMarkerWizard(pair_config, self)
             wizard.marker_updated.connect(self._on_pair_marker_updated)
+            wizard.pair_name_changed.connect(self._on_pair_name_changed)
             result = wizard.exec()
             
             if result == QDialog.Accepted:
@@ -1990,7 +2030,7 @@ Tips:
             'edge_color': getattr(pair, 'edge_color', '#000000'),
             'edge_width': getattr(pair, 'edge_width', 1.0),
             'fill_style': getattr(pair, 'fill_style', 'full'),
-            'legend_label': getattr(pair, 'legend_label', ''),
+            'legend_label': getattr(pair, 'name', ''),  # Use name as legend label
             'z_order': getattr(pair, 'z_order', 0),
         }
         return config
@@ -2004,6 +2044,10 @@ Tips:
         pair.marker_size = config.get('marker_size', 50)
         pair.alpha = config.get('marker_alpha', 0.8)  # Use alpha attribute
         pair.legend_label = config.get('legend_label', '')
+        
+        # Update pair name if legend_label is provided
+        if config.get('legend_label'):
+            pair.name = config.get('legend_label')
         
         # Set additional styling attributes (now guaranteed to exist)
         pair.edge_color = config.get('edge_color', '#000000')
@@ -2409,6 +2453,77 @@ Tips:
                 'density_mode': 'scatter',
                 'bins': 50
             }
+
+    def _on_pair_name_changed(self, new_name: str):
+        """Handle pair name change from pair marker wizard"""
+        try:
+            print(f"[ComparisonWizard] Pair name changed to: {new_name}")
+            
+            # Use the stored pair reference if available
+            pair = getattr(self, '_current_editing_pair', None)
+            
+            if pair:
+                print(f"[ComparisonWizard] Updating pair name for: {pair.name}")
+                # Update the pair object's name
+                pair.name = new_name
+                # Update the modified timestamp
+                pair.modified_at = datetime.now()
+                # Refresh the table to show the new name
+                self._refresh_channels_table()
+                print(f"[ComparisonWizard] Updated pair name to: {new_name}")
+            else:
+                print(f"[ComparisonWizard] No pair reference available for name update")
+                
+        except Exception as e:
+            print(f"[ComparisonWizard] Error handling pair name change: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _on_pair_info_clicked(self, pair):
+        """Handle info icon click for pair metadata"""
+        try:
+            print(f"[ComparisonWizard] Opening pair metadata wizard for: {pair.name}")
+            
+            # Import the pair metadata wizard
+            from pair_metadata_wizard import show_pair_metadata
+            
+            # Open the pair metadata wizard
+            show_pair_metadata(
+                pair=pair,
+                parent=self,
+                file_manager=self.file_manager,
+                channel_manager=self.channel_manager
+            )
+            
+            print(f"[ComparisonWizard] Pair metadata wizard closed for: {pair.name}")
+                
+        except Exception as e:
+            print(f"[ComparisonWizard] Error opening pair metadata wizard: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _on_pair_inspect_clicked(self, pair):
+        """Handle inspection icon click for pair data inspection"""
+        try:
+            print(f"[ComparisonWizard] Opening pair inspection wizard for: {pair.name}")
+            
+            # Import the pair inspection wizard
+            from pair_inspection_wizard import inspect_pair_data
+            
+            # Open the pair inspection wizard
+            inspect_pair_data(
+                pair=pair,
+                parent=self,
+                file_manager=self.file_manager,
+                channel_manager=self.channel_manager
+            )
+            
+            print(f"[ComparisonWizard] Pair inspection wizard closed for: {pair.name}")
+            
+        except Exception as e:
+            print(f"[ComparisonWizard] Error handling pair inspection click: {e}")
+            import traceback
+            traceback.print_exc()
 
 
 def main():

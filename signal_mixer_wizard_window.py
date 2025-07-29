@@ -327,6 +327,18 @@ class SignalMixerWizardWindow(QMainWindow):
         self.console_output.setReadOnly(True)
         self.console_output.setPlaceholderText("Logs and messages will appear here")
         self.console_output.setMaximumHeight(150)
+        self.console_output.setStyleSheet("""
+            QTextEdit {
+                background-color: #f8f9fa;
+                border: 1px solid #dee2e6;
+                border-radius: 4px;
+                padding: 8px;
+                color: #212529;
+            }
+            QTextEdit:focus {
+                border: 1px solid #007bff;
+            }
+        """)
         group_layout.addWidget(self.console_output)
         
         layout.addWidget(group)
@@ -1371,6 +1383,13 @@ Tips:
         # Plot mixed channels
         colors = self._get_mixed_channel_colors()
         
+        # Get alignment method once for all mixed channels
+        alignment_method = None
+        if channel_a and channel_a.ydata is not None and channel_b and channel_b.ydata is not None:
+            alignment_config = self._get_alignment_config()
+            alignment_method = alignment_config.get('alignment_method', 'time')
+            self._log_message(f"Alignment method: {alignment_method}")
+        
         for i, channel in enumerate(mixed_channels):
             if channel.ydata is not None:
                 # Check if this channel is visible (from results table)
@@ -1391,29 +1410,22 @@ Tips:
                     
                     # Check if this mixed channel should use independent x-axis
                     use_independent_x = False
-                    if channel_a and channel_a.ydata is not None and channel_b and channel_b.ydata is not None:
-                        # Get alignment method from data aligner widget
-                        alignment_config = self._get_alignment_config()
-                        alignment_method = alignment_config.get('alignment_method', 'time')
+                    if alignment_method == 'index':
+                        # For index-based alignment, check if x-data columns match
+                        a_xdata = channel_a.xdata if channel_a.xdata is not None else np.arange(len(channel_a.ydata))
+                        b_xdata = channel_b.xdata if channel_b.xdata is not None else np.arange(len(channel_b.ydata))
+                        mixed_xdata = channel.xdata if channel.xdata is not None else np.arange(len(channel.ydata))
                         
-                        self._log_message(f"Alignment method: {alignment_method}")
+                        # Check if mixed signal x-data matches either input channel x-data
+                        a_matches = len(a_xdata) == len(mixed_xdata) and np.allclose(a_xdata, mixed_xdata, rtol=1e-10, atol=1e-10)
+                        b_matches = len(b_xdata) == len(mixed_xdata) and np.allclose(b_xdata, mixed_xdata, rtol=1e-10, atol=1e-10)
                         
-                        if alignment_method == 'index':
-                            # For index-based alignment, check if x-data columns match
-                            a_xdata = channel_a.xdata if channel_a.xdata is not None else np.arange(len(channel_a.ydata))
-                            b_xdata = channel_b.xdata if channel_b.xdata is not None else np.arange(len(channel_b.ydata))
-                            mixed_xdata = channel.xdata if channel.xdata is not None else np.arange(len(channel.ydata))
-                            
-                            # Check if mixed signal x-data matches either input channel x-data
-                            a_matches = len(a_xdata) == len(mixed_xdata) and np.allclose(a_xdata, mixed_xdata, rtol=1e-10, atol=1e-10)
-                            b_matches = len(b_xdata) == len(mixed_xdata) and np.allclose(b_xdata, mixed_xdata, rtol=1e-10, atol=1e-10)
-                            
-                            # Use independent x-axis if mixed signal x-data doesn't match either input channel
-                            if not a_matches and not b_matches:
-                                use_independent_x = True
-                                self._log_message(f"Index alignment: Mixed signal x-data doesn't match input channels - using top axis")
-                            else:
-                                self._log_message(f"Index alignment: Mixed signal x-data matches input channels - using main axis")
+                        # Use independent x-axis if mixed signal x-data doesn't match either input channel
+                        if not a_matches and not b_matches:
+                            use_independent_x = True
+                            self._log_message(f"Index alignment: Mixed signal x-data doesn't match input channels - using top axis")
+                        else:
+                            self._log_message(f"Index alignment: Mixed signal x-data matches input channels - using main axis")
                     
                     if use_independent_x:
                         # Plot mixed channel on top axis with sample indices

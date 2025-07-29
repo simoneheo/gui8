@@ -150,8 +150,6 @@ class OverlayWizard(QDialog):
         self.alpha_spin.setSingleStep(0.05)
         self.alpha_spin.setValue(self.overlay_style.get('alpha', 0.8))
         self.form.addRow("Alpha (Transparency):", self.alpha_spin)
-        self.label_edit = QLineEdit(self.overlay_style.get('label', ''))
-        self.form.addRow("Label:", self.label_edit)
     def _add_text_controls(self):
         self.text_edit = QTextEdit(self.overlay_style.get('text', ''))
         self.form.addRow("Text Content:", self.text_edit)
@@ -201,8 +199,6 @@ class OverlayWizard(QDialog):
         self.boxalpha_spin = QDoubleSpinBox(); self.boxalpha_spin.setRange(0.0, 1.0); self.boxalpha_spin.setSingleStep(0.05)
         self.boxalpha_spin.setValue(self.overlay_style.get('bbox', {}).get('alpha', 0.8))
         self.form.addRow("Box Alpha:", self.boxalpha_spin)
-        self.label_edit = QLineEdit(self.overlay_style.get('label', ''))
-        self.form.addRow("Label:", self.label_edit)
     def _add_fill_controls(self):
         self.color_btn = ColorButton(self.overlay_style.get('color', '#ff69b4'))
         self.form.addRow("Fill Color:", self.color_btn)
@@ -217,8 +213,6 @@ class OverlayWizard(QDialog):
         self.edgewidth_spin.setRange(0, 10)
         self.edgewidth_spin.setValue(self.overlay_style.get('linewidth', 1))
         self.form.addRow("Edge Width:", self.edgewidth_spin)
-        self.label_edit = QLineEdit(self.overlay_style.get('label', ''))
-        self.form.addRow("Label:", self.label_edit)
     def _add_dialog_buttons(self, layout):
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Apply)
         btns.accepted.connect(self.accept)
@@ -242,7 +236,6 @@ class OverlayWizard(QDialog):
             style_map = {'solid': '-', 'dashed': '--', 'dotted': ':', 'dash-dot': '-.'}
             self.overlay_style['linestyle'] = style_map[self.style_combo.currentText()]
             self.overlay_style['alpha'] = self.alpha_spin.value()
-            self.overlay_style['label'] = self.label_edit.text()
         elif self.overlay_type == 'text':
             current_text = self.text_edit.toPlainText()
             
@@ -279,10 +272,8 @@ class OverlayWizard(QDialog):
                     'facecolor': self.boxcolor_btn.get_color(),
                     'alpha': self.boxalpha_spin.value()
                 }
-            self.overlay_style['label'] = self.label_edit.text()
         elif self.overlay_type == 'fill':
             self.overlay_style['color'] = self.color_btn.get_color()
             self.overlay_style['alpha'] = self.alpha_spin.value()
             self.overlay_style['edgecolor'] = self.edgecolor_btn.get_color()
-            self.overlay_style['linewidth'] = self.edgewidth_spin.value()
-            self.overlay_style['label'] = self.label_edit.text() 
+            self.overlay_style['linewidth'] = self.edgewidth_spin.value() 
