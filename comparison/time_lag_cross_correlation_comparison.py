@@ -316,31 +316,19 @@ class TimeLagCrossCorrelationComparison(BaseComparison):
                 
         return overlays
     
+
     @classmethod
-    def get_comparison_guidance(cls):
-        """Get guidance for this comparison method."""
-        return {
-            "title": "Time Lag Cross-Correlation Analysis",
-            "description": "Measures correlation between signals at different time delays to find optimal alignment",
-            "interpretation": {
-                "peak_lag": "Optimal time delay for maximum correlation",
-                "peak_correlation": "Correlation strength at optimal delay",
-                "positive_lag": "Test signal leads reference signal",
-                "negative_lag": "Reference signal leads test signal",
-                "zero_lag": "Signals are naturally synchronized"
-            },
-            "use_cases": [
-                "Signal alignment and synchronization",
-                "Time delay measurement between sensors",
-                "Echo detection and delay quantification",
-                "Phase relationship analysis",
-                "System response time measurement"
-            ],
-            "tips": [
-                "Use normalized correlation for amplitude-independent analysis",
-                "Choose appropriate max_lag based on expected delays",
-                "Detrend signals to remove DC bias effects",
-                "Consider signal length when interpreting results",
-                "Peak correlation strength indicates signal similarity"
-            ]
-        } 
+    def get_description(cls) -> str:
+        """
+        Get a description of this comparison method for display in the wizard console.
+        
+        Returns:
+            String description explaining what this comparison method does
+        """
+        return """Time Lag Cross-Correlation: Measures correlation between signals at different time delays.
+
+• Computes cross-correlation at various time lags between signals
+• Finds optimal delay for maximum correlation strength
+• Determines which signal leads or lags the other
+• Normalized correlation removes amplitude dependence
+""" 

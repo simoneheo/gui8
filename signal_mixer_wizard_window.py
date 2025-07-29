@@ -162,6 +162,45 @@ class SignalMixerWizardWindow(QMainWindow):
         self._build_alignment_controls_group(right_col_layout)
         self._build_console_group(right_col_layout)
         
+        # Channel Name input (outside Console frame)
+        name_layout = QHBoxLayout()
+        name_layout.addWidget(QLabel("Channel Name:"))
+        self.channel_name_input = QLineEdit()
+        self.channel_name_input.setPlaceholderText("e.g., Sum of Signals, Combined Data")
+        self.channel_name_input.setToolTip("Descriptive name for display in plots and channel lists\n(separate from expression label)")
+        self.channel_name_input.textChanged.connect(self._on_input_changed)
+        name_layout.addWidget(self.channel_name_input)
+        right_col_layout.addLayout(name_layout)
+        
+        # Apply Mixer button (outside Console frame)
+        self.create_btn = QPushButton("Apply Mixer")
+        self.create_btn.setEnabled(False)
+        self.create_btn.clicked.connect(self._on_create_mixed_channel)
+        self.create_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #228B22;
+                color: white;
+                border: 2px solid #1E7B1E;
+                border-radius: 6px;
+                padding: 8px 16px;
+                font-weight: bold;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: #32CD32;
+                border-color: #228B22;
+            }
+            QPushButton:pressed {
+                background-color: #1E7B1E;
+            }
+            QPushButton:disabled {
+                background-color: #9E9E9E;
+                color: #666666;
+                border-color: #CCCCCC;
+            }
+        """)
+        right_col_layout.addWidget(self.create_btn)
+        
         # Add columns to splitter
         left_splitter.addWidget(left_col_widget)
         left_splitter.addWidget(right_col_widget)
@@ -290,49 +329,6 @@ class SignalMixerWizardWindow(QMainWindow):
         self.console_output.setMaximumHeight(150)
         group_layout.addWidget(self.console_output)
         
-        # Channel Name input
-        name_layout = QHBoxLayout()
-        name_layout.addWidget(QLabel("Channel Name:"))
-        self.channel_name_input = QLineEdit()
-        self.channel_name_input.setPlaceholderText("e.g., Sum of Signals, Combined Data")
-        self.channel_name_input.setToolTip("Descriptive name for display in plots and channel lists\n(separate from expression label)")
-        self.channel_name_input.textChanged.connect(self._on_input_changed)
-        name_layout.addWidget(self.channel_name_input)
-        group_layout.addLayout(name_layout)
-        
-        # Action buttons
-        button_layout = QHBoxLayout()
-        
-        self.create_btn = QPushButton("Apply Mixer")
-        self.create_btn.setEnabled(False)
-        self.create_btn.clicked.connect(self._on_create_mixed_channel)
-        self.create_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #228B22;
-                color: white;
-                border: 2px solid #1E7B1E;
-                border-radius: 6px;
-                padding: 8px 16px;
-                font-weight: bold;
-                font-size: 11px;
-            }
-            QPushButton:hover {
-                background-color: #32CD32;
-                border-color: #228B22;
-            }
-            QPushButton:pressed {
-                background-color: #1E7B1E;
-            }
-            QPushButton:disabled {
-                background-color: #9E9E9E;
-                color: #666666;
-                border-color: #CCCCCC;
-            }
-        """)
-        button_layout.addWidget(self.create_btn)
-        
-        group_layout.addLayout(button_layout)
-        
         layout.addWidget(group)
     
     def _build_right_panel(self, main_splitter):
@@ -415,16 +411,14 @@ class SignalMixerWizardWindow(QMainWindow):
             welcome_msg = """Welcome to the Signal Mixer Wizard!
 
 Quick Start:
-1. Select two channels (A and B) from the dropdowns
+1. Select two channels (A and B) to mix
 2. Choose a mixing operation from the left panel
 3. (Optional) Enter a custom expression or edit the Channel Name
-4. Click "Apply Mixer" to create the mixed channel
+4. Click "Apply Mixer" to plot the mixed channel
 
 Tips:
-• Mixing operations combine two input channels
 • Use custom expressions for advanced operations (e.g., C = A**2 + B**2)
-• The Channel Name is for display purposes only
-• Mixed channels appear in the results table below"""
+• When channels are aligned in Index Mode and X values don't match, array index is used as X-axis"""
 
             self.console_output.clear()
             self.console_output.append(welcome_msg)
@@ -729,8 +723,8 @@ Tips:
 
     def _on_operation_selected(self, item):
         """Handle operation template selection"""
-        # Don't clear console here to avoid interfering with success messages
-        # self.console_output.clear()
+        # Clear console output when a new template is selected
+        self.console_output.clear()
         
         template = item.text()
         
@@ -1428,13 +1422,11 @@ Tips:
                         x_data = np.arange(len(channel.ydata))
                         self.ax_top.plot(x_data, channel.ydata, fmt, color=color, linewidth=linewidth,
                                     label=f"{channel_label}: {channel.legend_label or channel.channel_id}")
-                        self._log_message(f"Plotted {channel_label} on top axis (index-based) with {len(channel.ydata)} samples")
                     else:
                         # Plot mixed channel on main axis with time data
                         x_data = channel.xdata if channel.xdata is not None else np.arange(len(channel.ydata))
                         self.ax.plot(x_data, channel.ydata, fmt, color=color, linewidth=linewidth,
                                     label=f"{channel_label}: {channel.legend_label or channel.channel_id}")
-                        self._log_message(f"Plotted {channel_label} on main axis (time-based) with {len(channel.ydata)} samples")
                     
                     plotted_any = True
                     max_data_length = max(max_data_length, len(channel.ydata))

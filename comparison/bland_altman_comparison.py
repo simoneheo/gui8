@@ -288,26 +288,17 @@ class BlandAltmanComparison(BaseComparison):
     
 
     @classmethod
-    def get_comparison_guidance(cls):
-        """Get guidance for this comparison method."""
-        return {
-            "title": "Bland-Altman Analysis",
-            "description": "Assesses agreement between two methods by plotting differences against means",
-            "interpretation": {
-                "bias": "Mean difference between methods (systematic error)",
-                "limits_of_agreement": "Range within which 95% of differences are expected to lie",
-                "confidence_intervals": "Uncertainty ranges for bias and limits of agreement"
-            },
-            "use_cases": [
-                "Method comparison and validation",
-                "Clinical measurement agreement",
-                "Inter-rater reliability assessment",
-                "Instrument calibration validation"
-            ],
-            "tips": [
-                "Look for bias (mean difference) close to zero",
-                "Check if limits of agreement are clinically acceptable",
-                "Consider percentage differences for ratio data",
-                "Remove outliers cautiously - they may be real differences"
-            ]
-        } 
+    def get_description(cls) -> str:
+        """
+        Get a description of this comparison method for display in the wizard console.
+        
+        Returns:
+            String description explaining what this comparison method does
+        """
+        return """Bland-Altman Analysis: Assesses agreement between two measurement methods.
+
+• Plots differences (Test - Reference) against means ((Test + Reference)/2)
+• Bias: Mean difference (systematic error between methods)
+• Limits of Agreement: Range where 95% of differences are expected to lie
+• Confidence Intervals: Uncertainty ranges for bias and limits
+""" 

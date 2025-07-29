@@ -385,30 +385,20 @@ class ResidualComparison(BaseComparison):
             'residual_iqr': stats_results.get('residual_iqr') }
         return essential_stats
     
+
+
     @classmethod
-    def get_comparison_guidance(cls):
-        """Get guidance for this comparison method."""
-        return {
-            "title": "Residual Analysis",
-            "description": "Analyzes residuals to detect patterns, outliers, and model adequacy",
-            "interpretation": {
-                "residuals": "Differences between observed and predicted values",
-                "zero_line": "Residuals should be randomly scattered around zero",
-                "patterns": "Systematic patterns indicate model inadequacy",
-                "outliers": "Points with unusually large residuals",
-                "heteroscedasticity": "Non-constant variance across the range"
-            },
-            "use_cases": [
-                "Model validation and adequacy assessment",
-                "Detecting systematic errors in measurements",
-                "Identifying outliers and influential points",
-                "Checking assumptions for statistical models"
-            ],
-            "tips": [
-                "Look for random scatter around zero line",
-                "Check for funnel shapes (heteroscedasticity)",
-                "Investigate outliers - they may indicate real problems",
-                "Consider different model types if patterns are present",
-                "Use robust fitting methods for data with outliers"
-            ]
-        } 
+    def get_description(cls) -> str:
+        """
+        Get a description of this comparison method for display in the wizard console.
+        
+        Returns:
+            String description explaining what this comparison method does
+        """
+        return """Residual Analysis: Examines the differences between observed and predicted values.
+
+• Fits a model (linear/polynomial/robust) to the data
+• Plots residuals (observed - predicted) against fitted values
+• Detects patterns, outliers, and model inadequacy
+• Tests for normality, heteroscedasticity, and autocorrelation
+""" 

@@ -338,33 +338,19 @@ class CorrelationComparison(BaseComparison):
                 
         return overlays
 
-   
-    
+
     @classmethod
-    def get_comparison_guidance(cls):
-        """Get guidance for this comparison method."""
-        return {
-            "title": "Correlation Analysis",
-            "description": "Measures relationships between datasets using correlation coefficients",
-            "interpretation": {
-                "pearson": "Linear correlation (r), assumes normal distribution",
-                "spearman": "Rank-based correlation (ρ), non-parametric, robust to outliers",
-                "kendall": "Rank-based correlation (τ), more robust but computationally intensive",
-                "strength": "Strong: |r| > 0.7, Moderate: 0.3 < |r| < 0.7, Weak: |r| < 0.3"
-            },
-            "use_cases": [
-                "Assessing how well two variables move together",
-                "Method validation and agreement assessment",
-                "Feature correlation analysis",
-                "Signal similarity assessment"
-            ],
-            "tips": [
-                "Use Pearson for linear relationships with normal data",
-                "Use Spearman for monotonic relationships or non-normal data",
-                "Use Kendall for small samples or when robustness is important",
-                "Check p-values for statistical significance",
-                "Consider RMSE for absolute agreement assessment"
-            ]
-        } 
+    def get_description(cls) -> str:
+        """
+        Get a description of this comparison method for display in the wizard console.
+        
+        Returns:
+            String description explaining what this comparison method does
+        """
+        return """Correlation Analysis: Measures the strength and direction of relationships between datasets.
+
+• Pearson: Linear correlation coefficient (r) - best for normally distributed data
+• Spearman: Rank-based correlation (ρ) - robust to outliers, non-parametric  
+• Kendall: Rank-based correlation (τ) - most robust, good for small samples""" 
     
  

@@ -409,6 +409,7 @@ class ComparisonWizardWindow(QWidget):
         self._create_channel_selection_group(right_col_layout)
         self._create_alignment_group(right_col_layout)
         self._create_console_group(right_col_layout)
+        self._create_pair_management_group(right_col_layout)
         
         # Add columns to splitter
         left_splitter.addWidget(left_col_widget)
@@ -420,7 +421,6 @@ class ComparisonWizardWindow(QWidget):
     def _create_comparison_method_group(self, layout):
         """Create comparison method selection group"""
         group = QGroupBox("Comparison Methods")
-        group.setStyleSheet("QGroupBox { font-weight: bold; }")
         group_layout = QVBoxLayout(group)
         
         # Method list
@@ -436,7 +436,6 @@ class ComparisonWizardWindow(QWidget):
     def _create_method_controls_group(self, layout):
         """Create method configuration tabs"""
         group = QGroupBox("Method Configuration")
-        group.setStyleSheet("QGroupBox { font-weight: bold; }")
         group_layout = QVBoxLayout(group)
         group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         
@@ -449,7 +448,7 @@ class ComparisonWizardWindow(QWidget):
         
         # Plot Script tab
         plot_tab = self._create_plot_script_tab()
-        self.method_tabs.addTab(plot_tab, "📊 Plot Script")
+        self.method_tabs.addTab(plot_tab, "Plot Script")
         
         layout.addWidget(group)
         
@@ -496,7 +495,7 @@ class ComparisonWizardWindow(QWidget):
         # Parameters will be populated dynamically when method is selected
         
         params_layout.addWidget(self.param_table)
-        self.method_tabs.addTab(self.params_tab, "⚙️ Parameters")
+        self.method_tabs.addTab(self.params_tab, "Parameters")
         
     def _create_plot_script_tab(self):
         """Create the plot script tab with modification tracking"""
@@ -537,7 +536,6 @@ class ComparisonWizardWindow(QWidget):
     def _create_performance_options_group(self, layout):
         """Create performance options group"""
         group = QGroupBox("Performance Options")
-        group.setStyleSheet("QGroupBox { font-weight: bold; }")
         group_layout = QVBoxLayout(group)
         
         # Max points option
@@ -643,7 +641,6 @@ class ComparisonWizardWindow(QWidget):
     def _create_channel_selection_group(self, layout):
         """Create channel selection group"""
         group = QGroupBox("Channel Selection")
-        group.setStyleSheet("QGroupBox { font-weight: bold; }")
         group_layout = QFormLayout(group)
         
         # Reference file and channel
@@ -678,9 +675,8 @@ class ComparisonWizardWindow(QWidget):
         layout.addWidget(self.data_aligner_widget)
         
     def _create_console_group(self, layout):
-        """Create console output and pair management"""
-        group = QGroupBox("Console Output")
-        group.setStyleSheet("QGroupBox { font-weight: bold; }")
+        """Create console output"""
+        group = QGroupBox("Console")
         group_layout = QVBoxLayout(group)
         
         # Console output
@@ -698,13 +694,17 @@ class ComparisonWizardWindow(QWidget):
         """)
         group_layout.addWidget(self.info_output)
         
+        layout.addWidget(group)
+    
+    def _create_pair_management_group(self, layout):
+        """Create pair management controls"""
         # Pair name input
         name_layout = QHBoxLayout()
         name_layout.addWidget(QLabel("Pair Name:"))
         self.pair_name_input = QLineEdit()
         self.pair_name_input.setPlaceholderText("Enter pair name (optional)")
         name_layout.addWidget(self.pair_name_input)
-        group_layout.addLayout(name_layout)
+        layout.addLayout(name_layout)
         
         # Add Pair button
         self.add_pair_btn = QPushButton("Add Comparison Pair")
@@ -721,10 +721,8 @@ class ComparisonWizardWindow(QWidget):
                 background-color: #219a52;
             }
         """)
-        group_layout.addWidget(self.add_pair_btn)
-        
-        layout.addWidget(group)
-        
+        layout.addWidget(self.add_pair_btn)
+    
     def _build_right_panel(self, main_splitter):
         """Build the right panel with results and plots"""
         self.right_panel = QWidget()
@@ -740,21 +738,18 @@ class ComparisonWizardWindow(QWidget):
         channels_widget = QWidget()
         channels_layout = QVBoxLayout(channels_widget)
         channels_layout.setContentsMargins(0, 0, 0, 0)
-        channels_layout.addWidget(QLabel("Channels:"))
         self._build_channels_table(channels_layout)
         
         # Middle: Plot area
         plot_widget = QWidget()
         plot_layout = QVBoxLayout(plot_widget)
         plot_layout.setContentsMargins(0, 0, 0, 0)
-        plot_layout.addWidget(QLabel("Plot:"))
         self._build_plot_area(plot_layout)
         
         # Bottom: Overlays table
         overlays_widget = QWidget()
         overlays_layout = QVBoxLayout(overlays_widget)
         overlays_layout.setContentsMargins(0, 0, 0, 0)
-        overlays_layout.addWidget(QLabel("Overlays:"))
         self._build_overlays_table(overlays_layout)
         
         # Add to splitter
@@ -865,6 +860,23 @@ class ComparisonWizardWindow(QWidget):
     def _populate_initial_data(self):
         """Populate initial data for the wizard"""
         try:
+            # Display welcome message in the console output only
+            if hasattr(self, 'info_output'):
+                welcome_msg = """Welcome to the Data Comparison Wizard!
+
+Quick Start:
+1. Select comparison method from the left panel
+2. Choose reference and test files/channels
+3. Configure alignment parameters if needed
+4. Click 'Add Comparison Pair' to create analysis
+
+Tips:
+• Multiple pairs can be added for a single analysis
+• Customize plot scripts in the 'Plot Script' tab - use with caution
+"""
+                
+                self.info_output.append(welcome_msg)
+            
             # Tables will be populated dynamically when pairs are added
             # and overlays are generated by the analysis methods
             print("[ComparisonWizard] Initial data setup complete - tables will be populated dynamically")
@@ -909,9 +921,6 @@ class ComparisonWizardWindow(QWidget):
                 
                 # Update plot script tab
                 self._update_plot_script_tab(comparison_cls)
-                
-                # Update stat script tab
-                self._update_stat_script_tab(comparison_cls)
                 
             else:
                 print(f"[ComparisonWizard] No comparison class found for method: {method_name}")
@@ -1007,7 +1016,6 @@ class ComparisonWizardWindow(QWidget):
                 'plot_script_modified': self.script_tracker.is_plot_script_modified(
                     self.plot_script_text.toPlainText()
                 ),
-                'alignment_mode': self.alignment_mode_combo.currentText(),
                 'timestamp': datetime.now().isoformat()
             }
             
@@ -1038,12 +1046,6 @@ class ComparisonWizardWindow(QWidget):
             if 'plot_script' in config:
                 self.plot_script_text.setPlainText(config['plot_script'])
             
-            # Set alignment mode
-            if 'alignment_mode' in config:
-                index = self.alignment_mode_combo.findText(config['alignment_mode'])
-                if index >= 0:
-                    self.alignment_mode_combo.setCurrentIndex(index)
-            
             print(f"[ComparisonWizard] Configuration loaded for method: {config.get('method_name', 'unknown')}")
             
         except Exception as e:
@@ -1056,9 +1058,7 @@ class ComparisonWizardWindow(QWidget):
             
             summary = []
             summary.append(f"Method: {config.get('method_name', 'None')}")
-            summary.append(f"Alignment: {config.get('alignment_mode', 'None')}")
             summary.append(f"Plot Script Modified: {config.get('plot_script_modified', False)}")
-            summary.append(f"Stats Script Modified: {config.get('stats_script_modified', False)}")
             summary.append(f"Timestamp: {config.get('timestamp', 'None')}")
             summary.append("")
             summary.append("Parameters:")
@@ -1173,9 +1173,7 @@ class ComparisonWizardWindow(QWidget):
             
             # Initialize script tracker if not already done
             if self.script_tracker.original_plot_script is None:
-                stats_script = inspect.getsource(comparison_cls.stats_script) if hasattr(comparison_cls, 'stats_script') else ''
-                processed_stats_script = self._process_script_for_execution(stats_script) if stats_script else ''
-                self.script_tracker.initialize_scripts(processed_script, processed_stats_script)
+                self.script_tracker.initialize_scripts(processed_script, '')
             else:
                 # Reset to new script
                 self.script_tracker.reset_plot_script(processed_script)
@@ -1192,41 +1190,6 @@ class ComparisonWizardWindow(QWidget):
         except Exception as e:
             print(f"[ComparisonWizard] Error updating plot script tab: {e}")
 
-    def _update_stat_script_tab(self, comparison_cls):
-        """Update statistics script tab with method-specific script"""
-        try:
-            if not hasattr(comparison_cls, 'stats_script'):
-                print(f"[ComparisonWizard] No stats script found for {comparison_cls.__name__}")
-                return
-            
-            # Get the method's source code as a string
-            import inspect
-            stats_script = inspect.getsource(comparison_cls.stats_script)
-            
-            # Process the script to remove method definition and return statements
-            processed_script = self._process_script_for_execution(stats_script)
-            
-            # Initialize script tracker if not already done
-            if self.script_tracker.original_stats_script is None:
-                plot_script = inspect.getsource(comparison_cls.plot_script) if hasattr(comparison_cls, 'plot_script') else ''
-                processed_plot_script = self._process_script_for_execution(plot_script) if plot_script else ''
-                self.script_tracker.initialize_scripts(processed_plot_script, processed_script)
-            else:
-                # Reset to new script
-                self.script_tracker.reset_stats_script(processed_script)
-            
-            # Load into text editor
-            self.stats_script_text.setPlainText(processed_script)
-            
-            # Reset status
-            self.stats_script_status_label.setText("Default")
-            self.stats_script_status_label.setStyleSheet("color: gray; font-style: italic;")
-            
-            print(f"[ComparisonWizard] Stats script loaded and processed for {comparison_cls.__name__}")
-            
-        except Exception as e:
-            print(f"[ComparisonWizard] Error updating stats script tab: {e}")
-    
     def _process_script_for_execution(self, script_content: str) -> str:
         """
         Process script content to make it suitable for exec() execution.
@@ -1469,7 +1432,6 @@ class ComparisonWizardWindow(QWidget):
             
             # Clear script editors
             self.plot_script_text.setPlainText("")
-            self.stats_script_text.setPlainText("")
             
             print("[ComparisonWizard] Method configuration cleared")
             
@@ -1483,13 +1445,53 @@ class ComparisonWizardWindow(QWidget):
                 method_name = current.text()
                 print(f"[ComparisonWizard] Method changed to: {method_name}")
                 
+                # Check if this is the initial setup (no previous selection)
+                is_initial_setup = previous is None
+                
+                # Only clear console and show method description if this is not the initial setup
+                if not is_initial_setup and hasattr(self, 'info_output'):
+                    self.info_output.clear()
+                    
+                    # Get the comparison class and its description
+                    comparison_cls = None
+                    if self.manager and hasattr(self.manager, 'get_comparison_class'):
+                        # Try to get the comparison class
+                        comparison_cls = self.manager.get_comparison_class(method_name)
+                        
+                        # If not found, try lowercase version
+                        if not comparison_cls:
+                            comparison_cls = self.manager.get_comparison_class(method_name.lower())
+                        
+                        # If still not found, try common variations
+                        if not comparison_cls:
+                            method_variations = [
+                                method_name.replace(' ', '_').lower(),
+                                method_name.replace('-', '_').lower(),
+                                method_name.replace(' ', '').lower()
+                            ]
+                            for variation in method_variations:
+                                comparison_cls = self.manager.get_comparison_class(variation)
+                                if comparison_cls:
+                                    break
+                    
+                    # Display the method description
+                    if comparison_cls and hasattr(comparison_cls, 'get_description'):
+                        description = comparison_cls.get_description()
+                        self.info_output.append(description)
+                        self.info_output.append("")  # Add empty line for spacing
+                    else:
+                        # Fallback if no description available
+                        self.info_output.append(f"Selected method: {method_name}")
+                        self.info_output.append("Description not available.")
+                        self.info_output.append("")
+                
                 # Update method configuration based on selected method
                 self._update_method_configuration(method_name)
                 
         except Exception as e:
             print(f"[ComparisonWizard] Error handling method change: {e}")
-            
-
+            if hasattr(self, 'info_output'):
+                self.info_output.append(f"Error loading method description: {e}")
     
     def _on_density_changed(self, density_type):
         """Handle density type change"""
@@ -1509,27 +1511,27 @@ class ComparisonWizardWindow(QWidget):
             print("[ComparisonWizard] Refresh button clicked - triggering analysis refresh")
             
             if hasattr(self, 'info_output'):
-                self.info_output.append("🔄 Refreshing plot with current settings...")
+                self.info_output.append("Refreshing plot with current settings...")
             
             # Check if we have a manager and pairs to analyze
             if not self.manager:
                 print("[ComparisonWizard] No manager available for refresh")
                 if hasattr(self, 'info_output'):
-                    self.info_output.append("❌ No manager available for refresh")
+                    self.info_output.append("No manager available for refresh")
                 return
             
             # Check if we have any pairs to analyze
             if not hasattr(self.manager, 'pair_manager') or not self.manager.pair_manager:
                 print("[ComparisonWizard] No pair manager available")
                 if hasattr(self, 'info_output'):
-                    self.info_output.append("❌ No pair manager available")
+                    self.info_output.append("No pair manager available")
                 return
             
             all_pairs = self.manager.pair_manager.get_all_pairs()
             if not all_pairs:
                 print("[ComparisonWizard] No pairs available to refresh")
                 if hasattr(self, 'info_output'):
-                    self.info_output.append("ℹ️ No pairs available to refresh - add some pairs first")
+                    self.info_output.append("No pairs available to refresh - add some pairs first")
                 return
             
             # Get current method configuration
@@ -1539,7 +1541,7 @@ class ComparisonWizardWindow(QWidget):
             if not method_name:
                 print("[ComparisonWizard] No method selected for refresh")
                 if hasattr(self, 'info_output'):
-                    self.info_output.append("❌ No comparison method selected")
+                    self.info_output.append("No comparison method selected")
                 return
             
             print(f"[ComparisonWizard] Refreshing {len(all_pairs)} pairs with method '{method_name}' and parameters: {parameters}")
@@ -1552,12 +1554,12 @@ class ComparisonWizardWindow(QWidget):
             else:
                 print("[ComparisonWizard] Manager does not have _perform_analysis method")
                 if hasattr(self, 'info_output'):
-                    self.info_output.append("❌ Manager does not support analysis refresh")
+                    self.info_output.append("Manager does not support analysis refresh")
                 
         except Exception as e:
             print(f"[ComparisonWizard] Error refreshing plot: {e}")
             if hasattr(self, 'info_output'):
-                self.info_output.append(f"❌ Error refreshing plot: {e}")
+                self.info_output.append(f"Error refreshing plot: {e}")
         
     def _on_add_pair_clicked(self):
         """Handle add pair button click"""
@@ -1599,7 +1601,7 @@ class ComparisonWizardWindow(QWidget):
                 # Fallback if no manager - add to table and show success message
                 self._add_pair_to_table(pair_data['name'])
                 if hasattr(self, 'info_output'):
-                    self.info_output.append(f"✅ Added comparison pair: {pair_data['name']}")
+                    self.info_output.append(f"Added comparison pair: {pair_data['name']}")
                 
         except Exception as e:
             print(f"[ComparisonWizard] Error adding pair: {e}")
@@ -1619,7 +1621,7 @@ class ComparisonWizardWindow(QWidget):
                 
                 # Show success message
                 if hasattr(self, 'info_output'):
-                    self.info_output.append(f"✅ Added comparison pair: {pair_name}")
+                    self.info_output.append(f"Added comparison pair: {pair_name}")
                     
             elif result_type == 'pair_add_blocked':
                 # Pair was blocked (duplicate or other issue)
@@ -1629,7 +1631,7 @@ class ComparisonWizardWindow(QWidget):
                 
                 # Show error message (manager already logs this, but we can add context)
                 if hasattr(self, 'info_output'):
-                    self.info_output.append(f"❌ Blocked: {pair_name} - {error_msg}")
+                    self.info_output.append(f"Blocked: {pair_name} - {error_msg}")
                     
             elif result_type == 'pair_add_failed':
                 # Pair addition failed due to alignment or other error
@@ -1639,17 +1641,17 @@ class ComparisonWizardWindow(QWidget):
                 
                 # Show error message
                 if hasattr(self, 'info_output'):
-                    self.info_output.append(f"❌ Failed to add {pair_name}: {error_msg}")
+                    self.info_output.append(f"Failed to add {pair_name}: {error_msg}")
                     
             elif result_type == 'pair_deleted':
                 # Pair was deleted
                 if hasattr(self, 'info_output'):
-                    self.info_output.append("🗑️ Comparison pair deleted")
+                    self.info_output.append("Comparison pair deleted")
                     
             elif result_type == 'plot_generated':
                 # Plot was generated
                 if hasattr(self, 'info_output'):
-                    self.info_output.append("📊 Plot generated successfully")
+                    self.info_output.append("Plot generated successfully")
                     
             elif result_type == 'analysis_refreshed':
                 # Analysis refresh completed successfully
@@ -1658,14 +1660,14 @@ class ComparisonWizardWindow(QWidget):
                 
                 if hasattr(self, 'info_output'):
                     cache_info = f"Cache: {cache_stats.get('hits', 0)} hits, {cache_stats.get('misses', 0)} misses"
-                    self.info_output.append(f"✅ Plot refreshed successfully - {n_pairs} pairs analyzed. {cache_info}")
+                    self.info_output.append(f"Plot refreshed successfully - {n_pairs} pairs analyzed. {cache_info}")
                     
             elif result_type == 'analysis_refresh_failed':
                 # Analysis refresh failed
                 error_msg = result.get('error', 'Unknown error')
                 
                 if hasattr(self, 'info_output'):
-                    self.info_output.append(f"❌ Plot refresh failed: {error_msg}")
+                    self.info_output.append(f"Plot refresh failed: {error_msg}")
                     
         except Exception as e:
             print(f"[ComparisonWizard] Error handling manager comparison result: {e}")
@@ -1928,7 +1930,7 @@ class ComparisonWizardWindow(QWidget):
             # Update info output
             if hasattr(self, 'info_output'):
                 visibility_text = "shown" if is_visible else "hidden"
-                self.info_output.append(f"👁️ Pair {pair_id} {visibility_text}")
+                self.info_output.append(f"Pair {pair_id} {visibility_text}")
                 
         except Exception as e:
             print(f"[ComparisonWizard] Error handling pair visibility change: {e}")

@@ -773,6 +773,16 @@ class BaseComparison(ABC):
         
         return parameters
 
+    @classmethod
+    def get_description(cls) -> str:
+        """
+        Get a description of this comparison method for display in the wizard console.
+        
+        Returns:
+            String description explaining what this comparison method does
+        """
+        return f"{cls.name}: {cls.description}"
+
 
     # Default overlay styles - can be overridden by wizard
     default_overlay_styles = {

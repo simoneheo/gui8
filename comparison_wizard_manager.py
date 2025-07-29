@@ -2192,7 +2192,7 @@ class ComparisonWizardManager(QMainWindow):
                 error_msg = "Missing channel information for pair"
                 print(f"[ComparisonWizardManager] ERROR: {error_msg}")
                 if hasattr(self.comparison_wizard, 'info_output'):
-                    self.comparison_wizard.info_output.append(f"❌ {error_msg}")
+                    self.comparison_wizard.info_output.append(f"Error: {error_msg}")
                 return
             
             # Early duplicate detection - check BEFORE expensive alignment
@@ -2205,7 +2205,7 @@ class ComparisonWizardManager(QMainWindow):
                 error_msg = f"Duplicate pair detected: '{pair_data.get('name', 'Unnamed')}' conflicts with existing pair '{existing_pair_name}'. Use the delete icon to remove the existing pair first."
                 print(f"[ComparisonWizardManager] BLOCKED: {error_msg}")
                 if hasattr(self.comparison_wizard, 'info_output'):
-                    self.comparison_wizard.info_output.append(f"❌ {error_msg}")
+                    self.comparison_wizard.info_output.append(f"Error: {error_msg}")
                 
                 # Emit blocked signal
                 self.comparison_completed.emit({
@@ -2260,7 +2260,7 @@ class ComparisonWizardManager(QMainWindow):
                     
                     if hasattr(self.comparison_wizard, 'info_output'):
                         self.comparison_wizard.info_output.append(
-                            f"📊 Statistics: R²={pair.r_squared:.3f}, r={pair.correlation:.3f}"
+                            f"Statistics: R²={pair.r_squared:.3f}, r={pair.correlation:.3f}"
                         )
                 
                 # Add pair to PairManager (duplicate check is redundant now since we checked early)
@@ -2291,7 +2291,7 @@ class ComparisonWizardManager(QMainWindow):
                     
                     # Log success message
                     if hasattr(self.comparison_wizard, 'info_output'):
-                        self.comparison_wizard.info_output.append(f"✅ {message}")
+                        self.comparison_wizard.info_output.append(f"Success: {message}")
                     
                     # Emit signal to main window AFTER successful addition
                     self.comparison_completed.emit({
@@ -2303,7 +2303,7 @@ class ComparisonWizardManager(QMainWindow):
                     # Pair addition was blocked (likely duplicate)
                     print(f"[ComparisonWizardManager] Pair addition blocked: {message}")
                     if hasattr(self.comparison_wizard, 'info_output'):
-                        self.comparison_wizard.info_output.append(f"❌ {message}")
+                        self.comparison_wizard.info_output.append(f"Error: {message}")
                     
                     # Emit blocked signal
                     self.comparison_completed.emit({
@@ -2319,7 +2319,7 @@ class ComparisonWizardManager(QMainWindow):
                 
                 # Log error message
                 if hasattr(self.comparison_wizard, 'info_output'):
-                    self.comparison_wizard.info_output.append(f"❌ Alignment failed: {error_msg}")
+                    self.comparison_wizard.info_output.append(f"Alignment failed: {error_msg}")
                 
                 # Emit error signal
                 self.comparison_completed.emit({
@@ -2331,7 +2331,7 @@ class ComparisonWizardManager(QMainWindow):
         except Exception as e:
             print(f"Error handling pair addition: {e}")
             if hasattr(self.comparison_wizard, 'info_output'):
-                self.comparison_wizard.info_output.append(f"❌ Error adding pair: {e}")
+                self.comparison_wizard.info_output.append(f"Error adding pair: {e}")
             
             # Emit error signal
             self.comparison_completed.emit({
@@ -2373,19 +2373,19 @@ class ComparisonWizardManager(QMainWindow):
                         
                         # Log the deletion
                         if hasattr(self.comparison_wizard, 'info_output'):
-                            self.comparison_wizard.info_output.append(f"🗑️ Pair '{pair_name}' deleted - plot updated")
+                            self.comparison_wizard.info_output.append(f"Pair '{pair_name}' deleted - plot updated")
                     else:
                         print(f"[ComparisonWizardManager] Failed to remove pair '{pair_name}' from PairManager")
                         if hasattr(self.comparison_wizard, 'info_output'):
-                            self.comparison_wizard.info_output.append(f"⚠️ Failed to delete pair '{pair_name}' from backend")
+                            self.comparison_wizard.info_output.append(f"Warning: Failed to delete pair '{pair_name}' from backend")
                 else:
                     print(f"[ComparisonWizardManager] Could not find pair '{pair_name}' in PairManager")
                     if hasattr(self.comparison_wizard, 'info_output'):
-                        self.comparison_wizard.info_output.append(f"⚠️ Pair '{pair_name}' not found in backend")
+                        self.comparison_wizard.info_output.append(f"Warning: Pair '{pair_name}' not found in backend")
             else:
                 print(f"[ComparisonWizardManager] No PairManager available for deletion")
                 if hasattr(self.comparison_wizard, 'info_output'):
-                    self.comparison_wizard.info_output.append(f"⚠️ No PairManager available for deletion")
+                    self.comparison_wizard.info_output.append(f"Warning: No PairManager available for deletion")
                 
             # Emit signal to main window
             self.comparison_completed.emit({
@@ -2399,14 +2399,14 @@ class ComparisonWizardManager(QMainWindow):
             traceback.print_exc()
             
             if hasattr(self.comparison_wizard, 'info_output'):
-                self.comparison_wizard.info_output.append(f"❌ Error deleting pair: {e}")
+                self.comparison_wizard.info_output.append(f"Error deleting pair: {e}")
             
     def _on_plot_generated(self, plot_data):
         """Handle when a plot is generated"""
         try:
             # Log the plot generation
             if hasattr(self.comparison_wizard, 'info_output'):
-                self.comparison_wizard.info_output.append("📊 Plot generated successfully")
+                self.comparison_wizard.info_output.append("Plot generated successfully")
                 
             # Emit signal to main window
             self.comparison_completed.emit({
@@ -2477,13 +2477,13 @@ class ComparisonWizardManager(QMainWindow):
                 if alignment_stats.get('datetime_conversions', 0) > 0:
                     print(f"[ComparisonWizardManager] Datetime conversion applied")
                     if hasattr(self.comparison_wizard, 'info_output'):
-                        self.comparison_wizard.info_output.append("🕐 Applied datetime conversion to alignment")
+                        self.comparison_wizard.info_output.append("Applied datetime conversion to alignment")
                 
                 # Log fallback usage if it happened
                 if alignment_stats.get('fallback_usage', 0) > 0:
                     print(f"[ComparisonWizardManager] Fallback strategies used")
                     if hasattr(self.comparison_wizard, 'info_output'):
-                        self.comparison_wizard.info_output.append("⚠️ Used fallback alignment strategies")
+                        self.comparison_wizard.info_output.append("Warning: Used fallback alignment strategies")
                 
                 # Log quality metrics if available
                 if hasattr(alignment_result, 'quality_metrics') and alignment_result.quality_metrics:
@@ -2492,14 +2492,14 @@ class ComparisonWizardManager(QMainWindow):
                     if hasattr(self.comparison_wizard, 'info_output'):
                         retention_ref = quality.get('ref_data_retention', 0) * 100
                         retention_test = quality.get('test_data_retention', 0) * 100
-                        self.comparison_wizard.info_output.append(f"📊 Data retention: ref={retention_ref:.1f}%, test={retention_test:.1f}%")
+                        self.comparison_wizard.info_output.append(f"Data retention: ref={retention_ref:.1f}%, test={retention_test:.1f}%")
                 
                 # Log warnings if available
                 if hasattr(alignment_result, 'warnings') and alignment_result.warnings:
                     for warning in alignment_result.warnings:
                         print(f"[ComparisonWizardManager] Alignment warning: {warning}")
                         if hasattr(self.comparison_wizard, 'info_output'):
-                            self.comparison_wizard.info_output.append(f"⚠️ {warning}")
+                            self.comparison_wizard.info_output.append(f"Warning: {warning}")
             else:
                 # Enhanced error reporting
                 error_msg = alignment_result.error_message or "Unknown alignment error"
@@ -2509,10 +2509,10 @@ class ComparisonWizardManager(QMainWindow):
                 if alignment_stats.get('fallback_usage', 0) > 0:
                     print(f"[ComparisonWizardManager] Fallback strategies attempted but failed")
                     if hasattr(self.comparison_wizard, 'info_output'):
-                        self.comparison_wizard.info_output.append("❌ Fallback strategies attempted but failed")
+                        self.comparison_wizard.info_output.append("Error: Fallback strategies attempted but failed")
                 
                 if hasattr(self.comparison_wizard, 'info_output'):
-                    self.comparison_wizard.info_output.append(f"❌ Alignment failed: {error_msg}")
+                    self.comparison_wizard.info_output.append(f"Alignment failed: {error_msg}")
             
             return alignment_result
             
@@ -2656,7 +2656,7 @@ class ComparisonWizardManager(QMainWindow):
             aligner.clear_cache()
             print("[ComparisonWizardManager] DataAligner cache cleared")
             if hasattr(self.comparison_wizard, 'info_output'):
-                self.comparison_wizard.info_output.append("🧹 DataAligner cache cleared")
+                self.comparison_wizard.info_output.append("DataAligner cache cleared")
         except Exception as e:
             print(f"Error clearing DataAligner cache: {e}")
     
@@ -2710,7 +2710,7 @@ class ComparisonWizardManager(QMainWindow):
             print("[ComparisonWizardManager] Computing analysis...")
             
             if hasattr(self.comparison_wizard, 'info_output'):
-                self.comparison_wizard.info_output.append("🔄 Computing analysis...")
+                self.comparison_wizard.info_output.append("Computing analysis...")
             
             # Capture current method configuration
             method_config = self._capture_method_config()
@@ -2746,7 +2746,7 @@ class ComparisonWizardManager(QMainWindow):
                 for pair_id, error_msg in errors.items():
                     print(f"[ComparisonWizardManager] Error in pair {pair_id}: {error_msg}")
                     if hasattr(self.comparison_wizard, 'info_output'):
-                        self.comparison_wizard.info_output.append(f"❌ Error in pair {pair_id}: {error_msg}")
+                        self.comparison_wizard.info_output.append(f"Error in pair {pair_id}: {error_msg}")
             
             # Update plot area using RenderPlotOp
             plot_widget = self._get_plot_widget()
@@ -2783,7 +2783,7 @@ class ComparisonWizardManager(QMainWindow):
             cache_stats = analysis_results.get('cache_stats', {})
             
             if hasattr(self.comparison_wizard, 'info_output'):
-                self.comparison_wizard.info_output.append(f"✅ Analysis complete. {n_pairs} pairs processed. Cache: {cache_stats.get('hits', 0)} hits, {cache_stats.get('misses', 0)} misses")
+                self.comparison_wizard.info_output.append(f"Analysis complete. {n_pairs} pairs processed. Cache: {cache_stats.get('hits', 0)} hits, {cache_stats.get('misses', 0)} misses")
             
             print(f"[ComparisonWizardManager] Analysis complete: {n_pairs} pairs, cache stats: {cache_stats}")
             
@@ -2800,7 +2800,7 @@ class ComparisonWizardManager(QMainWindow):
             traceback.print_exc()
             
             if hasattr(self.comparison_wizard, 'info_output'):
-                self.comparison_wizard.info_output.append(f"❌ Analysis error: {e}")
+                self.comparison_wizard.info_output.append(f"Analysis error: {e}")
             
             # Emit error signal
             self.comparison_completed.emit({
@@ -2923,7 +2923,7 @@ class ComparisonWizardManager(QMainWindow):
                     # Log to console
                     n_pairs = analysis_results.get('n_pairs_processed', 0)
                     if hasattr(self.comparison_wizard, 'info_output'):
-                        self.comparison_wizard.info_output.append(f"🔄 Updated stats from {n_pairs} visible pairs")
+                        self.comparison_wizard.info_output.append(f"Updated stats from {n_pairs} visible pairs")
                 else:
                     print("[ComparisonWizardManager] Failed to update overlays from visible pairs")
             else:
@@ -2967,7 +2967,7 @@ class ComparisonWizardManager(QMainWindow):
             # Update info output
             if hasattr(self.comparison_wizard, 'info_output'):
                 visibility_text = "shown" if is_visible else "hidden"
-                self.comparison_wizard.info_output.append(f"👁️ Overlay {overlay_id} {visibility_text}")
+                self.comparison_wizard.info_output.append(f"Overlay {overlay_id} {visibility_text}")
                 
         except Exception as e:
             print(f"[ComparisonWizardManager] Error handling overlay visibility change: {e}")
@@ -3115,7 +3115,7 @@ class ComparisonWizardManager(QMainWindow):
             self._last_overlays = overlays
             
             if hasattr(self.comparison_wizard, 'info_output'):
-                self.comparison_wizard.info_output.append(f"📊 Overlay table updated with {len(overlays)} overlays")
+                self.comparison_wizard.info_output.append(f"Overlay table updated with {len(overlays)} overlays")
                 
         except Exception as e:
             print(f"[ComparisonWizardManager] Error updating overlay table: {e}")
@@ -3288,7 +3288,7 @@ class ComparisonWizardManager(QMainWindow):
             if overlay.type not in supported_types:
                 print(f"[ComparisonWizardManager] Overlay type '{overlay.type}' not supported by wizard")
                 if hasattr(self.comparison_wizard, 'info_output'):
-                    self.comparison_wizard.info_output.append(f"⚠️ Overlay type '{overlay.type}' not supported for styling")
+                    self.comparison_wizard.info_output.append(f"Warning: Overlay type '{overlay.type}' not supported for styling")
                 return
             
             # Store the overlay reference for the signal handler

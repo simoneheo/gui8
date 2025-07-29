@@ -428,29 +428,18 @@ class ErrorHistogramComparison(BaseComparison):
         }
         return essential_stats
     
-
     @classmethod
-    def get_comparison_guidance(cls):
-        """Get guidance for this comparison method."""
-        return {
-            "title": "Error Histogram Analysis",
-            "description": "Analyzes the distribution of errors between two methods using histogram visualization",
-            "interpretation": {
-                "mean_error": "Average error (bias) - should be close to zero for unbiased methods",
-                "std_error": "Standard deviation of errors - indicates precision",
-                "skewness": "Asymmetry of error distribution - zero indicates symmetric errors",
-                "normal_fit": "How well errors follow normal distribution - important for statistical tests"
-            },
-            "use_cases": [
-                "Error distribution analysis",
-                "Method precision assessment",
-                "Bias detection and quantification",
-                "Statistical assumption validation"
-            ],
-            "tips": [
-                "Look for symmetric, bell-shaped distribution centered at zero",
-                "Check if most errors fall within ±2σ (95% for normal distribution)",
-                "Percentage errors are useful for proportional error analysis",
-                "Normalized errors help compare across different measurement scales"
-            ]
-        } 
+    def get_description(cls) -> str:
+        """
+        Get a description of this comparison method for display in the wizard console.
+        
+        Returns:
+            String description explaining what this comparison method does
+        """
+        return """Error Histogram Analysis: Examines the distribution of errors between two methods.
+
+• Simple: Test - Reference (raw differences)
+• Percentage: ((Test - Reference) / Reference) × 100
+• Normalized: (Test - Reference) / std(Reference)
+• Absolute: |Test - Reference| 
+""" 

@@ -12,6 +12,8 @@ import matplotlib.pyplot as plt
 import sys
 import time
 from typing import Optional, Dict, List
+import hashlib
+from datetime import datetime
 
 from steps.process_registry import load_all_steps
 from steps.process_registry import ProcessRegistry
@@ -22,6 +24,37 @@ from channel import SourceType
 from steps.base_step import BaseStep
 import numpy as np
 from scipy.signal import find_peaks
+
+class ScriptChangeTracker:
+    """Track changes to process scripts"""
+    
+    def __init__(self):
+        self.original_script = None
+        self.script_hash = None
+        self.modification_time = None
+    
+    def initialize_script(self, script):
+        """Initialize original script and its hash"""
+        self.original_script = script
+        self.script_hash = hashlib.md5(script.encode()).hexdigest()
+        self.modification_time = None
+    
+    def is_script_modified(self, current_script):
+        """Check if script has been modified"""
+        if self.script_hash is None:
+            return False
+        current_hash = hashlib.md5(current_script.encode()).hexdigest()
+        return current_hash != self.script_hash
+    
+    def mark_script_modified(self):
+        """Mark script as modified with timestamp"""
+        self.modification_time = datetime.now()
+    
+    def reset_script(self, new_original):
+        """Reset script tracking with new original"""
+        self.original_script = new_original
+        self.script_hash = hashlib.md5(new_original.encode()).hexdigest()
+        self.modification_time = None
 
 class ProcessWizardWindow(QMainWindow):
     """
@@ -41,6 +74,9 @@ class ProcessWizardWindow(QMainWindow):
         
         # Store the default file ID to select when opening
         self.default_file_id = default_file_id
+        
+        # Initialize script change tracker
+        self.script_tracker = ScriptChangeTracker()
         
         self.setWindowTitle("Process File")
         self.setMinimumSize(1200, 800)
@@ -249,10 +285,31 @@ class ProcessWizardWindow(QMainWindow):
         script_tab = QWidget()
         script_layout = QVBoxLayout(script_tab)
         
+        # Header with modification status
+        header_layout = QHBoxLayout()
+        header_label = QLabel("Script:")
+        header_label.setFont(QFont("Arial", 10, QFont.Bold))
+        header_layout.addWidget(header_label)
+        
+        # Modification status label
+        self.script_status_label = QLabel("Default")
+        self.script_status_label.setStyleSheet("color: gray; font-style: italic;")
+        header_layout.addWidget(self.script_status_label)
+        header_layout.addStretch()
+        
+        # Reset button
+        self.reset_script_btn = QPushButton("Reset to Default")
+        self.reset_script_btn.setMaximumWidth(120)
+        self.reset_script_btn.clicked.connect(self._reset_script)
+        header_layout.addWidget(self.reset_script_btn)
+        
+        script_layout.addLayout(header_layout)
+        
         # Script editor
         self.script_editor = QTextEdit()
         self.script_editor.setPlaceholderText("Python script will appear here when a transformation is selected...")
         self.script_editor.setFont(QFont("Consolas", 10))
+        self.script_editor.textChanged.connect(self._on_script_changed)
         
         # Script controls - simplified
         script_controls_layout = QHBoxLayout()
@@ -1497,7 +1554,12 @@ Tips:
             print(f"[ProcessWizard] _sync_script_from_params() called")
             
             if not hasattr(self.wizard_manager, 'pending_step') or not self.wizard_manager.pending_step:
-                self.script_editor.setPlainText("# No filter selected\n# Select a filter from the list to generate script")
+                no_filter_script = "# No filter selected\n# Select a filter from the list to generate script"
+                self.script_editor.setPlainText(no_filter_script)
+                # Initialize script tracker with no filter message
+                self.script_tracker.initialize_script(no_filter_script)
+                self.script_status_label.setText("Default")
+                self.script_status_label.setStyleSheet("color: gray; font-style: italic;")
                 return
             
             step_cls = self.wizard_manager.pending_step
@@ -1510,13 +1572,22 @@ Tips:
                 print(f"[ProcessWizard] Parameters extracted: {params}")
             except Exception as param_e:
                 print(f"[ProcessWizard] Error getting parameters: {param_e}")
-                self.script_editor.setPlainText(f"# Error getting parameters: {param_e}\n# Please check the parameter table")
+                error_script = f"# Error getting parameters: {param_e}\n# Please check the parameter table"
+                self.script_editor.setPlainText(error_script)
+                # Initialize script tracker with error message
+                self.script_tracker.initialize_script(error_script)
+                self.script_status_label.setText("Default")
+                self.script_status_label.setStyleSheet("color: gray; font-style: italic;")
                 return
             
             # Try to get the step's actual script method
             script = self._generate_script_from_step_method(step_cls, params)
             if script:
                 self.script_editor.setPlainText(script)
+                # Initialize script tracker with the generated script
+                self.script_tracker.initialize_script(script)
+                self.script_status_label.setText("Default")
+                self.script_status_label.setStyleSheet("color: gray; font-style: italic;")
                 print(f"[ProcessWizard] Step script method exposed successfully")
                 return
             
@@ -1528,6 +1599,12 @@ Tips:
                 print(f"[ProcessWizard] Error generating script: {gen_e}")
                 self.script_editor.setPlainText(f"# Error generating script: {gen_e}\n# Using basic template instead")
                 script = self._generate_basic_script(step_name, params)
+            
+            self.script_editor.setPlainText(script)
+            # Initialize script tracker with the generated script
+            self.script_tracker.initialize_script(script)
+            self.script_status_label.setText("Default")
+            self.script_status_label.setStyleSheet("color: gray; font-style: italic;")
             
             # Set script text safely
             try:
@@ -1542,14 +1619,13 @@ Tips:
                     pass
                     
         except Exception as e:
-            print(f"[ProcessWizard] CRITICAL ERROR in _sync_script_from_params: {e}")
-            import traceback
-            traceback.print_exc()
-            # Try to set a basic error message
-            try:
-                self.script_editor.setPlainText(f"# Script generation failed: {e}")
-            except:
-                pass
+            print(f"[ProcessWizard] Critical error in _sync_script_from_params: {e}")
+            fallback_script = f"# Script generation failed: {e}"
+            self.script_editor.setPlainText(fallback_script)
+            # Initialize script tracker even with fallback script
+            self.script_tracker.initialize_script(fallback_script)
+            self.script_status_label.setText("Default")
+            self.script_status_label.setStyleSheet("color: gray; font-style: italic;")
     
     def _sync_script_to_params(self):
         """Parse script and update parameter table (basic implementation)"""
@@ -1932,6 +2008,34 @@ result_channel.description = parent_channel.description + ' -> {step_name}'
             return f"y_new = y + {constant}"
         else:
             return "# Add your custom processing here\ny_new = y.copy()  # Replace with your processing logic"
+
+    def _on_script_changed(self):
+        """Handle script text changes"""
+        try:
+            current_script = self.script_editor.toPlainText()
+            is_modified = self.script_tracker.is_script_modified(current_script)
+            
+            if is_modified:
+                self.script_status_label.setText("Modified")
+                self.script_status_label.setStyleSheet("color: orange; font-weight: bold;")
+                self.script_tracker.mark_script_modified()
+            else:
+                self.script_status_label.setText("Default")
+                self.script_status_label.setStyleSheet("color: gray; font-style: italic;")
+                
+        except Exception as e:
+            print(f"[ProcessWizard] Error handling script change: {e}")
+
+    def _reset_script(self):
+        """Reset script to default"""
+        try:
+            if self.script_tracker.original_script:
+                self.script_editor.setPlainText(self.script_tracker.original_script)
+                self.script_status_label.setText("Default")
+                self.script_status_label.setStyleSheet("color: gray; font-style: italic;")
+                print("[ProcessWizard] Script reset to default")
+        except Exception as e:
+            print(f"[ProcessWizard] Error resetting script: {e}")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
