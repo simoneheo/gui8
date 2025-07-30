@@ -205,28 +205,7 @@ class PairInspectionWizard(QDialog):
     def init_ui(self):
         """Initialize the UI components"""
         layout = QVBoxLayout(self)
-        
-        # Title and info
-        header_layout = QHBoxLayout()
-        
-        title = QLabel(f"Pair Data Inspector")
-        title_font = QFont()
-        title_font.setPointSize(14)
-        title_font.setBold(True)
-        title.setFont(title_font)
-        header_layout.addWidget(title)
-        
-        header_layout.addStretch()
-        
-        # Pair info
-        ref_label = self.pair.ref_channel_name or 'Unknown'
-        test_label = self.pair.test_channel_name or 'Unknown'
-        info_label = QLabel(f"Pair: {ref_label} vs {test_label}")
-        info_label.setStyleSheet("color: #666; font-size: 11px;")
-        header_layout.addWidget(info_label)
-        
-        layout.addLayout(header_layout)
-        
+                
         # Create splitter for main content
         splitter = QSplitter(Qt.Vertical)
         
@@ -296,55 +275,22 @@ class PairInspectionWizard(QDialog):
         
         loading_layout.addLayout(row_controls_layout)
         
-        # Load all checkbox with warning
+        # Load all checkbox with help text
         load_all_layout = QHBoxLayout()
         self.load_all_checkbox = QCheckBox("Load all rows (may be slow for large files)")
-        self.load_all_checkbox.setStyleSheet("color: #d32f2f; font-weight: bold;")
         self.load_all_checkbox.setToolTip("WARNING: Loading all rows may take a long time for large datasets.\nRecommended only for files with < 10,000 rows.")
         self.load_all_checkbox.toggled.connect(self.on_load_all_toggled)
         load_all_layout.addWidget(self.load_all_checkbox)
         load_all_layout.addStretch()
         
+        # Help text for large files
+        help_label = QLabel("For large files, only first/last rows are shown by default")
+        help_label.setStyleSheet("color: #666; font-size: 10px; font-style: italic;")
+        load_all_layout.addWidget(help_label)
+        
         loading_layout.addLayout(load_all_layout)
         
         layout.addWidget(loading_group)
-        
-        # Search group
-        search_group = QGroupBox("Search & Navigation")
-        search_layout = QVBoxLayout(search_group)
-        
-        # Row navigation
-        row_nav_layout = QHBoxLayout()
-        
-        self.goto_row_input = QSpinBox()
-        self.goto_row_input.setMinimum(0)
-        self.goto_row_input.setMaximum(0)  # Will be updated when data loads
-        self.goto_row_input.setToolTip("Go to specific row")
-        row_nav_layout.addWidget(QLabel("Go to row:"))
-        row_nav_layout.addWidget(self.goto_row_input)
-        
-        self.goto_button = QPushButton("Go")
-        self.goto_button.clicked.connect(self.goto_row)
-        row_nav_layout.addWidget(self.goto_button)
-        
-        search_layout.addLayout(row_nav_layout)
-        
-        # Search functionality
-        search_layout_controls = QHBoxLayout()
-        
-        self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Search values...")
-        self.search_input.setToolTip("Search for specific values in reference or test data")
-        search_layout_controls.addWidget(QLabel("Search:"))
-        search_layout_controls.addWidget(self.search_input)
-        
-        self.search_button = QPushButton("Search")
-        self.search_button.clicked.connect(self.search_data)
-        search_layout_controls.addWidget(self.search_button)
-        
-        search_layout.addLayout(search_layout_controls)
-        
-        layout.addWidget(search_group)
         
         return widget
     
@@ -353,18 +299,18 @@ class PairInspectionWizard(QDialog):
         widget = QWidget()
         layout = QVBoxLayout(widget)
         
-        # Table header with help text
+        # Table header with status
         header_layout = QHBoxLayout()
         table_header = QLabel("Aligned Pair Data (Read-Only)")
-        table_header.setStyleSheet("font-weight: bold; font-size: 12px; margin: 5px;")
+        table_header.setStyleSheet("font-size: 12px; margin: 5px;")
         header_layout.addWidget(table_header)
         
         header_layout.addStretch()
         
-        # Help text for large files
-        help_label = QLabel("For large files, only first/last rows are shown by default")
-        help_label.setStyleSheet("color: #666; font-size: 10px; font-style: italic;")
-        header_layout.addWidget(help_label)
+        # Table status
+        self.table_status = QLabel("Ready")
+        self.table_status.setStyleSheet("color: #666; font-size: 10px; margin: 2px; padding: 3px; background-color: #f5f5f5; border-radius: 3px;")
+        header_layout.addWidget(self.table_status)
         
         layout.addLayout(header_layout)
         
@@ -372,20 +318,12 @@ class PairInspectionWizard(QDialog):
         self.data_table = PairDataTableWidget()
         layout.addWidget(self.data_table)
         
-        # Table status
-        self.table_status = QLabel("Ready")
-        self.table_status.setStyleSheet("color: #666; font-size: 10px; margin: 2px; padding: 3px; background-color: #f5f5f5; border-radius: 3px;")
-        layout.addWidget(self.table_status)
-        
         return widget
     
     def connect_signals(self):
         """Connect all signals"""
         self.export_button.clicked.connect(self.export_data)
         self.close_button.clicked.connect(self.accept)
-        
-        # Search as you type
-        self.search_input.textChanged.connect(self.search_data)
     
     def load_data(self):
         """Load aligned pair data into the table"""
@@ -431,8 +369,7 @@ class PairInspectionWizard(QDialog):
                 test_label=test_label
             )
             
-            # Update controls
-            self.goto_row_input.setMaximum(data_length - 1)
+
             
         except Exception as e:
             self.table_status.setText(f"Error loading pair data: {str(e)}")
@@ -475,41 +412,7 @@ class PairInspectionWizard(QDialog):
             self.first_n_spin.setEnabled(True)
             self.last_m_spin.setEnabled(True)
     
-    def goto_row(self):
-        """Go to specific row in the table"""
-        row = self.goto_row_input.value()
-        if 0 <= row < self.data_table.rowCount():
-            self.data_table.selectRow(row)
-            self.data_table.scrollToItem(self.data_table.item(row, 0))
-    
-    def search_data(self):
-        """Search for specific values in the data"""
-        search_text = self.search_input.text().strip()
-        if not search_text:
-            # Clear selection if search is empty
-            self.data_table.clearSelection()
-            return
-        
-        # Find matching rows
-        matching_rows = []
-        for row in range(self.data_table.rowCount()):
-            for col in [1, 2]:  # Reference and Test columns
-                item = self.data_table.item(row, col)
-                if item and search_text.lower() in item.text().lower():
-                    matching_rows.append(row)
-                    break
-        
-        # Highlight matching rows
-        self.data_table.clearSelection()
-        for row in matching_rows:
-            self.data_table.selectRow(row)
-        
-        # Scroll to first match
-        if matching_rows:
-            self.data_table.scrollToItem(self.data_table.item(matching_rows[0], 0))
-            self.table_status.setText(f"Found {len(matching_rows)} matches")
-        else:
-            self.table_status.setText("No matches found")
+
     
     def export_data(self):
         """Export aligned pair data to file"""

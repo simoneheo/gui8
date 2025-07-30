@@ -34,17 +34,7 @@ class MetadataWizard(QDialog):
     def init_ui(self):
         """Initialize the UI components"""
         layout = QVBoxLayout(self)
-        
-        # Title
-        title = QLabel(f"Channel Metadata - {self.channel.ylabel or 'Unnamed Channel'}")
-        title_font = QFont()
-        title_font.setPointSize(14)
-        title_font.setBold(True)
-        title.setFont(title_font)
-        title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("margin: 10px; color: #2c3e50;")
-        layout.addWidget(title)
-        
+             
         # Tab widget for organized information
         self.tab_widget = QTabWidget()
         

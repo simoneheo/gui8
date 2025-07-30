@@ -89,11 +89,6 @@ class LineWizard(QDialog):
         """Initialize the UI components"""
         layout = QVBoxLayout(self)
         
-        # Title
-        title = QLabel(f"Editing: {self.channel.ylabel or 'Unnamed Channel'}")
-        title.setStyleSheet("font-size: 14px; font-weight: bold; margin: 10px;")
-        layout.addWidget(title)
-        
         # Main form
         form_layout = QFormLayout()
         

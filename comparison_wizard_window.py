@@ -1896,7 +1896,7 @@ Starting pair addition process..."""
             self.pair_deleted.emit({'pair_name': pair_name})
             
             if hasattr(self, 'info_output'):
-                self.info_output.append(f"🗑️ Pair deleted: {pair_name}")
+                self.info_output.append(f"Pair deleted: {pair_name}")
                 
         except Exception as e:
             print(f"[ComparisonWizard] Error deleting pair: {e}")

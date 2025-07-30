@@ -973,15 +973,44 @@ Recommendations:
             )
             if reply == QMessageBox.Yes:
                 try:
+                    # Get existing channels to preserve styling information
+                    existing_channels = self.channel_manager.get_channels_by_file(file_id)
+                    styling_map = {}
+                    
+                    # Create a mapping of channel styling by ylabel (which should be consistent)
+                    for channel in existing_channels:
+                        if channel.ylabel:
+                            styling_map[channel.ylabel] = {
+                                'color': channel.color,
+                                'style': channel.style,
+                                'marker': channel.marker,
+                                'show': channel.show,
+                                'yaxis': channel.yaxis,
+                                'legend_label': channel.legend_label,
+                                'z_order': getattr(channel, 'z_order', 0)
+                            }
+                    
                     # Re-parse the file to get original data
                     self.log_message(f"Re-parsing: {file_obj.filename}", "processing")
                     new_file_obj, new_channels = self.auto_parser.parse_file(file_obj.filepath)
                     
                     if new_channels:
+                        # Apply preserved styling to new channels
+                        for channel in new_channels:
+                            if channel.ylabel and channel.ylabel in styling_map:
+                                preserved_style = styling_map[channel.ylabel]
+                                channel.color = preserved_style['color']
+                                channel.style = preserved_style['style']
+                                channel.marker = preserved_style['marker']
+                                channel.show = preserved_style['show']
+                                channel.yaxis = preserved_style['yaxis']
+                                channel.legend_label = preserved_style['legend_label']
+                                channel.z_order = preserved_style['z_order']
+                        
                         # Remove old channels
                         removed_count = self.channel_manager.remove_channels_by_file(file_id)
                         
-                        # Add new channels with original data
+                        # Add new channels with original data and preserved styling
                         added_count = self.channel_manager.add_channels(new_channels)
                         
                         # Update file object
@@ -999,7 +1028,8 @@ Recommendations:
                             "File Refreshed", 
                             f"Successfully refreshed '{file_obj.filename}':\n"
                             f"• Removed {removed_count} modified channels\n"
-                            f"• Restored {added_count} original channels"
+                            f"• Restored {added_count} original channels\n"
+                            f"• Preserved styling for {len(styling_map)} channels"
                         )
                     else:
                         self.log_message(f"Failed to refresh: {file_obj.filename}", "error")

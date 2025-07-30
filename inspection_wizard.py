@@ -302,84 +302,9 @@ class InspectionWizard(QDialog):
         """Initialize the UI components"""
         layout = QVBoxLayout(self)
         
-        # Title and info
-        header_layout = QHBoxLayout()
-        
-        title = QLabel(f"Data Inspector")
-        title_font = QFont()
-        title_font.setPointSize(14)
-        title_font.setBold(True)
-        title.setFont(title_font)
-        header_layout.addWidget(title)
-        
-        header_layout.addStretch()
-        
-        # Data source info
-        if self.is_pair_data:
-            ref_label = self.pair_config.get('ref_channel', 'Unknown')
-            test_label = self.pair_config.get('test_channel', 'Unknown')
-            info_label = QLabel(f"Pair: {ref_label} vs {test_label}")
-        else:
-            info_label = QLabel(f"Channel: {self.channel.ylabel or 'Unnamed'}")
-        
-        info_label.setStyleSheet("color: #666; font-size: 11px;")
-        header_layout.addWidget(info_label)
-        
-        layout.addLayout(header_layout)
-        
-        # Create splitter for main content
-        splitter = QSplitter(Qt.Vertical)
-        
-        # Top section: Controls and statistics
-        controls_widget = self.create_controls_section()
-        splitter.addWidget(controls_widget)
-        
-        # Bottom section: Data table
-        table_widget = self.create_table_section()
-        splitter.addWidget(table_widget)
-        
-        # Set splitter proportions (1:3 ratio)
-        splitter.setSizes([150, 450])
-        layout.addWidget(splitter)
-        
-        # Dialog buttons
-        button_layout = QHBoxLayout()
-        
-        # Left side buttons
-        if not self.is_pair_data:
-            self.reset_button = QPushButton("Reset")
-            self.reset_button.setToolTip("Reset all changes to original data")
-            button_layout.addWidget(self.reset_button)
-        
-        self.export_button = QPushButton("Export")
-        self.export_button.setToolTip("Export current data to file")
-        button_layout.addWidget(self.export_button)
-        
-        button_layout.addStretch()
-        
-        # Right side buttons
-        if not self.is_pair_data:
-            self.apply_button = QPushButton("Apply Changes")
-            self.apply_button.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
-            self.apply_button.setEnabled(False)
-            button_layout.addWidget(self.apply_button)
-        
-        self.cancel_button = QPushButton("Cancel")
-        button_layout.addWidget(self.cancel_button)
-        
-        layout.addLayout(button_layout)
-    
-    def create_controls_section(self) -> QWidget:
-        """Create the controls section"""
-        widget = QWidget()
-        layout = QHBoxLayout(widget)
-        
-        # Combined Data Loading and Operations group
-        combined_group = QGroupBox("Data Loading and Operations")
-        combined_layout = QVBoxLayout(combined_group)
-        
-        # Data loading controls
-        loading_layout = QVBoxLayout()
+        # Data Preview section at the top
+        data_preview_group = QGroupBox("Data Preview")
+        data_preview_layout = QVBoxLayout(data_preview_group)
         
         # Row selection controls
         row_controls_layout = QHBoxLayout()
@@ -388,7 +313,7 @@ class InspectionWizard(QDialog):
         row_controls_layout.addWidget(QLabel("First:"))
         self.first_n_spin = QSpinBox()
         self.first_n_spin.setRange(1, 10000)
-        self.first_n_spin.setValue(100)
+        self.first_n_spin.setValue(10)
         self.first_n_spin.setSuffix(" rows")
         self.first_n_spin.setToolTip("Number of rows to load from the beginning")
         row_controls_layout.addWidget(self.first_n_spin)
@@ -397,7 +322,7 @@ class InspectionWizard(QDialog):
         row_controls_layout.addWidget(QLabel("Last:"))
         self.last_m_spin = QSpinBox()
         self.last_m_spin.setRange(1, 10000)
-        self.last_m_spin.setValue(100)
+        self.last_m_spin.setValue(10)
         self.last_m_spin.setSuffix(" rows")
         self.last_m_spin.setToolTip("Number of rows to load from the end")
         row_controls_layout.addWidget(self.last_m_spin)
@@ -408,101 +333,40 @@ class InspectionWizard(QDialog):
         self.reload_button.clicked.connect(self.reload_data_with_settings)
         row_controls_layout.addWidget(self.reload_button)
         
-        loading_layout.addLayout(row_controls_layout)
+        data_preview_layout.addLayout(row_controls_layout)
         
-        # Load all checkbox with warning
+        # Load all checkbox with help text
         load_all_layout = QHBoxLayout()
         self.load_all_checkbox = QCheckBox("Load all rows (may be slow for large files)")
-        self.load_all_checkbox.setStyleSheet("color: #d32f2f; font-weight: bold;")
         self.load_all_checkbox.setToolTip("WARNING: Loading all rows may take a long time for large datasets.\nRecommended only for files with < 10,000 rows.")
         self.load_all_checkbox.toggled.connect(self.on_load_all_toggled)
         load_all_layout.addWidget(self.load_all_checkbox)
         load_all_layout.addStretch()
         
-        loading_layout.addLayout(load_all_layout)
+        # Help text for large files
+        help_label = QLabel("For large files, only first/last rows are shown by default")
+        help_label.setStyleSheet("color: #666; font-size: 10px; font-style: italic;")
+        load_all_layout.addWidget(help_label)
         
-        combined_layout.addLayout(loading_layout)
+        data_preview_layout.addLayout(load_all_layout)
         
-        # Separator line
-        separator = QFrame()
-        separator.setFrameShape(QFrame.HLine)
-        separator.setFrameShadow(QFrame.Sunken)
-        combined_layout.addWidget(separator)
+        layout.addWidget(data_preview_group)
         
-        # Data operations
-        ops_layout = QVBoxLayout()
-        
-        # Row operations
-        row_ops_layout = QHBoxLayout()
-        
-        self.goto_row_input = QSpinBox()
-        self.goto_row_input.setMinimum(0)
-        self.goto_row_input.setMaximum(0)  # Will be updated when data loads
-        self.goto_row_input.setToolTip("Go to specific row")
-        row_ops_layout.addWidget(QLabel("Go to row:"))
-        row_ops_layout.addWidget(self.goto_row_input)
-        
-        self.goto_button = QPushButton("Go")
-        self.goto_button.clicked.connect(self.goto_row)
-        row_ops_layout.addWidget(self.goto_button)
-        
-        ops_layout.addLayout(row_ops_layout)
-        
-        # Search operations
-        search_layout = QHBoxLayout()
-        
-        self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Search values...")
-        self.search_input.setToolTip("Search for specific values in X or Y data")
-        search_layout.addWidget(QLabel("Search:"))
-        search_layout.addWidget(self.search_input)
-        
-        self.search_button = QPushButton("Search")
-        self.search_button.clicked.connect(self.search_data)
-        search_layout.addWidget(self.search_button)
-        
-        ops_layout.addLayout(search_layout)
-        
-        # Filter operations
-        filter_layout = QHBoxLayout()
-        
-        if not self.is_pair_data:
-            self.show_modified_only = QCheckBox("Show modified only")
-            self.show_modified_only.toggled.connect(self.filter_table)
-            filter_layout.addWidget(self.show_modified_only)
-        
-        self.show_invalid_only = QCheckBox("Show invalid only")
-        self.show_invalid_only.toggled.connect(self.filter_table)
-        filter_layout.addWidget(self.show_invalid_only)
-        
-        ops_layout.addLayout(filter_layout)
-        
-        combined_layout.addLayout(ops_layout)
-        
-        layout.addWidget(combined_group)
-        
-        return widget
-    
-    def create_table_section(self) -> QWidget:
-        """Create the data table section"""
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        
-        # Table header with help text
+        # Table header with status
         header_layout = QHBoxLayout()
         if self.is_pair_data:
             table_header = QLabel("Aligned Pair Data (Read-Only)")
         else:
             table_header = QLabel("Channel Data (Editable)")
-        table_header.setStyleSheet("font-weight: bold; font-size: 12px; margin: 5px;")
+        table_header.setStyleSheet("font-size: 12px; margin: 5px;")
         header_layout.addWidget(table_header)
         
         header_layout.addStretch()
         
-        # Help text for large files
-        help_label = QLabel("For large files, only first/last rows are shown by default")
-        help_label.setStyleSheet("color: #666; font-size: 10px; font-style: italic;")
-        header_layout.addWidget(help_label)
+        # Table status
+        self.table_status = QLabel("Ready")
+        self.table_status.setStyleSheet("color: #666; font-size: 10px; margin: 2px; padding: 3px; background-color: #f5f5f5; border-radius: 3px;")
+        header_layout.addWidget(self.table_status)
         
         layout.addLayout(header_layout)
         
@@ -510,29 +374,32 @@ class InspectionWizard(QDialog):
         self.data_table = DataTableWidget()
         layout.addWidget(self.data_table)
         
-        # Table status
-        self.table_status = QLabel("Ready")
-        self.table_status.setStyleSheet("color: #666; font-size: 10px; margin: 2px; padding: 3px; background-color: #f5f5f5; border-radius: 3px;")
-        layout.addWidget(self.table_status)
+        # Dialog buttons
+        button_layout = QHBoxLayout()
         
-        return widget
+        button_layout.addStretch()
+        
+        # Right side buttons
+        if not self.is_pair_data:
+            self.apply_button = QPushButton("Apply Changes")
+            self.apply_button.setEnabled(False)
+            button_layout.addWidget(self.apply_button)
+        
+        self.cancel_button = QPushButton("Cancel")
+        button_layout.addWidget(self.cancel_button)
+        
+        layout.addLayout(button_layout)
+    
+
+    
+
     
     def connect_signals(self):
         """Connect all signals"""
         self.data_table.data_changed.connect(self.on_data_changed)
         if not self.is_pair_data:
-            self.reset_button.clicked.connect(self.reset_data)
-        self.export_button.clicked.connect(self.export_data)
-        if not self.is_pair_data:
             self.apply_button.clicked.connect(self.apply_changes)
         self.cancel_button.clicked.connect(self.cancel_changes)
-        
-        # Search as you type
-        self.search_input.textChanged.connect(self.search_data)
-        
-        # Loading controls signals (already connected in create_controls_section)
-        # self.reload_button.clicked.connect(self.reload_data_with_settings) - connected in create_controls_section
-        # self.load_all_checkbox.toggled.connect(self.on_load_all_toggled) - connected in create_controls_section
     
     def load_data(self):
         """Load data into the table - handles both channel and pair data"""
@@ -555,7 +422,7 @@ class InspectionWizard(QDialog):
                 
                 # Display warning for large files
                 if data_length > 10000:
-                    self.table_status.setText(f"⚠️ Large file detected ({data_length:,} rows). Loading first {first_n} and last {last_m} rows for performance.")
+                    self.table_status.setText(f"Large file detected ({data_length:,} rows). Loading first {first_n} and last {last_m} rows for performance.")
                 else:
                     self.table_status.setText(f"Loading first {first_n} and last {last_m} rows of {data_length:,} total rows.")
             else:
@@ -575,9 +442,6 @@ class InspectionWizard(QDialog):
                 x_label="X Value",
                 y_label="Y Value"
             )
-            
-            # Update controls
-            self.goto_row_input.setMaximum(data_length - 1)
             
         else:
             self.table_status.setText("No data available")
@@ -702,9 +566,6 @@ class InspectionWizard(QDialog):
             
             # Make table read-only for pair data
             self.data_table.setEditTriggers(QTableWidget.NoEditTriggers)
-            
-            # Update controls
-            self.goto_row_input.setMaximum(data_length - 1)
             
             # Store aligned data for later use
             self.aligned_data = aligned_data
@@ -837,104 +698,11 @@ class InspectionWizard(QDialog):
             else:
                 self.setWindowTitle(f"Data Inspector - {self.channel.ylabel or 'Unnamed Channel'}")
     
-    def goto_row(self):
-        """Go to specific row in the table"""
-        row = self.goto_row_input.value()
-        if 0 <= row < self.data_table.rowCount():
-            self.data_table.selectRow(row)
-            self.data_table.scrollToItem(self.data_table.item(row, 0))
+
     
-    def search_data(self):
-        """Search for specific values in the data"""
-        search_text = self.search_input.text().strip()
-        if not search_text:
-            # Clear selection if search is empty
-            self.data_table.clearSelection()
-            return
-        
-        # Find matching rows
-        matching_rows = []
-        for row in range(self.data_table.rowCount()):
-            for col in [1, 2]:  # X and Y columns
-                item = self.data_table.item(row, col)
-                if item and search_text.lower() in item.text().lower():
-                    matching_rows.append(row)
-                    break
-        
-        # Highlight matching rows
-        self.data_table.clearSelection()
-        for row in matching_rows:
-            self.data_table.selectRow(row)
-        
-        # Scroll to first match
-        if matching_rows:
-            self.data_table.scrollToItem(self.data_table.item(matching_rows[0], 0))
-            self.table_status.setText(f"Found {len(matching_rows)} matches")
-        else:
-            self.table_status.setText("No matches found")
+
     
-    def filter_table(self):
-        """Filter table based on checkboxes"""
-        show_modified = False
-        if hasattr(self, 'show_modified_only'):
-            show_modified = self.show_modified_only.isChecked()
-        show_invalid = self.show_invalid_only.isChecked()
-        
-        if not show_modified and not show_invalid:
-            # Show all rows
-            for row in range(self.data_table.rowCount()):
-                self.data_table.setRowHidden(row, False)
-        else:
-            # Filter rows
-            for row in range(self.data_table.rowCount()):
-                should_show = True
-                
-                if show_modified:
-                    should_show = should_show and (row in self.data_table.modified_rows)
-                
-                if show_invalid:
-                    is_invalid = False
-                    for col in [1, 2]:
-                        item = self.data_table.item(row, col)
-                        if item:
-                            try:
-                                float(item.text())
-                            except ValueError:
-                                is_invalid = True
-                                break
-                    should_show = should_show and is_invalid
-                
-                self.data_table.setRowHidden(row, not should_show)
-    
-    def reset_data(self):
-        """Reset all modifications"""
-        if self.data_table.has_modifications():
-            reply = QMessageBox.question(
-                self, 
-                "Reset Data", 
-                "Reset all changes to original data?",
-                QMessageBox.Yes | QMessageBox.No
-            )
-            if reply == QMessageBox.Yes:
-                self.data_table.reset_modifications()
-                self.has_unsaved_changes = False
-                if not self.is_pair_data:
-                    self.apply_button.setEnabled(False)
-                self.table_status.setText("Data reset to original values")
-                if self.is_pair_data:
-                    pair_name = self.pair_config.get('name', 'Unnamed Pair')
-                    self.setWindowTitle(f"Pair Data Inspector - {pair_name}")
-                else:
-                    self.setWindowTitle(f"Data Inspector - {self.channel.ylabel or 'Unnamed Channel'}")
-    
-    def export_data(self):
-        """Export current data to file"""
-        # For now, just show a message - could implement actual export
-        QMessageBox.information(
-            self, 
-            "Export Data", 
-            "Export functionality would save current data to CSV/TXT file.\n(Feature not yet implemented)"
-        )
+
     
     def apply_changes(self):
         """Apply the changes to the data"""
@@ -969,15 +737,15 @@ class InspectionWizard(QDialog):
             # Emit signal that data was updated
             self.data_updated.emit(self.channel.channel_id)
             
-            QMessageBox.information(
-                self, 
-                "Changes Applied", 
-                f"Successfully updated {len(self.data_table.modified_rows)} data points."
-            )
+            # Reset the modification tracking
+            self.data_table.modified_rows.clear()
+            self.has_unsaved_changes = False
+            self.apply_button.setEnabled(False)
             
-            self.accept()
+            # Update status
+            self.table_status.setText("Changes applied to main window")
         else:
-            QMessageBox.warning(self, "Error", "Failed to get modified data.")
+            self.table_status.setText("Error: Failed to get modified data")
     
     def _apply_pair_changes(self):
         """Apply changes to pair data"""
@@ -1041,16 +809,14 @@ class InspectionWizard(QDialog):
                 except Exception as e:
                     print(f"[InspectionWizard] Error recalculating statistics: {e}")
             
-            QMessageBox.information(
-                self, 
-                "Changes Applied", 
-                f"Successfully updated {len(self.data_table.modified_rows)} aligned data points.\n"
-                "Note: Changes are applied to the aligned data only."
-            )
+            # Reset the modification tracking
+            self.data_table.modified_rows.clear()
+            self.has_unsaved_changes = False
             
-            self.accept()
+            # Update status
+            self.table_status.setText("Changes applied to aligned data")
         else:
-            QMessageBox.warning(self, "Error", "Failed to get modified data.")
+            self.table_status.setText("Error: Failed to get modified data")
     
     def cancel_changes(self):
         """Cancel and close the dialog"""

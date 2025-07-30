@@ -176,24 +176,7 @@ class TransformWizard(QDialog):
     def init_ui(self):
         """Initialize the UI components"""
         layout = QVBoxLayout(self)
-        
-        # Title
-        title = QLabel(f"Data Transform Wizard")
-        title_font = QFont()
-        title_font.setPointSize(14)
-        title_font.setBold(True)
-        title.setFont(title_font)
-        title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("margin: 10px; color: #2c3e50;")
-        layout.addWidget(title)
-        
-        # Channel info
-        info_label = QLabel(f"Channel: {self.channel.ylabel or 'Unnamed'} | "
-                           f"Data Points: {len(self.channel.ydata) if self.channel.ydata is not None else 0}")
-        info_label.setAlignment(Qt.AlignCenter)
-        info_label.setStyleSheet("color: #666; font-size: 11px; margin-bottom: 10px;")
-        layout.addWidget(info_label)
-        
+                
         # Create tab widget
         self.tab_widget = QTabWidget()
         
@@ -223,7 +206,7 @@ class TransformWizard(QDialog):
         
         # Right side buttons
         self.apply_button = QPushButton("Apply Transform")
-        self.apply_button.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
+        self.apply_button.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; border: none; border-radius: 4px; padding: 8px 16px;")
         self.apply_button.setEnabled(False)  # Initially disabled until preview is successful
         button_layout.addWidget(self.apply_button)
         
@@ -515,16 +498,33 @@ class TransformWizard(QDialog):
         # Create table widget for data display
         self.data_table = QTableWidget()
         self.data_table.setMinimumHeight(300)  # Increased height for better visibility
-        self.data_table.setStyleSheet("font-family: 'Courier New', monospace; font-size: 9px;")
+        
+        # Configure table appearance to match inspection wizard
+        self.data_table.setAlternatingRowColors(True)
+        self.data_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.data_table.setSelectionMode(QTableWidget.ExtendedSelection)
         
         # Set up table headers
         self.data_table.setColumnCount(2)
-        self.data_table.setHorizontalHeaderLabels(["X", "Y"])
-        self.data_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        
+        # Hide the header
+        self.data_table.horizontalHeader().setVisible(False)
+        
+        # Configure column widths
+        header = self.data_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.Stretch)  # X column
+        header.setSectionResizeMode(1, QHeaderView.Stretch)  # Y column
+        
+        # Enable sorting
+        self.data_table.setSortingEnabled(True)
         
         # Enable scrolling
         self.data_table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.data_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        
+        # Set font styling to match inspection wizard style
+        table_font = QFont("Arial", 9)
+        self.data_table.setFont(table_font)
         
         data_layout.addWidget(self.data_table)
         layout.addWidget(data_group)
@@ -649,13 +649,47 @@ class TransformWizard(QDialog):
         num_rows = min(100, len(y_data))
         self.data_table.setRowCount(num_rows)
         
+        # Helper function to format values safely (matching inspection wizard)
+        def format_value(value):
+            """Format a value safely, handling both numeric and string types"""
+            try:
+                # Try to convert to float and format as numeric
+                float_val = float(value)
+                if isinstance(value, (int, float, np.number)):
+                    return f"{float_val:.8g}"
+                else:
+                    # For string values that can be converted to float, show both
+                    return f"{value} ({float_val:.8g})"
+            except (ValueError, TypeError):
+                # If conversion fails, just return the string representation
+                return str(value)
+        
+        def format_tooltip(value):
+            """Format a value for tooltip display"""
+            try:
+                float_val = float(value)
+                if isinstance(value, (int, float, np.number)):
+                    return f"Original: {float_val:.12g}"
+                else:
+                    return f"Original: {value} (numeric: {float_val:.12g})"
+            except (ValueError, TypeError):
+                return f"Original: {value}"
+        
         for i in range(num_rows):
             # X data
-            x_item = QTableWidgetItem(f"{x_data[i]:.6g}")
+            x_display = format_value(x_data[i])
+            x_tooltip = format_tooltip(x_data[i])
+            x_item = QTableWidgetItem(x_display)
+            x_item.setToolTip(x_tooltip)
+            x_item.setData(Qt.UserRole, i)  # Store original index
             self.data_table.setItem(i, 0, x_item)
             
             # Y data
-            y_item = QTableWidgetItem(f"{y_data[i]:.6g}")
+            y_display = format_value(y_data[i])
+            y_tooltip = format_tooltip(y_data[i])
+            y_item = QTableWidgetItem(y_display)
+            y_item.setToolTip(y_tooltip)
+            y_item.setData(Qt.UserRole, i)  # Store original index
             self.data_table.setItem(i, 1, y_item)
     
     def update_applied_preview(self):

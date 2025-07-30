@@ -102,9 +102,6 @@ class PairMarkerWizard(QDialog):
         """Initialize the UI components"""
         layout = QVBoxLayout(self)
         
-        # Header
-        self._create_header(layout)
-        
         # Main form
         form_layout = QFormLayout()
         
@@ -130,19 +127,7 @@ class PairMarkerWizard(QDialog):
         
         # Dialog buttons
         self._create_dialog_buttons(layout)
-    
-    def _create_header(self, layout: QVBoxLayout):
-        """Create the header section"""
-        # Title
-        pair_name = self.pair_config.get('name', 'Unnamed Pair')
-        title = QLabel(f"Visual Styling for: {pair_name}")
-        title.setStyleSheet("font-size: 14px; font-weight: bold; margin: 10px;")
-        layout.addWidget(title)
-        
-        # Pair info
-        ref_channel = self.pair_config.get('ref_channel', 'Unknown')
-        test_channel = self.pair_config.get('test_channel', 'Unknown')
-        
+            
     
     def _create_marker_shape_controls(self, form_layout: QFormLayout):
         """Create marker shape selection controls"""
