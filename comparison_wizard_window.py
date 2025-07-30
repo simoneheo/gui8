@@ -1603,13 +1603,9 @@ Starting pair addition process..."""
             # Perform alignment if we have Channel objects
             alignment_result = None
             if ref_channel and test_channel and self.manager:
-                if hasattr(self, 'info_output'):
-                    self.info_output.append(f"Performing data alignment...")
                 print(f"[DEBUG] _on_add_pair_clicked: Performing alignment for {ref_channel.legend_label} vs {test_channel.legend_label}")
                 alignment_result = self.manager.perform_alignment(ref_channel, test_channel, alignment_params)
             else:
-                if hasattr(self, 'info_output'):
-                    self.info_output.append("Cannot perform alignment - missing channels or manager")
                 print(f"[DEBUG] _on_add_pair_clicked: Cannot perform alignment - missing channels or manager")
             
             # Create pair data (pure data, no method configuration)
@@ -1629,14 +1625,10 @@ Starting pair addition process..."""
             else:
                 # Fallback if no manager - add to table and show success message
                 self._add_pair_to_table(pair_data['name'])
-                if hasattr(self, 'info_output'):
-                    self.info_output.append(f"Added comparison pair: {pair_data['name']}")
                 
         except Exception as e:
             error_msg = f"Error adding pair: {e}"
             print(f"[ComparisonWizard] {error_msg}")
-            if hasattr(self, 'info_output'):
-                self.info_output.append(error_msg)
     
     def _on_manager_comparison_completed(self, result):
         """Handle comparison completion results from the manager"""
@@ -1651,9 +1643,6 @@ Starting pair addition process..."""
                 # Update the table
                 self._add_pair_to_table(pair_name)
                 
-                # Show success message
-                if hasattr(self, 'info_output'):
-                    self.info_output.append(f"Added comparison pair: {pair_name}")
                     
             elif result_type == 'pair_add_blocked':
                 # Pair was blocked (duplicate or other issue)
@@ -1661,44 +1650,19 @@ Starting pair addition process..."""
                 error_msg = result.get('error', 'Unknown error')
                 pair_name = pair_data.get('name', 'Unnamed')
                 
-                # Show error message (manager already logs this, but we can add context)
-                if hasattr(self, 'info_output'):
-                    self.info_output.append(f"Blocked: {pair_name} - {error_msg}")
-                    
             elif result_type == 'pair_add_failed':
                 # Pair addition failed due to alignment or other error
                 pair_data = result.get('data', {})
                 error_msg = result.get('error', 'Unknown error')
                 pair_name = pair_data.get('name', 'Unnamed')
                 
-                # Show error message
-                if hasattr(self, 'info_output'):
-                    self.info_output.append(f"Failed to add {pair_name}: {error_msg}")
-                    
-            elif result_type == 'pair_deleted':
-                # Pair was deleted
-                if hasattr(self, 'info_output'):
-                    self.info_output.append("Comparison pair deleted")
-                    
-            elif result_type == 'plot_generated':
-                # Plot was generated
-                if hasattr(self, 'info_output'):
-                    self.info_output.append("Plot generated successfully")
                     
             elif result_type == 'analysis_refreshed':
                 # Analysis refresh completed successfully
                 n_pairs = result.get('n_pairs', 0)
                 cache_stats = result.get('cache_stats', {})
                 
-                if hasattr(self, 'info_output'):
-                    self.info_output.append(f"Plot refreshed successfully - {n_pairs} pairs analyzed.")
                     
-            elif result_type == 'analysis_refresh_failed':
-                # Analysis refresh failed
-                error_msg = result.get('error', 'Unknown error')
-                
-                if hasattr(self, 'info_output'):
-                    self.info_output.append(f"Plot refresh failed: {error_msg}")
                     
         except Exception as e:
             print(f"[ComparisonWizard] Error handling manager comparison result: {e}")
@@ -2028,7 +1992,7 @@ Starting pair addition process..."""
             'marker_size': getattr(pair, 'marker_size', 50),
             'marker_alpha': getattr(pair, 'alpha', 0.8),  # Use alpha attribute
             'edge_color': getattr(pair, 'edge_color', '#000000'),
-            'edge_width': getattr(pair, 'edge_width', 1.0),
+            'edge_width': getattr(pair, 'edge_width', 0.0),
             'fill_style': getattr(pair, 'fill_style', 'full'),
             'legend_label': getattr(pair, 'name', ''),  # Use name as legend label
             'z_order': getattr(pair, 'z_order', 0),
@@ -2051,7 +2015,7 @@ Starting pair addition process..."""
         
         # Set additional styling attributes (now guaranteed to exist)
         pair.edge_color = config.get('edge_color', '#000000')
-        pair.edge_width = config.get('edge_width', 1.0)
+        pair.edge_width = config.get('edge_width', 0.0)
         pair.fill_style = config.get('fill_style', 'full')
         pair.z_order = config.get('z_order', 0)
         

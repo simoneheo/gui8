@@ -1230,7 +1230,7 @@ class PlotWizardManager(QObject):
                             'marker_size': 50,
                             'marker_alpha': 0.7,
                             'edge_color': '#000000',
-                            'edge_width': 1.0,
+                            'edge_width': 0.0,
                             'fill_style': 'full',
                             'z_order': 0
                         }
@@ -1306,7 +1306,7 @@ class PlotWizardManager(QObject):
                 item['marker_size'] = marker_config.get('marker_size', 50)
                 item['marker_alpha'] = marker_config.get('marker_alpha', 0.7)
                 item['edge_color'] = marker_config.get('edge_color', '#000000')
-                item['edge_width'] = marker_config.get('edge_width', 1.0)
+                item['edge_width'] = marker_config.get('edge_width', 0.0)
                 item['z_order'] = marker_config.get('z_order', 0)
                 
                 # Store x-axis preference for marker plots
@@ -2861,12 +2861,35 @@ class PlotWizardManager(QObject):
                     print(f"[PlotWizard] Layout adjustment warning: {e}")
                     pass  # Ignore layout errors
             
+            # Add subtle watermark
+            self._add_watermark()
+            
             # Update canvas
             self.window.canvas.draw()
             
         except Exception as e:
             print(f"[PlotWizard] Error updating plot: {str(e)}")
             traceback.print_exc()
+    
+    def _add_watermark(self):
+        """Add subtle watermark to the plot"""
+        try:
+            # Add watermark text in lower right corner
+            self.window.figure.text(
+                0.98, 0.02,  # Position: 98% from left, 2% from bottom
+                "Generated via Raw Dog",
+                fontsize=8,
+                color='gray',
+                alpha=0.6,
+                ha='right',  # Right-aligned
+                va='bottom',  # Bottom-aligned
+                transform=self.window.figure.transFigure,  # Use figure coordinates
+                style='italic'
+            )
+        except Exception as e:
+            print(f"[PlotWizard] Error adding watermark: {e}")
+            # Don't let watermark errors break the plot
+            pass
             
     def show(self):
         """Show the plot wizard window"""

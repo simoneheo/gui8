@@ -263,7 +263,7 @@ class PairAnalyzer:
             'alpha': getattr(pair, 'alpha', 0.6),
             'marker_size': getattr(pair, 'marker_size', 50),
             'edge_color': getattr(pair, 'edge_color', '#000000'),
-            'edge_width': getattr(pair, 'edge_width', 1.0),
+            'edge_width': getattr(pair, 'edge_width', 0.0),
             'z_order': getattr(pair, 'z_order', 0),
             'n_points': len(x_data),
             'metadata': plot_metadata
@@ -278,7 +278,7 @@ class PairAnalyzer:
             # Histogram-specific styling for overlapping display
             scatter_data['bar_alpha'] = getattr(pair, 'alpha', 0.6)  # For overlapping transparency
             scatter_data['bar_edge_color'] = getattr(pair, 'edge_color', '#000000')
-            scatter_data['bar_edge_width'] = getattr(pair, 'edge_width', 1.0)
+            scatter_data['bar_edge_width'] = getattr(pair, 'edge_width', 0.0)
             scatter_data['bar_fill_color'] = getattr(pair, 'color', '#1f77b4')
             scatter_data['bar_z_order'] = getattr(pair, 'z_order', 0)
             

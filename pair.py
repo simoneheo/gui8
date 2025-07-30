@@ -65,7 +65,7 @@ class Pair:
                  ref_file_id=None, test_file_id=None, ref_channel_name=None, test_channel_name=None,
                  alignment_config=None, show=True, color=None, marker_type=None, marker_color=None, 
                  line_style="-", alpha=1.0, marker_size=50, legend_label=None, 
-                 edge_color="#000000", edge_width=1.0, fill_style="full", z_order=0,
+                 edge_color="#000000", edge_width=0.0, fill_style="full", z_order=0,
                  tags=None, description=None, metadata=None):
         
         # Core identifiers

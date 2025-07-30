@@ -191,7 +191,7 @@ class DataTableWidget(QTableWidget):
             item.setFlags(item.flags() & ~Qt.ItemIsEditable)
             item.setBackground(QColor(220, 220, 220))
             item.setTextAlignment(Qt.AlignCenter)
-            item.setFont(QFont("Arial", 9, QFont.Italic))
+            item.setFont(QFont("Arial", 9, italic=True))
             self.setItem(table_row, col, item)
     
     def _on_item_changed(self, item):

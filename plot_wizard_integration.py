@@ -241,7 +241,7 @@ class ConfigurationWizardManager(QObject):
             'marker_color': getattr(channel, 'color', '#1f77b4'),
             'marker_alpha': getattr(channel, 'alpha', 1.0),
             'edge_color': getattr(channel, 'edge_color', '#000000'),
-            'edge_width': getattr(channel, 'edge_width', 1.0),
+            'edge_width': getattr(channel, 'edge_width', 0.0),
             'x_axis': getattr(channel, 'xaxis', 'x-bottom').replace('x-', ''),
             'z_order': getattr(channel, 'z_order', 0),
             'channel_id': channel.channel_id

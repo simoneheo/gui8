@@ -146,20 +146,13 @@ class ExportWizardWindow(QMainWindow):
         
         self.channel_widget = QWidget()
         self.channel_layout = QVBoxLayout(self.channel_widget)
+        self.channel_layout.setSpacing(2)  # Reduce spacing between items
+        self.channel_layout.setContentsMargins(5, 5, 5, 5)  # Set small margins
         
         scroll_area.setWidget(self.channel_widget)
         layout.addWidget(scroll_area)
         
-        # Select all/none buttons
-        button_layout = QHBoxLayout()
-        self.select_all_button = QPushButton("Select All")
-        self.select_none_button = QPushButton("Select None")
-        
-        button_layout.addWidget(self.select_all_button)
-        button_layout.addWidget(self.select_none_button)
-        button_layout.addStretch()
-        
-        layout.addLayout(button_layout)
+
         
         return group
         
@@ -187,8 +180,6 @@ class ExportWizardWindow(QMainWindow):
     def _connect_signals(self):
         """Connect widget signals"""
         self.file_combo.currentTextChanged.connect(self._on_file_changed)
-        self.select_all_button.clicked.connect(self._on_select_all)
-        self.select_none_button.clicked.connect(self._on_select_none)
         self.export_button.clicked.connect(self._on_export)
         self.cancel_button.clicked.connect(self.close)
         
@@ -228,6 +219,9 @@ class ExportWizardWindow(QMainWindow):
             # Create checkboxes for each channel
             for channel in channels:
                 self._create_channel_checkbox(channel)
+            
+            # Add stretch to push all items to the top
+            self.channel_layout.addStretch()
                 
         self._update_export_button_state()
         
@@ -291,19 +285,7 @@ class ExportWizardWindow(QMainWindow):
         """Handle channel checkbox state change"""
         self._update_export_button_state()
         
-    def _on_select_all(self):
-        """Select all channel checkboxes"""
-        for i in range(self.channel_layout.count()):
-            widget = self.channel_layout.itemAt(i).widget()
-            if isinstance(widget, QCheckBox):
-                widget.setChecked(True)
-                
-    def _on_select_none(self):
-        """Deselect all channel checkboxes"""
-        for i in range(self.channel_layout.count()):
-            widget = self.channel_layout.itemAt(i).widget()
-            if isinstance(widget, QCheckBox):
-                widget.setChecked(False)
+
                 
     def _update_export_button_state(self):
         """Update the export button enabled state"""

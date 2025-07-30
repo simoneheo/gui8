@@ -192,7 +192,7 @@ class PlotWizardDemo(QMainWindow):
                 'marker_color': '#ff0000',
                 'marker_alpha': 0.8,
                 'edge_color': '#000000',
-                'edge_width': 1.0,
+                'edge_width': 0.0,
                 'x_axis': 'bottom',
                 'z_order': 1,
                 'channel_id': 'demo_marker'

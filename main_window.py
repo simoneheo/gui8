@@ -33,7 +33,7 @@ from parse_wizard_manager import ParseWizardManager
 class MainWindowUI(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Signal Processing GUI")
+        self.setWindowTitle("Raw Dog v1.0")
         self.setMinimumSize(1200, 800)
         
         # Enable drag and drop for entire window
@@ -238,6 +238,21 @@ class MainWindowUI(QWidget):
         self.console.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         # console_layout.addWidget(console_label)
         console_layout.addWidget(self.console)
+        
+        # Add subtle footer to console panel only
+        footer_label = QLabel("website: www.rawanimal.dev<br> email: chicago.lakes@proton.me")
+        footer_label.setStyleSheet("""
+            QLabel {
+                color: #888;
+                font-size: 10px;
+                padding: 4px;
+                background-color: #f8f8f8;
+                border-top: 1px solid #e0e0e0;
+                text-align: center;
+            }
+        """)
+        footer_label.setAlignment(Qt.AlignCenter)
+        console_layout.addWidget(footer_label)
 
         main_splitter.addWidget(right_panel)
         
@@ -623,7 +638,7 @@ class MainWindowUI(QWidget):
         
         # Warning when showing all types about plot preview limitations
         if show_all:
-            self.log_message("Note: Plot preview is disabled for SPECTROGRAM and STATISTICAL channel types", "warning")
+            self.log_message("Note: Plot preview is disabled for COMPARISON channels", "warning")
 
     def _should_disable_show_checkbox(self, channel):
         """Determine if the Show checkbox should be disabled for this channel"""
@@ -1671,10 +1686,12 @@ Recommendations:
             if result_type == 'pair_added':
                 pair_data = result.get('data', {})
                 pair_name = pair_data.get('name', 'Unnamed')
-                self.log_message(f"Comparison pair added: {pair_name}", "success")
+                # Removed log message - comparison wizard handles its own console output
+                pass
                 
             elif result_type == 'pair_deleted':
-                self.log_message("Comparison pair deleted", "info")
+                # Removed log message - comparison wizard handles its own console output
+                pass
                 
             elif result_type == 'plot_generated':
                 plot_data = result.get('data', {})

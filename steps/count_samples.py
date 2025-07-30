@@ -13,15 +13,15 @@ Supports counting based on thresholds, peaks, or all samples with flexible outpu
     params = [
         {
             "name": "window", 
-            "type": "int", 
-            "default": "1000", 
-            "help": "Window size in number of samples. Must be positive and smaller than total signal length."
+            "type": "float", 
+            "default": "1.0", 
+            "help": "Window size in seconds. Must be positive and smaller than total signal duration."
         },
         {
             "name": "overlap", 
-            "type": "int", 
-            "default": "500", 
-            "help": "Window overlap in number of samples. Must be less than window size. Higher overlap gives smoother results but more computation."
+            "type": "float", 
+            "default": "0.5", 
+            "help": "Window overlap in seconds. Must be less than window size. Higher overlap gives smoother results but more computation."
         },
         {
             "name": "unit", 
@@ -37,19 +37,19 @@ Supports counting based on thresholds, peaks, or all samples with flexible outpu
     def validate_parameters(cls, params: dict) -> None:
         """Validate parameters and business rules"""
         # Validate window parameter
-        window_samples = cls.validate_integer_parameter(
+        window_time = cls.validate_float_parameter(
             "window", 
             params.get("window"), 
-            min_val=1,
-            max_val=1000000
+            min_val=0.001,
+            max_val=3600.0
         )
         
         # Validate overlap parameter
-        overlap_samples = cls.validate_integer_parameter(
+        overlap_time = cls.validate_float_parameter(
             "overlap", 
             params.get("overlap"), 
-            min_val=0,
-            max_val=window_samples-1
+            min_val=0.0,
+            max_val=window_time-0.001
         )
         
         # Validate unit parameter
@@ -61,68 +61,49 @@ Supports counting based on thresholds, peaks, or all samples with flexible outpu
 
     @classmethod
     def script(cls, x: np.ndarray, y: np.ndarray, fs: float, params: dict) -> list:
-        """Core processing logic for sample counting"""
-        window_samples = params["window"]
-        overlap_samples = params["overlap"]
+        window_time = float(params["window"])
+        overlap_time = float(params["overlap"])
         unit = params["unit"]
-        
-        total_samples = len(x)
-        step_samples = window_samples - overlap_samples
-        
-        # Generate sliding windows
-        window_starts = []
-        current_idx = 0
-        
-        while current_idx + window_samples <= total_samples:
-            window_starts.append(current_idx)
-            current_idx += step_samples
-        
-        # Estimate sampling frequency for rate calculations
-        time_diffs = np.diff(x)
-        median_dt = np.median(time_diffs)
-        sampling_freq = 1.0 / median_dt if median_dt > 0 else 1.0
-        
-        # Calculate window duration in seconds
-        window_duration = window_samples / sampling_freq
-        
-        # Count samples in each window
-        x_new = []
-        y_new = []
-        
-        for start_idx in window_starts:
-            end_idx = start_idx + window_samples
-            
-            # Extract window data
-            window_x = x[start_idx:end_idx]
-            window_y = y[start_idx:end_idx]
-            
-            # Count actual samples in window
-            sample_count = len(window_y)
-            
-            # Calculate center time for this window
-            center_time = window_x[len(window_x) // 2] if len(window_x) > 0 else x[start_idx]
-            
-            # Convert count based on selected unit
+
+        # Define time step between windows
+        step_time = window_time - overlap_time
+        if step_time <= 0:
+            raise ValueError("Overlap must be smaller than window size.")
+
+        # Determine total duration
+        t_start = float(x[0])
+        t_end = float(x[-1])
+        time_points = []
+        counts = []
+
+        current_start = t_start
+        while current_start + window_time <= t_end:
+            current_end = current_start + window_time
+
+            # Count number of peaks within the current window
+            in_window = (x >= current_start) & (x < current_end)
+            count = np.count_nonzero(in_window)
+
+            duration = current_end - current_start
+            center_time = current_start + (duration / 2)
+
+            # Convert to desired unit
             if unit == "count/window":
-                output_value = sample_count
+                output_value = count
             elif unit == "count/s":
-                output_value = sample_count / window_duration
+                output_value = count / duration
             elif unit == "count/min":
-                output_value = (sample_count / window_duration) * 60.0
+                output_value = (count / duration) * 60
             else:
                 raise ValueError(f"Unknown unit: {unit}")
-            
-            x_new.append(center_time)
-            y_new.append(output_value)
-        
-        # Convert to numpy arrays
-        x_new = np.array(x_new)
-        y_new = np.array(y_new)
-        
-        return [
-            {
-                'tags': ['time-series'],
-                'x': x_new,
-                'y': y_new
-            }
-        ] 
+
+            time_points.append(center_time)
+            counts.append(output_value)
+
+            current_start += step_time
+
+        return [{
+            'tags': ['time-series'],
+            'x': np.array(time_points),
+            'y': np.array(counts)
+        }]

@@ -1479,7 +1479,7 @@ class RenderPlotOp:
             # Get additional styling properties from pair data
             marker_size = pair_data.get('marker_size', 50)
             edge_color = pair_data.get('edge_color', '#000000')
-            edge_width = pair_data.get('edge_width', 1.0)
+            edge_width = pair_data.get('edge_width', 0.0)
             z_order = pair_data.get('z_order', 0)
             
             # Create scatter plot and store artist reference

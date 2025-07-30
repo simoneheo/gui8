@@ -1672,7 +1672,7 @@ class ComparisonWizardManager(QObject):
                     if 'edge_color' in pair:
                         comparison_channel.edge_color = pair.get('edge_color', '#000000')
                     if 'edge_width' in pair:
-                        comparison_channel.edge_width = pair.get('edge_width', 1.0)
+                        comparison_channel.edge_width = pair.get('edge_width', 0.0)
                     if 'fill_style' in pair:
                         comparison_channel.fill_style = pair.get('fill_style', 'full')
                     

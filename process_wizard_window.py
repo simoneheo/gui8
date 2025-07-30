@@ -796,57 +796,26 @@ class ProcessWizardWindow(QMainWindow):
             if hasattr(channel, "file_id") and channel.file_id and self.file_manager:
                 file_obj = self.file_manager.get_file(channel.file_id)
                 if file_obj:
-                    tooltip_parts.append(f"📁 File: {file_obj.filename}")
+                    tooltip_parts.append(f"File: {file_obj.filename}")
                 else:
-                    tooltip_parts.append(f"📁 File: Unknown (ID: {channel.file_id})")
+                    tooltip_parts.append(f"File: Unknown (ID: {channel.file_id})")
             else:
-                tooltip_parts.append("📁 File: Unknown")
+                tooltip_parts.append("File: Unknown")
             
             # Add channel details
-            tooltip_parts.append(f"🏷️ Channel: {channel.legend_label or channel.ylabel or channel.channel_id}")
-            tooltip_parts.append(f"📊 Step: {channel.step}")
-            
-            # Add data shape information
-            if hasattr(channel, 'ydata') and channel.ydata is not None:
-                tooltip_parts.append(f"📈 Data points: {len(channel.ydata):,}")
-            
-            # Add sampling frequency if available
-            if hasattr(channel, 'fs_median') and channel.fs_median:
-                if hasattr(channel, 'fs_std') and channel.fs_std:
-                    tooltip_parts.append(f"⏱️ Sampling rate: {channel.fs_median:.1f}±{channel.fs_std:.1f} Hz")
-                else:
-                    tooltip_parts.append(f"⏱️ Sampling rate: {channel.fs_median:.1f} Hz")
-            
+            tooltip_parts.append(f"Channel: {channel.legend_label or channel.ylabel or channel.channel_id}")
+            tooltip_parts.append(f"Step: {channel.step}")
+                        
             # Add parameters information
             if hasattr(channel, "params") and channel.params:
                 param_str = ", ".join(f"{k}={v}" for k, v in channel.params.items() if k != "fs")
                 if param_str:
-                    tooltip_parts.append(f"⚙️ Params: {param_str}")
+                    tooltip_parts.append(f"Params: {param_str}")
                 else:
-                    tooltip_parts.append("⚙️ Params: None")
+                    tooltip_parts.append(" Params: None")
             else:
-                tooltip_parts.append("⚙️ Params: None")
+                tooltip_parts.append("Params: None")
             
-            # Add parent step information
-            if hasattr(channel, "parent_ids") and channel.parent_ids:
-                parent_steps = []
-                for parent_id in channel.parent_ids:
-                    parent_channel = self.channel_manager.get_channel(parent_id)
-                    if parent_channel:
-                        parent_steps.append(str(parent_channel.step))
-                if parent_steps:
-                    tooltip_parts.append(f"⬆️ Parent step(s): {', '.join(parent_steps)}")
-                else:
-                    tooltip_parts.append("⬆️ Parent step: unknown")
-            else:
-                if channel.step == 0:
-                    tooltip_parts.append("⬆️ Parent step: none (RAW)")
-                else:
-                    tooltip_parts.append("⬆️ Parent step: unknown")
-            
-            # Add processing description if available
-            if hasattr(channel, 'description') and channel.description:
-                tooltip_parts.append(f"📝 Description: {channel.description}")
             
             tooltip = "\n".join(tooltip_parts)
             

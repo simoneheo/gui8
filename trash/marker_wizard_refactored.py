@@ -122,7 +122,7 @@ class MarkerWizard(BaseConfigWizard):
         self.edge_width_spin = QDoubleSpinBox()
         self.edge_width_spin.setRange(0.0, 10.0)
         self.edge_width_spin.setSingleStep(0.1)
-        self.edge_width_spin.setValue(1.0)
+        self.edge_width_spin.setValue(0.0)
         self.edge_width_spin.setDecimals(1)
         self.edge_width_spin.valueChanged.connect(self.update_preview)
         layout.addRow("Edge Width:", self.edge_width_spin)
@@ -273,7 +273,7 @@ class MarkerWizard(BaseConfigWizard):
         self.edge_color_button.set_color(edge_color)
         
         # Edge width
-        edge_width = self.config_object.get('edge_width', 1.0)
+        edge_width = self.config_object.get('edge_width', 0.0)
         self.edge_width_spin.setValue(edge_width)
         
         # Density plot settings
@@ -320,7 +320,7 @@ class MarkerWizard(BaseConfigWizard):
         marker_size = self.marker_size_spin.value() if self.marker_size_spin else 20
         marker_color = self.marker_color_button.get_color() if self.marker_color_button else "#1f77b4"
         edge_color = self.edge_color_button.get_color() if self.edge_color_button else "#000000"
-        edge_width = self.edge_width_spin.value() if self.edge_width_spin else 1.0
+        edge_width = self.edge_width_spin.value() if self.edge_width_spin else 0.0
         alpha = self.alpha_spin.value() if self.alpha_spin else 1.0
         x_axis = "Bottom" if self.bottom_x_axis_radio and self.bottom_x_axis_radio.isChecked() else "Top"
         bring_to_front = "Yes" if self.bring_to_front_checkbox and self.bring_to_front_checkbox.isChecked() else "No"
