@@ -171,6 +171,7 @@ class DataTableWidget(QTableWidget):
         x_item = QTableWidgetItem(x_display)
         x_item.setToolTip(x_tooltip)
         x_item.setData(Qt.UserRole, data_index)  # Store original index
+        x_item.setForeground(QColor(0, 0, 0))  # Black text for contrast
         self.setItem(table_row, 1, x_item)
         
         # Y value (editable)
@@ -179,6 +180,7 @@ class DataTableWidget(QTableWidget):
         y_item = QTableWidgetItem(y_display)
         y_item.setToolTip(y_tooltip)
         y_item.setData(Qt.UserRole, data_index)  # Store original index
+        y_item.setForeground(QColor(0, 0, 0))  # Black text for contrast
         self.setItem(table_row, 2, y_item)
     
     def _add_separator_row(self, table_row: int, skipped_rows: int):
@@ -209,13 +211,16 @@ class DataTableWidget(QTableWidget):
                 cell_item = self.item(row, col)
                 if cell_item:
                     cell_item.setBackground(QColor(255, 255, 200))  # Light yellow
+                    cell_item.setForeground(QColor(0, 0, 0))  # Black text for contrast
             
             # Validate numeric input
             try:
                 float(item.text())
                 item.setBackground(QColor(255, 255, 200))  # Valid - light yellow
+                item.setForeground(QColor(0, 0, 0))  # Black text for contrast
             except ValueError:
                 item.setBackground(QColor(255, 200, 200))  # Invalid - light red
+                item.setForeground(QColor(0, 0, 0))  # Black text for contrast
                 item.setToolTip("Invalid numeric value")
             
             self.data_changed.emit()
@@ -345,7 +350,7 @@ class InspectionWizard(QDialog):
         
         # Help text for large files
         help_label = QLabel("For large files, only first/last rows are shown by default")
-        help_label.setStyleSheet("color: #666; font-size: 10px; font-style: italic;")
+        help_label.setStyleSheet("color: #444444; font-size: 10px; font-style: italic;")
         load_all_layout.addWidget(help_label)
         
         data_preview_layout.addLayout(load_all_layout)
@@ -365,7 +370,7 @@ class InspectionWizard(QDialog):
         
         # Table status
         self.table_status = QLabel("Ready")
-        self.table_status.setStyleSheet("color: #666; font-size: 10px; margin: 2px; padding: 3px; background-color: #f5f5f5; border-radius: 3px;")
+        self.table_status.setStyleSheet("color: #444444; font-size: 10px; margin: 2px; padding: 3px; background-color: #f5f5f5; border-radius: 3px;")
         header_layout.addWidget(self.table_status)
         
         layout.addLayout(header_layout)

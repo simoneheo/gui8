@@ -1,6 +1,7 @@
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QMessageBox
 from parse_wizard_window import ParseWizardWindow
+from auto_parser import AutoParser
 from pathlib import Path
 import time
 from typing import Dict, Optional, Any
@@ -25,6 +26,9 @@ class ParseWizardManager(QObject):
         self.file_manager = file_manager
         self.channel_manager = channel_manager
         self.parent_window = parent
+        
+        # Initialize autoparser for detection
+        self.autoparser = AutoParser()
         
         # Initialize state
         self.window = None
@@ -72,6 +76,10 @@ class ParseWizardManager(QObject):
             
             # Connect signals
             self._connect_signals()
+            
+            # Apply autoparser detection if file is provided
+            if file_path:
+                self._apply_detected_settings(file_path)
             
             # Show window
             self.window.show()
@@ -206,3 +214,130 @@ class ParseWizardManager(QObject):
             self._log_state_change(f"File path set to: {file_path}")
         else:
             self._log_state_change("Cannot set file path - no window open")
+    
+    def _detect_parsing_settings(self, file_path: str) -> Dict[str, Any]:
+        """
+        Use autoparser to detect delimiter and header row for a file.
+        Returns detection results or defaults.
+        """
+        try:
+            file_path_obj = Path(file_path)
+            if not file_path_obj.exists():
+                print(f"[ParseWizardManager] File not found: {file_path}")
+                return self._get_default_settings()
+            
+            # Read file with encoding detection
+            lines, encoding = self.autoparser._read_file_with_encoding(file_path_obj)
+            if not lines:
+                print(f"[ParseWizardManager] Could not read file: {file_path}")
+                return self._get_default_settings()
+            
+            # Detect and skip metadata lines
+            metadata_skip = self.autoparser._detect_metadata_lines(lines)
+            data_lines = lines[metadata_skip:]
+            
+            if not data_lines:
+                print(f"[ParseWizardManager] No data lines found after metadata: {file_path}")
+                return self._get_default_settings()
+            
+            # Detect structure using autoparser
+            structure_info = self.autoparser._detect_structure(data_lines)
+            if not structure_info:
+                print(f"[ParseWizardManager] Could not detect structure: {file_path}")
+                return self._get_default_settings()
+            
+            # Extract detection results
+            delimiter = structure_info.get('delimiter', ',')
+            header_info = structure_info.get('header_info', {})
+            has_header = header_info.get('has_header', False)
+            data_start_row = header_info.get('data_start_row', 0)
+            
+            # Map delimiter to UI format
+            delimiter_map = {
+                ',': 'Comma (,)',
+                '\t': 'Tab (\\t)',
+                ';': 'Semicolon (;)',
+                '|': 'Pipe (|)',
+                ' ': 'Space',
+                '': 'None'
+            }
+            ui_delimiter = delimiter_map.get(delimiter, 'Comma (,)')
+            
+            # Calculate header row position
+            # data_start_row is the row AFTER the header in the data_lines
+            # We need to convert this back to the actual header row position
+            if has_header:
+                # If data_start_row is 1, header was at row 0 in data_lines
+                # If data_start_row is 2, header was at row 1 in data_lines
+                header_row_in_data = data_start_row - 1
+                # Add metadata skip to get the actual file row
+                header_row = metadata_skip + header_row_in_data
+            else:
+                header_row = -1  # No header
+            
+            detection_result = {
+                'delimiter': ui_delimiter,
+                'header_row': header_row,
+                'detection_success': True,
+                'structure_score': structure_info.get('score', 0),
+                'num_columns': structure_info.get('num_cols', 0),
+                'consistency': structure_info.get('consistency', 0)
+            }
+            
+            print(f"[ParseWizardManager] Detection successful: delimiter='{ui_delimiter}', header_row={header_row}")
+            return detection_result
+            
+        except Exception as e:
+            print(f"[ParseWizardManager] Detection failed: {str(e)}")
+            return self._get_default_settings()
+    
+    def _get_default_settings(self) -> Dict[str, Any]:
+        """Get default parsing settings when detection fails"""
+        return {
+            'delimiter': 'Comma (,)',
+            'header_row': 0,
+            'detection_success': False,
+            'structure_score': 0,
+            'num_columns': 0,
+            'consistency': 0
+        }
+    
+    def _apply_detected_settings(self, file_path: str):
+        """Apply detected parsing settings to the parse wizard window"""
+        try:
+            # Detect parsing settings using autoparser
+            detection_result = self._detect_parsing_settings(file_path)
+            
+            if not self.window:
+                print("[ParseWizardManager] No window available to apply settings")
+                return
+            
+            # Apply delimiter setting
+            if hasattr(self.window, 'delimiter_combo'):
+                self.window.delimiter_combo.setCurrentText(detection_result['delimiter'])
+                print(f"[ParseWizardManager] Applied delimiter: {detection_result['delimiter']}")
+            
+            # Apply header row setting
+            if hasattr(self.window, 'header_row_spin'):
+                self.window.header_row_spin.setValue(detection_result['header_row'])
+                print(f"[ParseWizardManager] Applied header row: {detection_result['header_row']}")
+            
+            # Mark settings as applied to prevent auto-detection override
+            self.window.mark_settings_applied()
+            
+            # Log detection results
+            if detection_result['detection_success']:
+                self._log_state_change(
+                    f"Auto-detected settings: delimiter='{detection_result['delimiter']}', "
+                    f"header_row={detection_result['header_row']}, "
+                    f"score={detection_result['structure_score']:.3f}"
+                )
+            else:
+                self._log_state_change(
+                    f"Using default settings: delimiter='{detection_result['delimiter']}', "
+                    f"header_row={detection_result['header_row']}"
+                )
+                
+        except Exception as e:
+            print(f"[ParseWizardManager] Error applying detected settings: {str(e)}")
+            self._log_state_change(f"Error applying auto-detected settings: {str(e)}")

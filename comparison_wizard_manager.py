@@ -2025,23 +2025,6 @@ class ComparisonWizardManager(QMainWindow):
     def closeEvent(self, event):
         """Handle window close event"""
         try:
-            # Show warning dialog about data loss
-            from PySide6.QtWidgets import QMessageBox
-            
-            reply = QMessageBox.question(
-                self,
-                "Close Comparison Wizard",
-                "Any analysis performed in this wizard will be lost.\n\n"
-                "Are you sure you want to close?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
-            )
-            
-            if reply == QMessageBox.No:
-                # User cancelled, don't close
-                event.ignore()
-                return
-            
             # Mark as inactive
             self.is_active = False
             
@@ -2336,6 +2319,44 @@ class ComparisonWizardManager(QMainWindow):
                 # Create Pair object with aligned data
                 from pair import Pair
                 
+                # Convert alignment parameters to AlignmentConfig object
+                alignment_params = pair_data.get('alignment_params', {})
+                alignment_config = None
+                if alignment_params:
+                    try:
+                        from pair import AlignmentConfig, AlignmentMethod
+                        
+                        alignment_method = alignment_params.get('alignment_method', 'time')
+                        mode = alignment_params.get('mode', 'truncate')
+                        
+                        if alignment_method == 'index':
+                            alignment_config = AlignmentConfig(
+                                method=AlignmentMethod.INDEX,
+                                mode=mode,
+                                start_index=alignment_params.get('start_index'),
+                                end_index=alignment_params.get('end_index'),
+                                offset=alignment_params.get('offset', 0)
+                            )
+                        elif alignment_method == 'time':
+                            alignment_config = AlignmentConfig(
+                                method=AlignmentMethod.TIME,
+                                mode=mode,
+                                start_time=alignment_params.get('start_time'),
+                                end_time=alignment_params.get('end_time'),
+                                offset=alignment_params.get('offset', 0),
+                                interpolation=alignment_params.get('interpolation'),
+                                resolution=alignment_params.get('resolution')
+                            )
+                    except Exception as e:
+                        print(f"[ComparisonWizardManager] Error creating alignment config: {e}")
+                        # Create default alignment config
+                        from pair import AlignmentConfig, AlignmentMethod
+                        alignment_config = AlignmentConfig(
+                            method=AlignmentMethod.INDEX,
+                            mode='truncate',
+                            offset=0
+                        )
+                
                 pair = Pair(
                     name=pair_data.get('name'),
                     ref_channel_id=ref_channel.channel_id if ref_channel else None,
@@ -2344,7 +2365,7 @@ class ComparisonWizardManager(QMainWindow):
                     test_file_id=test_channel.file_id if test_channel else None,
                     ref_channel_name=getattr(ref_channel, 'legend_label', None) if ref_channel else None,
                     test_channel_name=getattr(test_channel, 'legend_label', None) if test_channel else None,
-                    alignment_config=pair_data.get('alignment_config'),
+                    alignment_config=alignment_config,
                     description=pair_data.get('description', ''),
                     metadata=pair_data.get('metadata', {})
                 )

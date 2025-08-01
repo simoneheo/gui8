@@ -69,8 +69,8 @@ class PlotWizardWindow(QMainWindow):
         left_layout.addLayout(selector_layout)
 
         # Config Tables
-        self.line_config_table = QTableWidget(0, 3)
-        self.line_config_table.setHorizontalHeaderLabels(["Subplot#", "Channel Name", "Actions"])
+        self.line_config_table = QTableWidget(0, 4)
+        self.line_config_table.setHorizontalHeaderLabels(["Subplot#", "Style", "Legend Name", "Actions"])
         self.subplot_config_table = QTableWidget(0, 3)
         self.subplot_config_table.setHorizontalHeaderLabels(["Subplot#", "Subplot Name", "Actions"])
 
@@ -84,7 +84,7 @@ class PlotWizardWindow(QMainWindow):
         dimension_label = QLabel("Subplot Dimension:")
         self.rows_spinbox = QSpinBox()
         self.rows_spinbox.setMinimum(1)
-        self.rows_spinbox.setMaximum(10)
+        self.rows_spinbox.setMaximum(50)
         self.rows_spinbox.setValue(1)
         self.rows_spinbox.setToolTip("Number of subplot rows")
         
@@ -92,7 +92,7 @@ class PlotWizardWindow(QMainWindow):
         
         self.cols_spinbox = QSpinBox()
         self.cols_spinbox.setMinimum(1)
-        self.cols_spinbox.setMaximum(10)
+        self.cols_spinbox.setMaximum(50)
         self.cols_spinbox.setValue(1)
         self.cols_spinbox.setToolTip("Number of subplot columns")
         

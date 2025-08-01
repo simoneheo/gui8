@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QSpinBox, 
-    QDoubleSpinBox, QGroupBox, QFormLayout
+    QDoubleSpinBox, QGroupBox, QFormLayout, QSizePolicy
 )
 from PySide6.QtCore import Qt, Signal
 from typing import Dict, Any, Optional
@@ -38,9 +38,8 @@ class DataAlignerWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         
-        # Main alignment group
-        self.alignment_group = QGroupBox("Data Alignment")
-        group_layout = QVBoxLayout(self.alignment_group)
+        # Main alignment section (removed frame)
+        # Removed QGroupBox wrapper
         
         # Alignment mode selection
         mode_layout = QHBoxLayout()
@@ -48,7 +47,7 @@ class DataAlignerWidget(QWidget):
         self.alignment_method_combo = QComboBox()
         self.alignment_method_combo.addItems(["time", "index"])
         mode_layout.addWidget(self.alignment_method_combo)
-        group_layout.addLayout(mode_layout)
+        layout.addLayout(mode_layout)
         
         # Index-based options
         self.index_group = QGroupBox("Index-Based Alignment")
@@ -77,29 +76,33 @@ class DataAlignerWidget(QWidget):
         self.index_offset_spin.setToolTip("Positive: shift test data forward, Negative: shift reference data forward")
         index_layout.addRow("Offset:", self.index_offset_spin)
         
-        group_layout.addWidget(self.index_group)
+        layout.addWidget(self.index_group)
         
         # Time-based options
         self.time_group = QGroupBox("Time-Based Alignment")
-        time_layout = QFormLayout(self.time_group)
+        time_layout = QVBoxLayout(self.time_group)
+        
+        # Create single-column layout for time controls
+        time_controls_layout = QFormLayout()
+        time_controls_layout.setVerticalSpacing(8)
         
         # Time mode
         self.time_mode_combo = QComboBox()
         self.time_mode_combo.addItems(["overlap", "custom"])
-        time_layout.addRow("Mode:", self.time_mode_combo)
+        time_controls_layout.addRow("Mode:", self.time_mode_combo)
         
         # Time range controls
         self.start_time_spin = QDoubleSpinBox()
         self.start_time_spin.setRange(-999999999.0, 999999999.0)
         self.start_time_spin.setDecimals(6)
         self.start_time_spin.setValue(0.0)
-        time_layout.addRow("Start Time:", self.start_time_spin)
+        time_controls_layout.addRow("Start Time:", self.start_time_spin)
         
         self.end_time_spin = QDoubleSpinBox()
         self.end_time_spin.setRange(-999999999.0, 999999999.0)
         self.end_time_spin.setDecimals(6)
         self.end_time_spin.setValue(10.0)
-        time_layout.addRow("End Time:", self.end_time_spin)
+        time_controls_layout.addRow("End Time:", self.end_time_spin)
         
         # Time offset
         self.time_offset_spin = QDoubleSpinBox()
@@ -107,12 +110,12 @@ class DataAlignerWidget(QWidget):
         self.time_offset_spin.setDecimals(6)
         self.time_offset_spin.setValue(0.0)
         self.time_offset_spin.setToolTip("Time offset to apply to test data")
-        time_layout.addRow("Time Offset:", self.time_offset_spin)
+        time_controls_layout.addRow("Time Offset:", self.time_offset_spin)
         
         # Interpolation method
         self.interpolation_combo = QComboBox()
         self.interpolation_combo.addItems(["linear", "nearest", "cubic"])
-        time_layout.addRow("Interpolation:", self.interpolation_combo)
+        time_controls_layout.addRow("Interpolation:", self.interpolation_combo)
         
         # Time resolution
         self.resolution_spin = QDoubleSpinBox()
@@ -120,16 +123,18 @@ class DataAlignerWidget(QWidget):
         self.resolution_spin.setDecimals(6)
         self.resolution_spin.setValue(0.1)
         self.resolution_spin.setToolTip("Time grid resolution (smaller = more points)\nRange is automatically adjusted based on data time span\nMaximum ensures at least 2 points for line plotting\nAuto-calculated initially, but manual changes are preserved")
-        time_layout.addRow("Resolution:", self.resolution_spin)
+        time_controls_layout.addRow("Resolution:", self.resolution_spin)
         
-        group_layout.addWidget(self.time_group)
+        # Add the single-column layout to the main time layout
+        time_layout.addLayout(time_controls_layout)
+        
+        layout.addWidget(self.time_group)
         
         # Alignment status
         self.status_label = QLabel("Ready for alignment")
+        self.status_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.status_label.setStyleSheet("color: #666; font-size: 10px; padding: 5px;")
-        group_layout.addWidget(self.status_label)
-        
-        layout.addWidget(self.alignment_group)
+        layout.addWidget(self.status_label)
         
         # Initially hide both groups to prevent both showing at startup
         self.index_group.setVisible(False)

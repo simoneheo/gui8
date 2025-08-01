@@ -82,6 +82,29 @@ class SubplotWizard(QDialog):
         self.show_legend_checkbox.setChecked(True)
         layout.addRow("", self.show_legend_checkbox)
         
+        # Legend Position
+        self.legend_position_combo = QComboBox()
+        legend_positions = [
+            ('best', 'Best (Auto)'),
+            ('upper right', 'Upper Right'),
+            ('upper left', 'Upper Left'),
+            ('lower left', 'Lower Left'),
+            ('lower right', 'Lower Right'),
+            ('center', 'Center'),
+            ('upper center', 'Upper Center'),
+            ('lower center', 'Lower Center'),
+            ('center left', 'Center Left'),
+            ('center right', 'Center Right')
+        ]
+        
+        for pos_value, pos_display in legend_positions:
+            self.legend_position_combo.addItem(pos_display, pos_value)
+        
+        layout.addRow("Legend Position:", self.legend_position_combo)
+        
+        # Connect show legend checkbox to enable/disable position dropdown
+        self.show_legend_checkbox.stateChanged.connect(self._on_show_legend_changed)
+        
         # X Label
         self.xlabel_edit = QLineEdit()
         self.xlabel_edit.setPlaceholderText("Enter X-axis label...")
@@ -179,13 +202,30 @@ class SubplotWizard(QDialog):
         else:
             self.minor_tick_value_spin.setEnabled(False)
     
+    def _on_show_legend_changed(self, state):
+        """Handle show legend checkbox change - enable/disable legend position dropdown"""
+        self.legend_position_combo.setEnabled(state == Qt.Checked)
+    
     def load_current_config(self):
         """Load current subplot configuration into the UI"""
         # Basic settings
         self.xlabel_edit.setText(self.subplot_config.get('xlabel', ''))
         self.ylabel_edit.setText(self.subplot_config.get('ylabel', ''))
         self.title_edit.setText(self.subplot_config.get('title', ''))
-        self.show_legend_checkbox.setChecked(self.subplot_config.get('show_legend', True))
+        
+        # Legend settings
+        show_legend = self.subplot_config.get('show_legend', True)
+        self.show_legend_checkbox.setChecked(show_legend)
+        
+        # Set legend position
+        legend_position = self.subplot_config.get('legend_position', 'upper right')
+        for i in range(self.legend_position_combo.count()):
+            if self.legend_position_combo.itemData(i) == legend_position:
+                self.legend_position_combo.setCurrentIndex(i)
+                break
+        
+        # Enable/disable legend position dropdown based on show legend checkbox
+        self.legend_position_combo.setEnabled(show_legend)
         
         # Axis limits
         xlim = self.subplot_config.get('xlim', [None, None])
@@ -229,7 +269,10 @@ class SubplotWizard(QDialog):
         self.subplot_config['xlabel'] = self.xlabel_edit.text()
         self.subplot_config['ylabel'] = self.ylabel_edit.text()
         self.subplot_config['title'] = self.title_edit.text()
+        
+        # Legend settings
         self.subplot_config['show_legend'] = self.show_legend_checkbox.isChecked()
+        self.subplot_config['legend_position'] = self.legend_position_combo.currentData()
         
         # Axis limits
         xlim = [None, None]

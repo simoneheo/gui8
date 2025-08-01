@@ -17,45 +17,25 @@ from typing import Optional, Dict, Any
 
 
 class ColorButton(QPushButton):
-    """Custom button that displays and allows selection of colors"""
-    
-    color_changed = Signal(str)  # hex color string
-    
-    def __init__(self, initial_color: str = "#1f77b4"):
+    color_changed = Signal(str)
+    def __init__(self, initial_color="#1f77b4"):
         super().__init__()
         self.current_color = initial_color
-        self.setFixedSize(40, 30)
+        self.setFixedSize(40, 24)
         self.update_button_color()
         self.clicked.connect(self.select_color)
-    
     def update_button_color(self):
-        """Update button appearance to show current color"""
-        self.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {self.current_color};
-                border: 2px solid #333;
-                border-radius: 4px;
-            }}
-            QPushButton:hover {{
-                border: 2px solid #666;
-            }}
-        """)
-    
+        self.setStyleSheet(f"background-color: {self.current_color}; border: 1px solid #333;")
     def select_color(self):
-        """Open color dialog and update color"""
         color = QColorDialog.getColor(QColor(self.current_color), self)
         if color.isValid():
             self.current_color = color.name()
             self.update_button_color()
             self.color_changed.emit(self.current_color)
-    
     def set_color(self, color: str):
-        """Set color programmatically"""
         self.current_color = color
         self.update_button_color()
-    
     def get_color(self) -> str:
-        """Get current color as hex string"""
         return self.current_color
 
 
@@ -154,30 +134,9 @@ class PairMarkerWizard(QDialog):
     
     def _create_color_controls(self, form_layout: QFormLayout):
         """Create color selection controls"""
-        color_layout = QHBoxLayout()
         self.color_button = ColorButton()
-        self.color_combo = QComboBox()
-        color_options = [
-            ('🔵 Blue', '#1f77b4'),
-            ('🔴 Red', '#d62728'),
-            ('🟢 Green', '#2ca02c'),
-            ('🟣 Purple', '#9467bd'),
-            ('🟠 Orange', '#ff7f0e'),
-            ('🟤 Brown', '#8c564b'),
-            ('🩷 Pink', '#e377c2'),
-            ('⚫ Gray', '#7f7f7f'),
-            ('🟡 Yellow', '#bcbd22'),
-            ('🔶 Cyan', '#17becf'),
-            ('Custom', 'custom')
-        ]
-        for name, value in color_options:
-            self.color_combo.addItem(name, value)
-        self.color_combo.currentTextChanged.connect(self.on_color_combo_changed)
         self.color_button.color_changed.connect(self.on_color_button_changed)
-        
-        color_layout.addWidget(self.color_button)
-        color_layout.addWidget(self.color_combo)
-        form_layout.addRow("Marker Color:", color_layout)
+        form_layout.addRow("Marker Color:", self.color_button)
     
     def _create_size_controls(self, form_layout: QFormLayout):
         """Create marker size controls"""
@@ -254,14 +213,8 @@ class PairMarkerWizard(QDialog):
                 self.marker_combo.setCurrentIndex(0)  # Default to circle
         
         # Color
-        marker_color = self.pair_config.get('marker_color', '🔵 Blue')
-        idx = self.color_combo.findText(marker_color)
-        if idx >= 0:
-            self.color_combo.setCurrentIndex(idx)
-        else:
-            self.color_combo.setCurrentText('Custom')
-            hex_color = self.pair_config.get('marker_color_hex', '#1f77b4')
-            self.color_button.set_color(hex_color)
+        hex_color = self.pair_config.get('marker_color_hex', '#1f77b4')
+        self.color_button.set_color(hex_color)
         
         # Size
         size = self.pair_config.get('marker_size', 50)
@@ -284,30 +237,9 @@ class PairMarkerWizard(QDialog):
         z_order = self.pair_config.get('z_order', 0)
         self.bring_to_front_checkbox.setChecked(z_order > 0)
     
-    def on_color_combo_changed(self, color_name: str):
-        """Handle color combo box changes"""
-        if color_name == 'Custom':
-            return
-        
-        color_map = {
-            '🔵 Blue': '#1f77b4',
-            '🔴 Red': '#d62728',
-            '🟢 Green': '#2ca02c',
-            '🟣 Purple': '#9467bd',
-            '🟠 Orange': '#ff7f0e',
-            '🟤 Brown': '#8c564b',
-            '🩷 Pink': '#e377c2',
-            '⚫ Gray': '#7f7f7f',
-            '🟡 Yellow': '#bcbd22',
-            '🔶 Cyan': '#17becf'
-        }
-        
-        if color_name in color_map:
-            self.color_button.set_color(color_map[color_name])
-    
     def on_color_button_changed(self, color: str):
         """Handle color button changes"""
-        self.color_combo.setCurrentText('Custom')
+        pass
     
     def _on_pair_name_changed(self, new_name: str):
         """Handle pair name text field changes"""
@@ -335,7 +267,6 @@ class PairMarkerWizard(QDialog):
         self.pair_config['marker_type'] = self.marker_combo.currentData()
         
         # Color
-        self.pair_config['marker_color'] = self.color_combo.currentText()
         self.pair_config['marker_color_hex'] = self.color_button.get_color()
         
         # Size and transparency

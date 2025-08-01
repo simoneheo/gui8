@@ -589,14 +589,16 @@ class PlotWizardManager(QObject):
         # Set column widths
         header = table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Subplot#
-        header.setSectionResizeMode(1, QHeaderView.Stretch)          # Channel Name - stretches
-        header.setSectionResizeMode(2, QHeaderView.Fixed)            # Actions - fixed width
+        header.setSectionResizeMode(1, QHeaderView.Fixed)            # Style - fixed width
+        header.setSectionResizeMode(2, QHeaderView.Stretch)          # Legend Name - stretches
+        header.setSectionResizeMode(3, QHeaderView.Fixed)            # Actions - fixed width
         
         # Set minimum width for actions column to prevent squishing
         header.setMinimumSectionSize(80)
         
-        # Set initial width for actions column
-        header.resizeSection(2, 100)  # Give actions column enough space for 3 buttons
+        # Set fixed widths for columns that shouldn't change
+        header.resizeSection(1, 60)   # Style column - enough for style symbols
+        header.resizeSection(3, 100)  # Actions column - enough for 3 buttons
         
     def _setup_subplot_config_table(self):
         """Setup the subplot configuration table"""
@@ -825,8 +827,19 @@ class PlotWizardManager(QObject):
                     subplot_num = 1
                 print(f"[PlotWizard] Auto-stacking: assigning to subplot {subplot_num}")
             else:
-                # User has set dimensions: default to subplot 1 (user can change later)
-                subplot_num = 1
+                # User has set dimensions: find next available subplot
+                existing_subplots = set(item['subplot'] for item in self.plot_items)
+                max_positions = self.subplot_rows * self.subplot_cols
+                
+                # Find the next available subplot number
+                for i in range(1, max_positions + 1):
+                    if i not in existing_subplots:
+                        subplot_num = i
+                        break
+                else:
+                    # If all positions are taken, use the next number beyond the grid
+                    subplot_num = max(existing_subplots) + 1 if existing_subplots else 1
+                
                 print(f"[PlotWizard] User-dimension mode: assigning to subplot {subplot_num}")
             
             # Get next color
@@ -940,6 +953,18 @@ class PlotWizardManager(QObject):
             'y_right_label': ''
         }
         
+    def _get_style_display(self, line_style):
+        """Convert matplotlib line style to visual representation"""
+        style_map = {
+            '-': '━━━',        # Solid
+            '--': '┄┄┄',       # Dashed  
+            '-.': '┄━┄',       # Dash-dot
+            ':': '┅┅┅',        # Dotted
+            'None': '···',     # None
+            '': '···'          # Empty (same as None)
+        }
+        return style_map.get(line_style, line_style)
+        
     def _create_line_button_slot(self, method, index):
         """Create a properly bound slot for line action buttons"""
         return lambda checked=False: method(index)
@@ -970,16 +995,30 @@ class PlotWizardManager(QObject):
                 # Subplot number (editable)
                 subplot_spinbox = QSpinBox()
                 subplot_spinbox.setMinimum(1)
-                subplot_spinbox.setMaximum(10)
+                subplot_spinbox.setMaximum(100)
                 subplot_spinbox.setValue(item['subplot'])
                 subplot_spinbox.valueChanged.connect(self._create_spinbox_slot(i))
                 table.setCellWidget(i, 0, subplot_spinbox)
                 
-                # Channel Name (display only)
-                channel_name = item.get('channel_name', item.get('legend_name', 'Unknown'))
-                channel_item = QTableWidgetItem(str(channel_name))
+                # Style (display only) - show line style with visual representation in line color
+                line_style = item.get('line_style', '-')
+                line_color = item.get('color', '#1f77b4')
+                style_display = self._get_style_display(line_style)
+                style_item = QTableWidgetItem(str(style_display))
+                style_item.setFlags(style_item.flags() & ~Qt.ItemIsEditable)
+                
+                # Set the text color to match the line color
+                from PySide6.QtGui import QColor
+                color = QColor(line_color)
+                style_item.setForeground(color)
+                
+                table.setItem(i, 1, style_item)
+                
+                # Channel Name (display only) - prioritize legend_name over channel_name
+                display_name = item.get('legend_name') or item.get('channel_name', 'Unknown')
+                channel_item = QTableWidgetItem(str(display_name))
                 channel_item.setFlags(channel_item.flags() & ~Qt.ItemIsEditable)
-                table.setItem(i, 1, channel_item)
+                table.setItem(i, 2, channel_item)
                 
                 # Actions (buttons)
                 actions_widget = QWidget()
@@ -989,43 +1028,50 @@ class PlotWizardManager(QObject):
                 
                 # Info button - match main window icon
                 info_button = QPushButton("❗")
-                info_button.setMaximumWidth(25)
-                info_button.setMaximumHeight(25)
+                info_button.setMaximumWidth(30)
+                info_button.setMaximumHeight(30)
                 info_button.setToolTip("Channel information and metadata")
                 info_button.clicked.connect(self._create_line_button_slot(self._on_line_info_clicked, i))
                 actions_layout.addWidget(info_button)
                 
                 # Paint button - match main window icon
                 paint_button = QPushButton("🎨")
-                paint_button.setMaximumWidth(25)
-                paint_button.setMaximumHeight(25)
+                paint_button.setMaximumWidth(30)
+                paint_button.setMaximumHeight(30)
                 paint_button.setToolTip("Edit line style")
                 paint_button.clicked.connect(self._create_line_button_slot(self._on_line_paint_clicked, i))
                 actions_layout.addWidget(paint_button)
                 
                 # Delete button - match main window icon
                 delete_button = QPushButton("🗑️")
-                delete_button.setMaximumWidth(25)
-                delete_button.setMaximumHeight(25)
+                delete_button.setMaximumWidth(30)
+                delete_button.setMaximumHeight(30)
                 delete_button.setToolTip("Remove from plot")
                 delete_button.clicked.connect(self._create_line_button_slot(self._on_line_delete_clicked, i))
                 actions_layout.addWidget(delete_button)
                 
-                table.setCellWidget(i, 2, actions_widget)
+                table.setCellWidget(i, 3, actions_widget)
             
-            # Restore column widths and ensure proper sizing
-            for i, width in enumerate(current_widths):
-                if i < table.columnCount():
-                    header.setSectionResizeMode(i, QHeaderView.Interactive)
-                    header.resizeSection(i, max(width, 80))  # Ensure minimum width
-            
-            # Re-apply column resize modes
+            # Re-apply column resize modes first (before restoring widths)
             header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Subplot#
-            header.setSectionResizeMode(1, QHeaderView.Stretch)          # Channel Name - stretches
-            header.setSectionResizeMode(2, QHeaderView.Fixed)            # Actions - fixed width
+            header.setSectionResizeMode(1, QHeaderView.Fixed)            # Style - fixed width
+            header.setSectionResizeMode(2, QHeaderView.Stretch)          # Legend Name - stretches
+            header.setSectionResizeMode(3, QHeaderView.Fixed)            # Actions - fixed width
+            
+            # Set fixed widths first
+            header.resizeSection(1, 60)   # Style column - keep fixed width
+            header.resizeSection(3, 100)  # Actions column
             
             # Set minimum width for actions column to prevent squishing
             header.setMinimumSectionSize(80)
+            
+            # Restore column widths only for non-fixed columns
+            for i, width in enumerate(current_widths):
+                if i < table.columnCount() and i not in [1, 3]:  # Skip style and actions columns
+                    if i == 0:  # Subplot column - let it auto-size
+                        pass  # ResizeToContents will handle this
+                    elif i == 2:  # Legend name column - let it stretch
+                        pass  # Stretch mode will handle this
             
             # Re-enable signals
             table.blockSignals(False)
@@ -1071,9 +1117,10 @@ class PlotWizardManager(QObject):
                 subplot_item.setFlags(subplot_item.flags() & ~Qt.ItemIsEditable)
                 table.setItem(i, 0, subplot_item)
                 
-                # Subplot name (editable)
+                # Subplot name (display only)
                 subplot_name = config.get('subplot_name', f"Subplot {subplot_num}")
                 name_item = QTableWidgetItem(str(subplot_name))
+                name_item.setFlags(name_item.flags() & ~Qt.ItemIsEditable)
                 table.setItem(i, 1, name_item)
                 
                 # Actions (buttons)
@@ -1084,16 +1131,16 @@ class PlotWizardManager(QObject):
                 
                 # Paint button - match main window icon
                 paint_button = QPushButton("🎨")
-                paint_button.setMaximumWidth(25)
-                paint_button.setMaximumHeight(25)
+                paint_button.setMaximumWidth(30)
+                paint_button.setMaximumHeight(30)
                 paint_button.setToolTip("Edit subplot style")
                 paint_button.clicked.connect(self._create_subplot_button_slot(self._on_subplot_paint_clicked, subplot_num))
                 actions_layout.addWidget(paint_button)
                 
                 # Delete button - match main window icon
                 delete_button = QPushButton("🗑️")
-                delete_button.setMaximumWidth(25)
-                delete_button.setMaximumHeight(25)
+                delete_button.setMaximumWidth(30)
+                delete_button.setMaximumHeight(30)
                 delete_button.setToolTip("Remove subplot")
                 delete_button.clicked.connect(self._create_subplot_button_slot(self._on_subplot_delete_clicked, subplot_num))
                 actions_layout.addWidget(delete_button)
@@ -1210,9 +1257,21 @@ class PlotWizardManager(QObject):
                     # Open spectrogram wizard for spectrogram plots
                     try:
                         from spectrogram_wizard import SpectrogramWizard
-                        wizard = SpectrogramWizard(channel, self.window)
+                        
+                        # Create a temporary channel copy with current plot item properties
+                        wizard_channel = self._create_wizard_channel_copy(item, channel)
+                        
+                        # Store wizard channel reference temporarily for the update handler
+                        item['_wizard_channel'] = wizard_channel
+                        
+                        wizard = SpectrogramWizard(wizard_channel, self.window)
                         wizard.spectrogram_updated.connect(lambda ch_id: self._on_spectrogram_updated_from_wizard(item_index))
-                        wizard.exec()
+                        
+                        try:
+                            wizard.exec()
+                        finally:
+                            # Clean up the temporary reference
+                            item.pop('_wizard_channel', None)
                         return
                     except ImportError:
                         print("[PlotWizard] SpectrogramWizard not available")
@@ -1220,19 +1279,21 @@ class PlotWizardManager(QObject):
                     # Open marker wizard for scatter plots
                     try:
                         from marker_wizard import MarkerWizard
+                        
                         # Create a pair config dict that matches MarkerWizard's expected format
+                        # Use the current plot item properties, not defaults
                         pair_config = {
                             'name': item['legend_name'],
                             'ref_channel': item['channel_name'],
                             'test_channel': item['channel_name'],
                             'marker_type': '○ Circle',
-                            'marker_color': item['color'],
-                            'marker_size': 50,
-                            'marker_alpha': 0.7,
-                            'edge_color': '#000000',
-                            'edge_width': 0.0,
+                            'marker_color': item['color'],  # Use actual plot color
+                            'marker_size': item.get('marker_size', 50),
+                            'marker_alpha': item.get('marker_alpha', 0.7),
+                            'edge_color': item.get('edge_color', '#000000'),
+                            'edge_width': item.get('edge_width', 0.0),
                             'fill_style': 'full',
-                            'z_order': 0
+                            'z_order': item.get('z_order', 0)
                         }
                         wizard = MarkerWizard(pair_config, self.window)
                         # Connect the marker_updated signal to handle Apply button
@@ -1247,9 +1308,21 @@ class PlotWizardManager(QObject):
                     # Open line wizard for line plots
                     try:
                         from line_wizard import LineWizard
-                        wizard = LineWizard(channel, self.window)
+                        
+                        # Create a temporary channel copy with current plot item properties
+                        wizard_channel = self._create_wizard_channel_copy(item, channel)
+                        
+                        # Store wizard channel reference temporarily for the update handler
+                        item['_wizard_channel'] = wizard_channel
+                        
+                        wizard = LineWizard(wizard_channel, self.window)
                         wizard.channel_updated.connect(lambda ch_id: self._on_channel_updated_from_wizard(item_index))
-                        wizard.exec()
+                        
+                        try:
+                            wizard.exec()
+                        finally:
+                            # Clean up the temporary reference
+                            item.pop('_wizard_channel', None)
                         return
                     except ImportError:
                         print("[PlotWizard] LineWizard not available")
@@ -1260,14 +1333,57 @@ class PlotWizardManager(QObject):
         except Exception as e:
             print(f"[PlotWizard] Error opening line paint dialog: {str(e)}")
     
+    def _create_wizard_channel_copy(self, item, original_channel):
+        """Create a temporary channel copy with plot item properties for wizards"""
+        try:
+            # Create a simple object that mimics the channel interface for the wizard
+            # This avoids deepcopy issues that might cause memory corruption
+            class WizardChannelProxy:
+                def __init__(self, original, plot_item):
+                    # Copy basic attributes
+                    self.channel_id = getattr(original, 'channel_id', 'temp_channel')
+                    self.ylabel = getattr(original, 'ylabel', 'Value')
+                    
+                    # Use plot item properties
+                    self.color = plot_item.get('color', getattr(original, 'color', '#1f77b4'))
+                    self.style = plot_item.get('line_style', getattr(original, 'style', '-'))
+                    self.marker = plot_item.get('marker', getattr(original, 'marker', 'None'))
+                    self.legend_label = plot_item.get('legend_name', getattr(original, 'legend_label', ''))
+                    
+                    # Map plot item y-axis to channel y-axis
+                    item_yaxis = plot_item.get('y_axis', 'left')
+                    self.yaxis = 'y-right' if item_yaxis == 'right' else 'y-left'
+                    
+                    # Handle z-order
+                    self.z_order = plot_item.get('z_order', 0)
+                    
+                    # Add a reference to the plot item for updates
+                    self._plot_item = plot_item
+                    self._plot_item_index = None  # Will be set by caller
+            
+            temp_channel = WizardChannelProxy(original_channel, item)
+            
+            print(f"[PlotWizard] Created wizard channel proxy - Color: {temp_channel.color}, Y-axis: {temp_channel.yaxis}")
+            
+            return temp_channel
+            
+        except Exception as e:
+            print(f"[PlotWizard] Error creating wizard channel proxy: {str(e)}")
+            # Fallback to original channel if copy fails
+            return original_channel
+
     def _on_channel_updated_from_wizard(self, item_index):
         """Handle channel updates from line wizard"""
         try:
             if 0 <= item_index < len(self.plot_items):
                 item = self.plot_items[item_index]
-                channel = item.get('channel')
+                
+                # Check if we have a wizard channel (proxy) to read from
+                wizard_channel = item.get('_wizard_channel')
+                channel = wizard_channel if wizard_channel else item.get('channel')
+                
                 if channel:
-                    # Update item properties from channel
+                    # Update item properties from channel (wizard proxy or original)
                     item['color'] = getattr(channel, 'color', item['color'])
                     item['line_style'] = getattr(channel, 'style', item['line_style'])
                     item['marker'] = getattr(channel, 'marker', item['marker'])
@@ -1280,7 +1396,8 @@ class PlotWizardManager(QObject):
                     # Handle z-order
                     item['z_order'] = getattr(channel, 'z_order', 0)
                     
-                    print(f"[PlotWizard] Updated channel properties - Y-axis: {item['y_axis']}")
+                    source = "wizard proxy" if wizard_channel else "original channel"
+                    print(f"[PlotWizard] Updated from {source} - Color: {item['color']}, Y-axis: {item['y_axis']}")
                     
                     # Update tables and plot
                     self._update_line_config_table()
@@ -1397,7 +1514,7 @@ class PlotWizardManager(QObject):
                 legend_layout.addWidget(legend_edit)
                 layout.addLayout(legend_layout)
                 
-                # Color
+                # Color - use the plot item color, not the channel color
                 color_layout = QHBoxLayout()
                 color_layout.addWidget(QLabel("Color:"))
                 color_button = QPushButton()
@@ -1794,7 +1911,7 @@ class PlotWizardManager(QObject):
                 
             item = self.plot_items[row]
             
-            if column == 1:  # Legend name
+            if column == 2:  # Legend Name column - allow direct editing
                 current_name = item['legend_name']
                 new_name, ok = QInputDialog.getText(
                     self.window, 
@@ -1807,11 +1924,39 @@ class PlotWizardManager(QObject):
                     self._update_line_config_table()
                     self._update_plot()
                     
-            elif column == 2:  # Color
-                current_color = QColor(item['color'])
-                new_color = QColorDialog.getColor(current_color, self.window, "Choose Color")
-                if new_color.isValid():
-                    item['color'] = new_color.name()
+            elif column == 1:  # Style column - allow style editing
+                # Open a style selection dialog
+                from PySide6.QtWidgets import QDialog, QVBoxLayout, QComboBox, QDialogButtonBox
+                
+                dialog = QDialog(self.window)
+                dialog.setWindowTitle("Select Line Style")
+                dialog.setModal(True)
+                
+                layout = QVBoxLayout(dialog)
+                
+                style_combo = QComboBox()
+                style_options = [
+                    ('-', '━━━ Solid'),
+                    ('--', '┄┄┄ Dashed'),
+                    ('-.', '┄━┄ Dash-dot'),
+                    (':', '┅┅┅ Dotted'),
+                    ('None', '··· None')
+                ]
+                
+                for style_val, style_display in style_options:
+                    style_combo.addItem(style_display, style_val)
+                    if style_val == item['line_style']:
+                        style_combo.setCurrentText(style_display)
+                
+                layout.addWidget(style_combo)
+                
+                button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+                button_box.accepted.connect(dialog.accept)
+                button_box.rejected.connect(dialog.reject)
+                layout.addWidget(button_box)
+                
+                if dialog.exec() == QDialog.Accepted:
+                    item['line_style'] = style_combo.currentData()
                     self._update_line_config_table()
                     self._update_plot()
                     
@@ -1874,13 +2019,17 @@ class PlotWizardManager(QObject):
             else:
                 print(f"[PlotWizard] Programmatically updated dimensions to {self.subplot_rows}×{self.subplot_cols}")
             
-            # Check if we need to reassign subplot numbers
-            max_positions = self.subplot_rows * self.subplot_cols
+            # Check if we need to reassign subplot numbers (only if there are gaps)
             current_subplot_nums = set(item['subplot'] for item in self.plot_items)
             
-            if current_subplot_nums and max(current_subplot_nums) > max_positions:
-                print(f"[PlotWizard] Some subplots exceed new grid capacity, reassigning...")
-                self._reassign_subplot_numbers(max_positions)
+            if current_subplot_nums:
+                # Only reassign if there are gaps in the subplot numbers
+                sorted_nums = sorted(current_subplot_nums)
+                expected_nums = set(range(1, len(sorted_nums) + 1))
+                
+                if current_subplot_nums != expected_nums:
+                    print(f"[PlotWizard] Gaps detected in subplot numbers, reassigning...")
+                    self._reassign_subplot_numbers(len(sorted_nums))
                 
                 # Update tables to reflect changes
                 self._update_line_config_table()
@@ -1902,7 +2051,8 @@ class PlotWizardManager(QObject):
             reassignment_map = {}
             
             for i, old_subplot in enumerate(current_subplots):
-                new_subplot = min(i + 1, max_positions)
+                # Allow subplot numbers beyond grid capacity
+                new_subplot = i + 1
                 reassignment_map[old_subplot] = new_subplot
             
             # Apply reassignment
@@ -1971,18 +2121,11 @@ class PlotWizardManager(QObject):
                     rows, cols = self._calculate_optimal_dimensions(n_subplots)
                     print(f"[PlotWizard] Auto-setting dimensions: {rows}×{cols} (optimal layout for {n_subplots} subplots)")
                 else:
-                    # User has set dimensions - check if current capacity is sufficient
-                    current_capacity = self.subplot_rows * self.subplot_cols
-                    
-                    if n_subplots <= current_capacity:
-                        # Current dimensions can accommodate all subplots
-                        rows = self.subplot_rows
-                        cols = self.subplot_cols
-                        print(f"[PlotWizard] Keeping user dimensions: {rows}×{cols} (capacity: {current_capacity})")
-                    else:
-                        # Need more capacity - calculate optimal dimensions that can fit all subplots
-                        rows, cols = self._calculate_optimal_dimensions(n_subplots)
-                        print(f"[PlotWizard] Expanding user dimensions: {self.subplot_rows}×{self.subplot_cols} → {rows}×{cols}")
+                    # User has set dimensions - always respect user input
+                    rows = self.subplot_rows
+                    cols = self.subplot_cols
+                    current_capacity = rows * cols
+                    print(f"[PlotWizard] Using user dimensions: {rows}×{cols} (capacity: {current_capacity})")
                     
                 self.subplot_rows = rows
                 self.subplot_cols = cols
@@ -2007,36 +2150,8 @@ class PlotWizardManager(QObject):
             if n_subplots <= 0:
                 return 1, 1
             
-            # For small numbers, prefer vertical layout
-            if n_subplots <= 3:
-                return n_subplots, 1
-            
-            # For larger numbers, try to make it more square-like
-            # Start with square root and adjust
-            sqrt_n = int(n_subplots ** 0.5)
-            
-            # Try to find factors that are close to each other
-            best_ratio = float('inf')
-            best_rows = n_subplots
-            best_cols = 1
-            
-            for rows in range(1, min(sqrt_n + 3, n_subplots + 1)):
-                if n_subplots % rows == 0:
-                    cols = n_subplots // rows
-                    # Calculate aspect ratio (closer to 1 is better)
-                    ratio = abs(rows - cols)
-                    if ratio < best_ratio:
-                        best_ratio = ratio
-                        best_rows = rows
-                        best_cols = cols
-            
-            # If no perfect factors found, use the best approximation
-            if best_ratio == float('inf'):
-                # Fallback: prefer more rows than columns for better readability
-                best_rows = int(n_subplots ** 0.5)
-                best_cols = (n_subplots + best_rows - 1) // best_rows  # Ceiling division
-            
-            return best_rows, best_cols
+            # Always prefer vertical layout (n×1)
+            return n_subplots, 1
             
         except Exception as e:
             print(f"[PlotWizard] Error calculating optimal dimensions: {str(e)}")
@@ -2396,11 +2511,23 @@ class PlotWizardManager(QObject):
             # Apply global figure settings
             self._apply_figure_settings()
             
-            # Clear previous plots completely
-            self.window.figure.clear()
-            
-            # Force matplotlib to clear all cached state
-            self.window.figure.clf()
+            # Clear previous plots completely with safety measures
+            try:
+                self.window.figure.clear()
+                # Force matplotlib to clear all cached state
+                self.window.figure.clf()
+                # Force garbage collection to prevent memory leaks
+                import gc
+                gc.collect()
+            except Exception as e:
+                print(f"[PlotWizard] Warning: Error clearing figure: {e}")
+                # Try to recreate the figure if clearing fails
+                try:
+                    self.window.figure = plt.figure()
+                    self.window.canvas.figure = self.window.figure
+                except Exception as e2:
+                    print(f"[PlotWizard] Error recreating figure: {e2}")
+                    return
             
             # Group items by subplot
             subplot_items = {}
@@ -2423,21 +2550,15 @@ class PlotWizardManager(QObject):
             # Validate that we have enough subplot positions
             if n_subplots > rows * cols:
                 print(f"[PlotWizard] Warning: {n_subplots} subplots but only {rows}×{cols} positions available")
-                # Auto-expand if needed
-                if n_subplots <= 4:
-                    rows, cols = 2, 2
-                elif n_subplots <= 6:
-                    rows, cols = 2, 3
-                elif n_subplots <= 9:
-                    rows, cols = 3, 3
+                # Only auto-expand if user hasn't set dimensions
+                if not self.user_set_dimensions:
+                    rows, cols = self._calculate_optimal_dimensions(n_subplots)
+                    self.subplot_rows, self.subplot_cols = rows, cols
+                    self.window.rows_spinbox.setValue(rows)
+                    self.window.cols_spinbox.setValue(cols)
+                    print(f"[PlotWizard] Auto-expanded to {rows}×{cols} to fit all subplots")
                 else:
-                    rows, cols = 4, max(3, (n_subplots + 3) // 4)
-                
-                # Update the controls to reflect the change
-                self.subplot_rows, self.subplot_cols = rows, cols
-                self.window.rows_spinbox.setValue(rows)
-                self.window.cols_spinbox.setValue(cols)
-                print(f"[PlotWizard] Auto-expanded to {rows}×{cols} to fit all subplots")
+                    print(f"[PlotWizard] Keeping user dimensions {rows}×{cols} despite insufficient capacity")
             
             # Create axes with subplot sharing options
             axes = {}
@@ -2458,16 +2579,20 @@ class PlotWizardManager(QObject):
                     print(f"[PlotWizard] Warning: Subplot {subplot_num} exceeds grid capacity, skipping")
                     continue
                 
-                if i == 0:
-                    ax = self.window.figure.add_subplot(rows, cols, grid_position)
-                    first_ax = ax
-                else:
-                    share_x = first_ax if sharex else None
-                    share_y = first_ax if sharey else None
-                    ax = self.window.figure.add_subplot(rows, cols, grid_position, sharex=share_x, sharey=share_y)
-                
-                axes[subplot_num] = {'left': ax, 'right': None}
-                print(f"[PlotWizard] Created subplot {subplot_num} at grid position {grid_position} in {rows}×{cols} layout")
+                try:
+                    if i == 0:
+                        ax = self.window.figure.add_subplot(rows, cols, grid_position)
+                        first_ax = ax
+                    else:
+                        share_x = first_ax if sharex else None
+                        share_y = first_ax if sharey else None
+                        ax = self.window.figure.add_subplot(rows, cols, grid_position, sharex=share_x, sharey=share_y)
+                    
+                    axes[subplot_num] = {'left': ax, 'right': None}
+                    print(f"[PlotWizard] Created subplot {subplot_num} at grid position {grid_position} in {rows}×{cols} layout")
+                except Exception as e:
+                    print(f"[PlotWizard] Error creating subplot {subplot_num}: {e}")
+                    continue
             
             # Store axes for access in advanced settings
             self.current_axes = axes
@@ -2494,10 +2619,14 @@ class PlotWizardManager(QObject):
                         # Get the axis
                         if item['y_axis'] == 'right':
                             if ax_right is None:
-                                ax_right = ax_left.twinx()
-                                axes[subplot_num]['right'] = ax_right
-                                print(f"[PlotWizard] Created right y-axis for subplot {subplot_num}")
-                            ax = ax_right
+                                try:
+                                    ax_right = ax_left.twinx()
+                                    axes[subplot_num]['right'] = ax_right
+                                    print(f"[PlotWizard] Created right y-axis for subplot {subplot_num}")
+                                except Exception as e:
+                                    print(f"[PlotWizard] Error creating right y-axis: {e}")
+                                    ax_right = None
+                            ax = ax_right if ax_right is not None else ax_left
                             print(f"[PlotWizard] Using right y-axis for {item['legend_name']}")
                         else:
                             ax = ax_left
@@ -2864,8 +2993,19 @@ class PlotWizardManager(QObject):
             # Add subtle watermark
             self._add_watermark()
             
-            # Update canvas
-            self.window.canvas.draw()
+            # Update canvas with safety measures
+            try:
+                self.window.canvas.draw()
+                # Force a small delay to prevent rapid updates
+                import time
+                time.sleep(0.01)
+            except Exception as e:
+                print(f"[PlotWizard] Error updating canvas: {e}")
+                # Try to refresh the canvas
+                try:
+                    self.window.canvas.flush_events()
+                except Exception as e2:
+                    print(f"[PlotWizard] Error flushing canvas events: {e2}")
             
         except Exception as e:
             print(f"[PlotWizard] Error updating plot: {str(e)}")
@@ -2901,16 +3041,18 @@ class PlotWizardManager(QObject):
     def _ensure_table_column_widths(self):
         """Ensure proper column widths for both tables"""
         try:
-            # Line config table
+            # Line config table (4 columns: Subplot#, Style, Legend Name, Actions)
             line_table = self.window.line_config_table
             line_header = line_table.horizontalHeader()
             line_header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Subplot#
-            line_header.setSectionResizeMode(1, QHeaderView.Stretch)          # Channel Name
-            line_header.setSectionResizeMode(2, QHeaderView.Fixed)            # Actions
+            line_header.setSectionResizeMode(1, QHeaderView.Fixed)            # Style - fixed width
+            line_header.setSectionResizeMode(2, QHeaderView.Stretch)          # Legend Name - stretches
+            line_header.setSectionResizeMode(3, QHeaderView.Fixed)            # Actions - fixed width
             line_header.setMinimumSectionSize(80)
-            line_header.resizeSection(2, 100)  # Ensure actions column has proper width
+            line_header.resizeSection(1, 60)   # Style column - keep fixed width
+            line_header.resizeSection(3, 100)  # Actions column - ensure proper width
             
-            # Subplot config table
+            # Subplot config table (3 columns: Subplot#, Subplot Name, Actions)
             subplot_table = self.window.subplot_config_table
             subplot_header = subplot_table.horizontalHeader()
             subplot_header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Subplot#

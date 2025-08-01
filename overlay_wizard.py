@@ -5,6 +5,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Signal, Qt
 from PySide6.QtGui import QColor
 
+from plot_manager import PLOT_STYLES
+
 class ColorButton(QPushButton):
     color_changed = Signal(str)
     def __init__(self, initial_color="#1f77b4"):
@@ -139,11 +141,42 @@ class OverlayWizard(QDialog):
         self.width_spin.setRange(1, 10)
         self.width_spin.setValue(self.overlay_style.get('linewidth', 2))
         self.form.addRow("Line Width:", self.width_spin)
+        # Line Style - Show symbols instead of names
         self.style_combo = QComboBox()
-        self.style_combo.addItems(['solid', 'dashed', 'dotted', 'dash-dot'])
-        style_map = {':': 'dotted', '--': 'dashed', '-.': 'dash-dot', '-': 'solid'}
-        current = style_map.get(self.overlay_style.get('linestyle', '-'), 'solid')
-        self.style_combo.setCurrentText(current)
+        # Map symbols to values for display
+        style_symbols = {
+            '─': 'Solid',
+            '┄┄': 'Dashed', 
+            '┄─┄': 'Dash-dot',
+            '┄┄┄': 'Dotted',
+            '━━━': 'Solid (thick)',
+            '┅┅┅': 'Dashed (long)',
+            '┄┄┄┄': 'Dotted (sparse)',
+            '┄─┄─': 'Dash-dot-dot',
+            '━┄━┄': 'Dash-dash-dot',
+            'None': 'None'
+        }
+        for symbol, name in style_symbols.items():
+            if name in PLOT_STYLES['Line Styles']:
+                self.style_combo.addItem(symbol, PLOT_STYLES['Line Styles'][name])
+            elif name == 'Solid (thick)':
+                self.style_combo.addItem(symbol, '-')  # Will be handled by linewidth
+            elif name == 'Dashed (long)':
+                self.style_combo.addItem(symbol, '--')  # Will be handled by dash pattern
+            elif name == 'Dotted (sparse)':
+                self.style_combo.addItem(symbol, ':')  # Will be handled by dot spacing
+            elif name == 'Dash-dot-dot':
+                self.style_combo.addItem(symbol, '-.')  # Will be handled by custom pattern
+            elif name == 'Dash-dash-dot':
+                self.style_combo.addItem(symbol, '--')  # Will be handled by custom pattern
+        
+        # Set current style
+        current_style = self.overlay_style.get('linestyle', '-')
+        for i in range(self.style_combo.count()):
+            if self.style_combo.itemData(i) == current_style:
+                self.style_combo.setCurrentIndex(i)
+                break
+        
         self.form.addRow("Line Style:", self.style_combo)
         self.alpha_spin = QDoubleSpinBox()
         self.alpha_spin.setRange(0.0, 1.0)
@@ -233,8 +266,8 @@ class OverlayWizard(QDialog):
         if self.overlay_type == 'line' or self.overlay_type == 'hline' or self.overlay_type == 'vline':
             self.overlay_style['color'] = self.color_btn.get_color()
             self.overlay_style['linewidth'] = self.width_spin.value()
-            style_map = {'solid': '-', 'dashed': '--', 'dotted': ':', 'dash-dot': '-.'}
-            self.overlay_style['linestyle'] = style_map[self.style_combo.currentText()]
+            # Get the actual linestyle value from the combo box data
+            self.overlay_style['linestyle'] = self.style_combo.currentData()
             self.overlay_style['alpha'] = self.alpha_spin.value()
         elif self.overlay_type == 'text':
             current_text = self.text_edit.toPlainText()

@@ -2,7 +2,9 @@ from PySide6.QtWidgets import QTableWidgetItem, QComboBox, QTextEdit, QCheckBox,
 from PySide6.QtCore import Qt
 import time
 import itertools
+import numpy as np
 from typing import Dict, Optional, Any, Callable
+from console import log_message
 
 class ProcessWizardManager:
     """
@@ -129,9 +131,10 @@ class ProcessWizardManager:
         }
 
     def _connect_ui(self):
-        self.ui.filter_list.itemClicked.connect(self._on_filter_selected)
+        # Signal connections are handled by the ProcessWizardWindow
+        # The window connects self.filter_list.itemClicked to self.wizard_manager._on_filter_selected
         # Note: The apply step button is handled by the window's _on_console_input method
-        # No need to connect add_filter_btn here as it's handled in the window
+        pass
 
     def _on_filter_selected(self, item=None):
         """Handle filter selection from the list or programmatically."""
@@ -159,7 +162,7 @@ class ProcessWizardManager:
             # Step 2: Set basic console output 
             try:
                 print(f"[ProcessWizardManager] Setting console output...")
-                self.ui.console_output.setPlainText(f"Loading step: {step_name}...")
+                log_message(f"Loading step: {step_name}...", "info", "PROCESS")
                 print(f"[ProcessWizardManager] Console output set successfully")
             except Exception as console_e:
                 print(f"[ProcessWizardManager] ERROR setting console output: {console_e}")
@@ -177,7 +180,7 @@ class ProcessWizardManager:
             # Step 4: If we get here, try minimal registry access
             if not self.registry:
                 print(f"[ProcessWizardManager] Registry is None!")
-                self.ui.console_output.setPlainText(f"Error: Registry not available")
+                log_message(f"Error: Registry not available", "error", "PROCESS")
                 return
                 
             print(f"[ProcessWizardManager] Registry exists, type: {type(self.registry)}")
@@ -189,7 +192,7 @@ class ProcessWizardManager:
                 print(f"[ProcessWizardManager] Registry has get method: {has_get}")
                 
                 if not has_get:
-                    self.ui.console_output.setPlainText(f"Error: Registry missing 'get' method")
+                    log_message(f"Error: Registry missing 'get' method", "error", "PROCESS")
                     return
                     
                 # Now try to actually call the method
@@ -201,13 +204,13 @@ class ProcessWizardManager:
                 print(f"[ProcessWizardManager] ERROR in registry access: {reg_e}")
                 import traceback
                 traceback.print_exc()
-                self.ui.console_output.setPlainText(f"Error accessing step '{step_name}': {reg_e}")
+                log_message(f"Error accessing step '{step_name}': {reg_e}", "error", "PROCESS")
                 return
             
             # Step 6: Basic validation of step class
             if not step_cls:
                 print(f"[ProcessWizardManager] Step class is None for {step_name}")
-                self.ui.console_output.setPlainText(f"Error: Step '{step_name}' not found.")
+                log_message(f"Error: Step '{step_name}' not found.", "error", "PROCESS")
                 return
 
             print(f"[ProcessWizardManager] Step class loaded successfully: {step_cls}")
@@ -221,7 +224,7 @@ class ProcessWizardManager:
                 print(f"[ProcessWizardManager] Step prompt loaded, {len(params)} parameters")
             except Exception as prompt_e:
                 print(f"[ProcessWizardManager] Error getting step prompt: {prompt_e}")
-                self.ui.console_output.setPlainText(f"Error getting step information: {prompt_e}")
+                log_message(f"Error getting step information: {prompt_e}", "error", "PROCESS")
                 return
 
             # Step 8: Get current channel for intelligent defaults
@@ -232,38 +235,49 @@ class ProcessWizardManager:
             except Exception as channel_e:
                 print(f"[ProcessWizardManager] Error getting current channel: {channel_e}")
             
-            # Step 9: Try to get intelligent defaults with robust error handling
+            # Step 8.5: Get intelligent defaults for this step
             intelligent_defaults = None
             try:
-                print(f"[ProcessWizardManager] Attempting to get intelligent defaults...")
-                from steps.default_config import get_intelligent_defaults, format_intelligent_default_info
-                
-                # Only try intelligent defaults if we have a valid channel
-                if current_channel:
-                    intelligent_defaults = get_intelligent_defaults(step_name, current_channel)
-                    if intelligent_defaults:
-                        print(f"[ProcessWizardManager] Using intelligent defaults for {step_name}: {intelligent_defaults}")
-                        # Add intelligent defaults info to the console output
-                        try:
-                            intelligent_info = format_intelligent_default_info(step_name, current_channel, intelligent_defaults)
-                            if intelligent_info:
-                                info = f"{info}\n\n{intelligent_info}"
-                        except Exception as format_e:
-                            print(f"[ProcessWizardManager] Error formatting intelligent defaults info: {format_e}")
-                    else:
-                        print(f"[ProcessWizardManager] No intelligent defaults available for {step_name}")
+                from steps.default_config import get_intelligent_defaults
+                intelligent_defaults = get_intelligent_defaults(step_name, current_channel)
+                if intelligent_defaults:
+                    print(f"[ProcessWizardManager] Got intelligent defaults: {intelligent_defaults}")
                 else:
-                    print(f"[ProcessWizardManager] No current channel, skipping intelligent defaults")
-            except ImportError as import_e:
-                print(f"[ProcessWizardManager] Could not import intelligent defaults: {import_e}")
+                    print(f"[ProcessWizardManager] No intelligent defaults available")
+            except Exception as defaults_e:
+                print(f"[ProcessWizardManager] Error getting intelligent defaults: {defaults_e}")
+                intelligent_defaults = None
+            
+            # Step 9: Extract parameter tooltips for console display
+            try:
+                print(f"[ProcessWizardManager] Extracting parameter tooltips...")
+                if params:
+                    tooltip_lines = []
+                    for param in params:
+                        param_name = param.get("name", "")
+                        param_help = param.get("help", "")
+                        
+                        if param_help and param_name:
+                            # Format: parameter_name: help_text
+                            param_info = f"• {param_name}: {param_help}"
+                            tooltip_lines.append(param_info)
+                    
+                    if tooltip_lines:
+                        tooltip_info = "Parameters:\n" + "\n".join(tooltip_lines)
+                        info = f"{info}\n\n{tooltip_info}"
+                        print(f"[ProcessWizardManager] Added parameter tooltips for {len(tooltip_lines)} parameters")
+                    else:
+                        print(f"[ProcessWizardManager] No parameter tooltips found for {step_name}")
+                else:
+                    print(f"[ProcessWizardManager] No parameters available for {step_name}")
             except Exception as e:
-                print(f"[ProcessWizardManager] Error with intelligent defaults: {e}")
+                print(f"[ProcessWizardManager] Error extracting parameter tooltips: {e}")
                 import traceback
                 traceback.print_exc()
 
-            # Step 10: Display step description and intelligent defaults info
+            # Step 10: Display step description and parameter tooltips
             print(f"[ProcessWizardManager] Setting console output...")
-            self.ui.console_output.setPlainText(info)
+            log_message(info, "info", "PROCESS")
             
             # Step 11: Update channel name entry with default name
             print(f"[ProcessWizardManager] Updating channel name entry...")
@@ -281,9 +295,10 @@ class ProcessWizardManager:
                         param_name = p["name"]
                         default_value = p.get("default", "")
                         
-                        # Use intelligent default if available, otherwise use legacy dynamic logic or hard-coded default
+                        # Use intelligent defaults if available, otherwise fall back to legacy logic
                         if intelligent_defaults and param_name in intelligent_defaults:
-                            param_value = intelligent_defaults[param_name]
+                            # Use intelligent default
+                            param_value = str(intelligent_defaults[param_name])
                             print(f"[ProcessWizardManager] Using intelligent default for {param_name}: {param_value}")
                         elif param_name == "fs" and current_channel and hasattr(current_channel, 'fs_median') and current_channel.fs_median:
                             # Legacy dynamic prefilling for sampling frequency
@@ -506,7 +521,7 @@ class ProcessWizardManager:
             traceback.print_exc()
             # Try to set an error message in the console
             try:
-                self.ui.console_output.setPlainText(f"Error loading filter: {e}")
+                log_message(f"Error loading filter: {e}", "error", "PROCESS")
             except:
                 pass
 
@@ -672,12 +687,12 @@ class ProcessWizardManager:
             validation_errors = self._validate_parameters(user_input_dict)
             if validation_errors:
                 error_msg = "Parameter validation errors:\n" + "\n".join([f"• {err}" for err in validation_errors])
-                self.ui.console_output.setPlainText(error_msg)
+                log_message(error_msg, "error", "PROCESS")
                 return
                 
             params = self.pending_step.parse_input(user_input_dict)
         except Exception as e:
-            self.ui.console_output.setPlainText(f"Parameter parsing error: {e}")
+            log_message(f"Parameter parsing error: {e}", "error", "PROCESS")
             return
 
         # Get the parent channel
@@ -720,13 +735,14 @@ class ProcessWizardManager:
             # If no valid channels were created, inform the user
             if not valid_channels:
                 step_name = self.pending_step.name if self.pending_step else "Unknown step"
-                self.ui.console_output.setPlainText(
+                log_message(
                     f"Step '{step_name}' completed but produced no results.\n"
                     f"This may happen when:\n"
                     f"• No events/features match the specified criteria\n"
                     f"• Parameter values are too restrictive\n"
                     f"• Input signal doesn't contain the target patterns\n\n"
-                    f"Try adjusting the parameters and running again."
+                    f"Try adjusting the parameters and running again.",
+                    "warning", "PROCESS"
                 )
                 self.pending_step = None
                 self.ui.param_table.setRowCount(0)
@@ -789,7 +805,7 @@ class ProcessWizardManager:
             # Clear the pending step and channel name entry
             self.pending_step = None
             self.ui.param_table.setRowCount(0)
-            self.ui.console_output.clear()
+            # Console cleared automatically by log messages
             
             # Clear the channel name entry for next use
             if hasattr(self.ui, 'channel_name_entry'):
@@ -800,15 +816,16 @@ class ProcessWizardManager:
             self._stats['failed_steps'] += 1
             self._log_state_change(f"Step execution failed: {str(e)}")
             
-            self.ui.console_output.setPlainText(f"Step execution failed: {e}")
+            log_message(f"Step execution failed: {e}", "error", "PROCESS")
             return
 
-        self.ui.console_output.setPlainText(
+        log_message(
             f"Step '{step_name}' applied successfully.\n"
             f"New channel: {new_channels[0].channel_id}\n"
             f"Description: {new_channels[0].description}\n"
             f"Step: {new_channels[0].step}\n"
-            f"Parent: {parent_channel.channel_id}"
+            f"Parent: {parent_channel.channel_id}",
+            "success", "PROCESS"
         )
 
         # Update UI - force refresh of cached lineage to include new channels
@@ -831,13 +848,29 @@ class ProcessWizardManager:
         print(f"[ProcessWizardManager] Created {len(new_channels)} new channel(s)")
         
         if len(new_channels) == 1:
-            self.ui.console_output.setPlainText(
-                f"Step applied successfully.\nNew channel: {new_channels[0].channel_id}"
+            # Get channel display name (legend_label, ylabel, or descriptive name)
+            channel = new_channels[0]
+            channel_name = (channel.legend_label or 
+                          channel.ylabel or 
+                          f"Step {channel.step}" or 
+                          channel.channel_id)
+            log_message(
+                f"Step applied successfully.\nNew channel: {channel_name}",
+                "success", "PROCESS"
             )
         else:
-            channel_list = ", ".join([ch.channel_id for ch in new_channels])
-            self.ui.console_output.setPlainText(
-                f"Step applied successfully.\nCreated {len(new_channels)} channels: {channel_list}"
+            # Get display names for multiple channels
+            channel_names = []
+            for ch in new_channels:
+                channel_name = (ch.legend_label or 
+                              ch.ylabel or 
+                              f"Step {ch.step}" or 
+                              ch.channel_id)
+                channel_names.append(channel_name)
+            channel_list = ", ".join(channel_names)
+            log_message(
+                f"Step applied successfully.\nCreated {len(new_channels)} channels: {channel_list}",
+                "success", "PROCESS"
             )
         
         # Clear the channel name entry for next use
@@ -859,7 +892,7 @@ class ProcessWizardManager:
 
     def apply_pending_step(self):
         if not self.pending_step:
-            self.ui.console_output.setPlainText("No step selected.")
+            log_message("No step selected.", "warning", "PROCESS")
             return None
 
         # Use unified parameter collection method
@@ -972,16 +1005,18 @@ class ProcessWizardManager:
             compile(script_text, '<script>', 'exec')
         except SyntaxError as e:
             # Script has syntax errors, fall back to original step implementation
-            self.ui.console_output.setPlainText(
+            log_message(
                 f"Script syntax error at line {e.lineno}: {e.msg}\n"
-                f"Falling back to original step implementation..."
+                f"Falling back to original step implementation...",
+                "warning", "PROCESS"
             )
             return self._execute_from_parameters_direct(fallback_params)
         except Exception as e:
             # Other compilation errors, fall back to original step implementation
-            self.ui.console_output.setPlainText(
+            log_message(
                 f"Script error: {str(e)}\n"
-                f"Falling back to original step implementation..."
+                f"Falling back to original step implementation...",
+                "warning", "PROCESS"
             )
             return self._execute_from_parameters_direct(fallback_params)
         
@@ -990,9 +1025,10 @@ class ProcessWizardManager:
             return self._execute_script_safely(script_text, fallback_params)
         except Exception as e:
             # Script execution failed, fall back to original step implementation
-            self.ui.console_output.setPlainText(
+            log_message(
                 f"Script execution error: {str(e)}\n"
-                f"Falling back to original step implementation..."
+                f"Falling back to original step implementation...",
+                "warning", "PROCESS"
             )
             return self._execute_from_parameters_direct(fallback_params)
     
@@ -1009,7 +1045,7 @@ class ProcessWizardManager:
             print(f"[ProcessWizardManager] Parsed parameters: {params}")
         except Exception as e:
             print(f"[ProcessWizardManager] Parameter parsing error: {e}")
-            self.ui.console_output.setPlainText(f"Parameter parsing error: {e}")
+            log_message(f"Parameter parsing error: {e}", "error", "PROCESS")
             return
 
         # Get the parent channel
@@ -1056,13 +1092,14 @@ class ProcessWizardManager:
             # If no valid channels were created, inform the user
             if not valid_channels:
                 step_name = self.pending_step.name if self.pending_step else "Unknown step"
-                self.ui.console_output.setPlainText(
+                log_message(
                     f"Step '{step_name}' completed but produced no results.\n"
                     f"This may happen when:\n"
                     f"• No events/features match the specified criteria\n"
                     f"• Parameter values are too restrictive\n"
                     f"• Input signal doesn't contain the target patterns\n\n"
-                    f"Try adjusting the parameters and running again."
+                    f"Try adjusting the parameters and running again.",
+                    "warning", "PROCESS"
                 )
                 self.pending_step = None
                 self.ui.param_table.setRowCount(0)
@@ -1135,7 +1172,7 @@ class ProcessWizardManager:
             # Clear the pending step and channel name entry
             self.pending_step = None
             self.ui.param_table.setRowCount(0)
-            self.ui.console_output.clear()
+            # Console cleared automatically by log messages
             
             # Clear the channel name entry for next use
             if hasattr(self.ui, 'channel_name_entry'):
@@ -1147,7 +1184,7 @@ class ProcessWizardManager:
             self._log_state_change(f"Step execution failed: {str(e)}")
             
             print(f"[ProcessWizardManager] Step execution failed: {e}")
-            self.ui.console_output.setPlainText(f"Step execution failed: {e}")
+            log_message(f"Step execution failed: {e}", "error", "PROCESS")
             return
 
         # Get the step name for the console message (use stored step_name)
@@ -1172,7 +1209,7 @@ class ProcessWizardManager:
             if repair_info_messages:
                 console_message += f"\n\nData Repair Applied:\n{repair_info_messages[0]}"
             
-            self.ui.console_output.setPlainText(console_message)
+            log_message(console_message, "success", "PROCESS")
         else:
             # For multiple channels, show names if available
             channel_names = []
@@ -1187,7 +1224,7 @@ class ProcessWizardManager:
             if repair_info_messages:
                 console_message += f"\n\nData Repair Applied:\n" + "\n".join(repair_info_messages)
             
-            self.ui.console_output.setPlainText(console_message)
+            log_message(console_message, "success", "PROCESS")
 
         # Update UI
         self.ui._update_file_selector()
@@ -1412,7 +1449,7 @@ class ProcessWizardManager:
         # Clear UI
         self.pending_step = None
         self.ui.param_table.setRowCount(0)
-        self.ui.console_output.clear()
+        # Console cleared automatically by log messages
         
         if hasattr(self.ui, 'channel_name_entry'):
             self.ui.channel_name_entry.clear()
@@ -1447,13 +1484,29 @@ class ProcessWizardManager:
         
         # Show success message
         if len(valid_channels) == 1:
-            self.ui.console_output.setPlainText(
-                f"Custom script executed successfully.\nNew channel: {valid_channels[0].channel_id}"
+            # Get channel display name (legend_label, ylabel, or descriptive name)
+            channel = valid_channels[0]
+            channel_name = (channel.legend_label or 
+                          channel.ylabel or 
+                          f"Step {channel.step}" or 
+                          channel.channel_id)
+            log_message(
+                f"Custom script executed successfully.\nNew channel: {channel_name}",
+                "success", "PROCESS"
             )
         else:
-            channel_list = ", ".join([ch.channel_id for ch in valid_channels])
-            self.ui.console_output.setPlainText(
-                f"Custom script executed successfully.\nCreated {len(valid_channels)} channels: {channel_list}"
+            # Get display names for multiple channels
+            channel_names = []
+            for ch in valid_channels:
+                channel_name = (ch.legend_label or 
+                              ch.ylabel or 
+                              f"Step {ch.step}" or 
+                              ch.channel_id)
+                channel_names.append(channel_name)
+            channel_list = ", ".join(channel_names)
+            log_message(
+                f"Custom script executed successfully.\nCreated {len(valid_channels)} channels: {channel_list}",
+                "success", "PROCESS"
             )
         
         return valid_channels[-1] if valid_channels else None

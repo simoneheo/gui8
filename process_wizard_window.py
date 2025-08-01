@@ -24,6 +24,7 @@ from channel import SourceType
 from steps.base_step import BaseStep
 import numpy as np
 from scipy.signal import find_peaks
+from console import log_message
 
 class ScriptChangeTracker:
     """Track changes to process scripts"""
@@ -79,7 +80,7 @@ class ProcessWizardWindow(QMainWindow):
         self.script_tracker = ScriptChangeTracker()
         
         self.setWindowTitle("Process File")
-        self.setMinimumSize(1200, 800)
+        # Removed minimum size restriction to allow flexible resizing
         
         # Initialize state tracking
         self._stats = {
@@ -144,8 +145,7 @@ class ProcessWizardWindow(QMainWindow):
         
     def _show_error(self, message: str):
         """Show error message to user"""
-        if hasattr(self, 'console_output'):
-            self.console_output.append(f"ERROR: {message}")
+        log_message(f"ERROR: {message}", "error", "PROCESS")
             
     def _initialize_manager(self):
         """Initialize the process manager with error handling"""
@@ -171,18 +171,19 @@ class ProcessWizardWindow(QMainWindow):
         }
         
     def _build_left_panel(self, main_splitter):
-        """Build the left panel with two vertical columns"""
+        """Build the left panel with two columns for transformations and controls"""
         # Left Panel with two columns
         self.left_panel = QWidget()
         left_layout = QHBoxLayout(self.left_panel)
         
-        # Left Column - Filters Section only
-        left_column = QWidget()
-        left_column_layout = QVBoxLayout(left_column)
+        # Left Column - Transformations Section
+        middle_column = QWidget()
+        middle_column_layout = QVBoxLayout(middle_column)
         
-        # Transformations Group
-        transformations_group = QGroupBox("Transformations")
-        transformations_layout = QVBoxLayout(transformations_group)
+        # Transformation Options Group
+        transformation_group = QGroupBox("Transformation Options")
+        transformation_layout = QVBoxLayout(transformation_group)
+        transformation_layout.setSpacing(4)
         
         # Transformation search
         self.filter_search = QLineEdit()
@@ -197,25 +198,27 @@ class ProcessWizardWindow(QMainWindow):
         # Transformation list (scrollable)
         self.filter_list = QListWidget()
         
-        transformations_layout.addWidget(self.filter_search)
-        transformations_layout.addWidget(self.category_filter)
-        transformations_layout.addWidget(self.filter_list)
+        transformation_layout.addWidget(self.filter_search)
+        transformation_layout.addWidget(self.category_filter)
+        transformation_layout.addWidget(self.filter_list)
         
-        left_column_layout.addWidget(transformations_group)
+        middle_column_layout.addWidget(transformation_group)
         
         # Right Column - Control Section stacked top-down
         right_column = QWidget()
         right_column_layout = QVBoxLayout(right_column)
+        right_column_layout.setSpacing(12)  # Increase spacing between groups
         
-        # File/Channel dropdowns (moved from right panel)
-        file_channel_group = QGroupBox("File Selection")
-        file_channel_layout = QVBoxLayout(file_channel_group)
+        # Channel Selector Group
+        channel_selector_group = QGroupBox("Channel Selector")
+        channel_selector_layout = QVBoxLayout(channel_selector_group)
+        channel_selector_layout.setSpacing(4)
         
         # File selector
         file_layout = QHBoxLayout()
         file_label = QLabel("File:")
         self.file_selector = QComboBox()
-        self.file_selector.setMinimumWidth(200)  # Set consistent width
+        # Removed minimum width restriction
         self.file_selector.currentIndexChanged.connect(self._on_file_selected)
         file_layout.addWidget(file_label)
         file_layout.addWidget(self.file_selector)
@@ -224,50 +227,25 @@ class ProcessWizardWindow(QMainWindow):
         channel_layout = QHBoxLayout()
         channel_label = QLabel("Channel:")
         self.channel_selector = QComboBox()
-        self.channel_selector.setMinimumWidth(200)  # Set consistent width
+        # Removed minimum width restriction
         self.channel_selector.currentIndexChanged.connect(self._on_channel_selected)
         channel_layout.addWidget(channel_label)
         channel_layout.addWidget(self.channel_selector)
         
-        file_channel_layout.addLayout(file_layout)
-        file_channel_layout.addLayout(channel_layout)
-        
         # Input Channel Display
-        input_channel_group = QGroupBox("Input Channel")
-        input_channel_layout = QVBoxLayout(input_channel_group)
-        
-        # Replace spinbox with combobox to show channel names directly
+        input_channel_layout = QHBoxLayout()
+        input_channel_label = QLabel("Input Channel:")
         self.input_channel_combobox = QComboBox()
         self.input_channel_combobox.currentIndexChanged.connect(self._on_input_channel_changed)
-        
-        # Add the combobox directly to the vertical layout to make it span full width
+        input_channel_layout.addWidget(input_channel_label)
         input_channel_layout.addWidget(self.input_channel_combobox)
         
-        # Console Group - only around console output
-        console_group = QGroupBox("Console")
-        console_layout = QVBoxLayout(console_group)
+        # Add all channel selector controls to the group
+        channel_selector_layout.addLayout(file_layout)
+        channel_selector_layout.addLayout(channel_layout)
+        channel_selector_layout.addLayout(input_channel_layout)
         
-        self.console_output = QTextEdit()
-        self.console_output.setPlaceholderText("Output will appear here...")
-        self.console_output.setReadOnly(True)
-        self.console_output.setStyleSheet("""
-            QTextEdit {
-                background-color: #f8f9fa;
-                border: 1px solid #dee2e6;
-                border-radius: 4px;
-                padding: 8px;
-                color: #212529;
-            }
-            QTextEdit:focus {
-                border: 1px solid #007bff;
-            }
-        """)
-        
-        console_layout.addWidget(self.console_output)
-        
-        # Parameters Group - for parameter table and script
-        parameters_group = QGroupBox("Parameters")
-        parameters_layout = QVBoxLayout(parameters_group)
+        # Parameters section - for parameter table and script
         
         # Parameter table
         self.param_table = QTableWidget(0, 2)
@@ -276,15 +254,18 @@ class ProcessWizardWindow(QMainWindow):
         self.param_table.horizontalHeader().setStretchLastSection(True)
         self.param_table.setEditTriggers(QTableWidget.AllEditTriggers)
         self.param_table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.param_table.setFixedHeight(250)  # Adjust as needed
+        # Removed fixed height restriction to allow natural expansion
         
         # Set column resize modes
         param_header = self.param_table.horizontalHeader()
-        param_header.setSectionResizeMode(0, QHeaderView.Fixed)  # Parameter column - fixed width
+        param_header.setSectionResizeMode(0, QHeaderView.Interactive)  # Parameter column - interactive width
         param_header.setSectionResizeMode(1, QHeaderView.Stretch)  # Value column - stretches
-        self.param_table.setColumnWidth(0, 120)  # Parameter column width
+        # Removed fixed column width restriction
         
-        # Create tab widget for parameter table and script
+        # Create Transformation Config group with tab widget for parameter table and script
+        transformation_config_group = QGroupBox("Transformation Config")
+        transformation_config_layout = QVBoxLayout(transformation_config_group)
+        
         self.param_tab_widget = QTabWidget()
         
         # Parameters tab
@@ -311,7 +292,7 @@ class ProcessWizardWindow(QMainWindow):
         
         # Reset button
         self.reset_script_btn = QPushButton("Reset to Default")
-        self.reset_script_btn.setMaximumWidth(120)
+        # Removed maximum width restriction
         self.reset_script_btn.clicked.connect(self._reset_script)
         header_layout.addWidget(self.reset_script_btn)
         
@@ -325,11 +306,6 @@ class ProcessWizardWindow(QMainWindow):
         
         # Script controls - simplified
         script_controls_layout = QHBoxLayout()
-        self.script_readonly_checkbox = QCheckBox("Read-only")
-        self.script_readonly_checkbox.setChecked(False)  # Default to editable
-        self.script_readonly_checkbox.stateChanged.connect(self._on_script_readonly_changed)
-        
-        script_controls_layout.addWidget(self.script_readonly_checkbox)
         script_controls_layout.addStretch()
         
         script_layout.addWidget(self.script_editor)
@@ -339,9 +315,21 @@ class ProcessWizardWindow(QMainWindow):
         # Connect tab change to update script when switching to script tab
         self.param_tab_widget.currentChanged.connect(self._on_param_tab_changed)
         
-        parameters_layout.addWidget(self.param_tab_widget)
+        # Add tab widget to transformation config group
+        transformation_config_layout.addWidget(self.param_tab_widget)
         
-        # Channel Name Entry (outside any section, above Apply Operation button)
+        # Add Channel Selector group to main layout
+        right_column_layout.addWidget(channel_selector_group)
+        
+        # Add Transformation Config group after Channel Selector
+        right_column_layout.addWidget(transformation_config_group)
+        
+        # Apply Transformation Group
+        apply_transformation_group = QGroupBox("Apply Transformation")
+        apply_transformation_layout = QVBoxLayout(apply_transformation_group)
+        apply_transformation_layout.setSpacing(4)
+        
+        # Channel Name Entry
         channel_name_layout = QHBoxLayout()
         channel_name_label = QLabel("Channel Name:")
         self.channel_name_entry = QLineEdit()
@@ -377,79 +365,73 @@ class ProcessWizardWindow(QMainWindow):
             }
         """)
         
-        # Add groups to right column
-        right_column_layout.addWidget(file_channel_group)
-        right_column_layout.addWidget(input_channel_group)
-        right_column_layout.addWidget(console_group)
-        right_column_layout.addWidget(parameters_group)
+        # Add controls to Apply Transformation group
+        apply_transformation_layout.addLayout(channel_name_layout)
+        apply_transformation_layout.addWidget(self.add_filter_btn)
         
-        # Channel Name Entry (outside any section, above Apply Operation button)
-        right_column_layout.addLayout(channel_name_layout)
+        # Add Apply Transformation group to main layout
+        right_column_layout.addWidget(apply_transformation_group)
         
-        # Apply Operation button
-        right_column_layout.addWidget(self.add_filter_btn)
-        
-        # Add columns to left panel using splitter for better size control
+        # Add both columns to left panel using splitter for better size control
         left_splitter = QSplitter(Qt.Horizontal)
-        left_splitter.addWidget(left_column)
+        left_splitter.addWidget(middle_column)
         left_splitter.addWidget(right_column)
-        left_splitter.setSizes([350, 500])  # left column smaller, right column wider
+        left_splitter.setSizes([350, 400])  # transformations column, controls column
         left_layout.addWidget(left_splitter)
 
-        # Right Panel with vertical layout
+        # Right Panel with horizontal splitter between steps table and plot
         self.right_panel = QWidget()
+        self.right_panel.setMinimumWidth(500)  # Set minimum width for table/plot panel
         right_layout = QVBoxLayout(self.right_panel)
         
+        # Create horizontal splitter for steps table and plot area
+        right_splitter = QSplitter(Qt.Vertical)
+        
         # Step Table - styled like main window channel table
-        self.step_table = QTableWidget(0, 6)  # 6 columns like main window
-        self.step_table.setHorizontalHeaderLabels(["Show", "Style", "Channel Name", "Shape", "fs (Hz)", "Actions"])
+        self.step_table = QTableWidget(0, 4)  # 4 columns: Show, Style, Channel Name, Actions
+        self.step_table.setHorizontalHeaderLabels(["Show", "Style", "Channel Name", "Actions"])
         self.step_table.verticalHeader().setVisible(False)
         
-        # Set column resize modes for better layout (same as main window)
+        # Set column resize modes for flexible layout
         header = self.step_table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.Fixed)     # Show column - fixed width
-        header.setSectionResizeMode(1, QHeaderView.Fixed)     # Style - fixed width
+        header.setSectionResizeMode(0, QHeaderView.Interactive)     # Show column - interactive width
+        header.setSectionResizeMode(1, QHeaderView.Interactive)     # Style - interactive width
         header.setSectionResizeMode(2, QHeaderView.Stretch)   # Channel Name - stretches
-        header.setSectionResizeMode(3, QHeaderView.Fixed)     # Shape - fixed width
-        header.setSectionResizeMode(4, QHeaderView.Fixed)     # fs (Hz) - fixed width
-        header.setSectionResizeMode(5, QHeaderView.Fixed)     # Actions - fixed width
+        header.setSectionResizeMode(3, QHeaderView.Interactive)     # Actions - interactive width
         
-        # Set specific column widths (same as main window)
-        self.step_table.setColumnWidth(0, 60)   # Show checkbox
-        self.step_table.setColumnWidth(1, 80)   # Style preview
-        self.step_table.setColumnWidth(3, 80)   # Shape column
-        self.step_table.setColumnWidth(4, 100)  # fs (Hz) column
-        self.step_table.setColumnWidth(5, 180)  # Actions buttons
+        # Set column widths
+        self.step_table.setColumnWidth(0, 50)   # Show column - very narrow (checkbox only)
+        self.step_table.setColumnWidth(1, 85)   # Style column - just wide enough for StylePreviewWidget (80px) + padding
+        self.step_table.setColumnWidth(3, 180)  # Actions column minimum width (5 buttons * 30px + margins + spacing)
         
         self.step_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.step_table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.step_table.setMaximumHeight(150)  # Small height
+        # Removed maximum height restriction
         self.step_table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        right_layout.addWidget(self.step_table)
+        
+        # Add step table to splitter
+        right_splitter.addWidget(self.step_table)
 
-        # Create tab widget for plot area
-        self.tab_widget = QTabWidget()
-
-        # Create Time Series tab
-        time_series_tab = QWidget()
-        time_series_layout = QVBoxLayout(time_series_tab)
+        # Create plot area directly (no tabs)
+        plot_widget = QWidget()
+        plot_layout = QVBoxLayout(plot_widget)
 
         # Plot area
         self.figure = plt.figure(figsize=(8, 6), dpi=100)
         self.ax = self.figure.add_subplot(111)
         self.canvas = FigureCanvas(self.figure)
-        self.toolbar = NavigationToolbar(self.canvas, time_series_tab)
-        time_series_layout.addWidget(self.toolbar)
-        time_series_layout.addWidget(self.canvas)
+        self.toolbar = NavigationToolbar(self.canvas, plot_widget)
+        plot_layout.addWidget(self.toolbar)
+        plot_layout.addWidget(self.canvas)
 
-        # Add tabs
-        self.tab_widget.addTab(time_series_tab, "Time Series")
+        # Add plot area to splitter
+        right_splitter.addWidget(plot_widget)
         
-        # Connect tab change event
-        self.tab_widget.currentChanged.connect(self._on_tab_changed)
-
-        # Add plot area to right panel with stretch priority
-        right_layout.addWidget(self.tab_widget, 1)  # Stretch factor 1 = takes remaining space
+        # Set splitter proportions (steps table smaller, plot area larger)
+        right_splitter.setSizes([120, 680])  # Steps table: 120px, Plot area: 680px
+        
+        # Add the splitter to the right panel
+        right_layout.addWidget(right_splitter)
         
         # Add panels to main splitter
         main_splitter.addWidget(self.left_panel)
@@ -535,10 +517,8 @@ class ProcessWizardWindow(QMainWindow):
 
         # Add successfully parsed files to selector
         for file_info in successfully_parsed_files:
-            # Add status indicator in the display name for clarity
-            status_text = file_info.state.status.value
-            display_name = f"{file_info.filename} ({status_text})"
-            self.file_selector.addItem(display_name, file_info.file_id)
+            # Use just the filename without status text
+            self.file_selector.addItem(file_info.filename, file_info.file_id)
 
         # Priority order for file selection:
         # 1. Previously selected file (if exists)
@@ -668,12 +648,8 @@ class ProcessWizardWindow(QMainWindow):
             lineage = unique_lineage
             lineage.sort(key=lambda ch: ch.step)
         
-        # Filter lineage based on current tab
-        current_tab_index = self.tab_widget.currentIndex()
-        filtered_lineage = self._filter_lineage_by_tab(lineage, current_tab_index)
-        
-        # Cache lineage
-        self._cached_lineage = filtered_lineage
+        # Cache lineage (no tab filtering needed)
+        self._cached_lineage = lineage
 
     def _update_step_table(self):
         """Update the unified step table with the current channel lineage."""
@@ -715,26 +691,7 @@ class ProcessWizardWindow(QMainWindow):
             channel_name = channel.legend_label or channel.ylabel or f"Step {channel.step}"
             self.step_table.setItem(i, 2, QTableWidgetItem(channel_name))
             
-            # Column 3: Shape (data shape/length)
-            if channel.xdata is not None and channel.ydata is not None:
-                shape_str = f"({len(channel.xdata)}, 2)"
-            elif channel.ydata is not None:
-                shape_str = f"({len(channel.ydata)},)"
-            else:
-                shape_str = "No data"
-            self.step_table.setItem(i, 3, QTableWidgetItem(shape_str))
-            
-            # Column 4: fs (Hz) - sampling frequency (median ± std)
-            if hasattr(channel, 'fs_median') and channel.fs_median:
-                if hasattr(channel, 'fs_std') and channel.fs_std:
-                    fs_str = f"{channel.fs_median:.1f}±{channel.fs_std:.1f}"
-                else:
-                    fs_str = f"{channel.fs_median:.1f}"
-            else:
-                fs_str = "N/A"
-            self.step_table.setItem(i, 4, QTableWidgetItem(fs_str))
-            
-            # Column 5: Actions (info, inspect, styling, transform, delete)
+            # Column 3: Actions (info, inspect, styling, transform, delete)
             actions_widget = QWidget()
             actions_layout = QHBoxLayout(actions_widget)
             actions_layout.setContentsMargins(2, 2, 2, 2)
@@ -742,40 +699,35 @@ class ProcessWizardWindow(QMainWindow):
             
             # Info button (channel information)
             info_button = QPushButton("❗")
-            info_button.setMaximumWidth(25)
-            info_button.setMaximumHeight(25)
+            info_button.setMinimumSize(30, 30)
             info_button.setToolTip("Channel information and metadata")
             info_button.clicked.connect(lambda checked=False, ch_id=channel.channel_id: self._show_channel_info(ch_id))
             actions_layout.addWidget(info_button)
             
             # Magnifying glass button (inspect data)
             zoom_button = QPushButton("🔍")
-            zoom_button.setMaximumWidth(25)
-            zoom_button.setMaximumHeight(25)
+            zoom_button.setMinimumSize(30, 30)
             zoom_button.setToolTip("Inspect and edit channel data")
             zoom_button.clicked.connect(lambda checked=False, ch_id=channel.channel_id: self._inspect_channel_data(ch_id))
             actions_layout.addWidget(zoom_button)
             
             # Paint brush button (styling)
             style_button = QPushButton("🎨")
-            style_button.setMaximumWidth(25)
-            style_button.setMaximumHeight(25)
+            style_button.setMinimumSize(30, 30)
             style_button.setToolTip("Channel styling and appearance settings")
             style_button.clicked.connect(lambda checked=False, ch_id=channel.channel_id: self._handle_gear_button_clicked(ch_id))
             actions_layout.addWidget(style_button)
             
             # Tool button (transform data)
             tool_button = QPushButton("🔨")
-            tool_button.setMaximumWidth(25)
-            tool_button.setMaximumHeight(25)
+            tool_button.setMinimumSize(30, 30)
             tool_button.setToolTip("Transform channel data with math expressions")
             tool_button.clicked.connect(lambda checked=False, ch_id=channel.channel_id: self._transform_channel_data(ch_id))
             actions_layout.addWidget(tool_button)
             
             # Trash button (delete) - always last
             delete_button = QPushButton("🗑️")
-            delete_button.setMaximumWidth(25)
-            delete_button.setMaximumHeight(25)
+            delete_button.setMinimumSize(30, 30)
             
             # Disable delete button for RAW channels (step = 0)
             if hasattr(channel, 'step') and channel.step == 0:
@@ -787,7 +739,7 @@ class ProcessWizardWindow(QMainWindow):
             
             actions_layout.addWidget(delete_button)
             
-            self.step_table.setCellWidget(i, 5, actions_widget)
+            self.step_table.setCellWidget(i, 3, actions_widget)
 
             # Enhanced tooltip with filename, parameters and parent step information
             tooltip_parts = []
@@ -828,17 +780,7 @@ class ProcessWizardWindow(QMainWindow):
                 if widget and col != 1:  # Don't override the style widget tooltip
                     widget.setToolTip(tooltip)
         
-        # Ensure column widths are maintained after table refresh (same as main window)
-        self.step_table.setColumnWidth(0, 60)   # Show checkbox
-        self.step_table.setColumnWidth(1, 80)   # Style preview
-        self.step_table.setColumnWidth(3, 80)   # Shape column
-        self.step_table.setColumnWidth(4, 100)  # fs (Hz) column
-        self.step_table.setColumnWidth(5, 180)  # Actions buttons
-
-    def _filter_lineage_by_tab(self, lineage, tab_index):
-        """Filter lineage channels based on the current tab."""
-        # Since we only have time series tab now, return all channels
-        return lineage
+        # Removed fixed column width restrictions for flexible resizing
 
     def _update_plot(self):
         """Update the plot with the current channel data."""
@@ -876,13 +818,17 @@ class ProcessWizardWindow(QMainWindow):
         # Clear the plot
         self.ax.clear()
         
+        # Sort channels by z_order (higher values plot on top)
+        sorted_channels = sorted(channels, key=lambda ch: getattr(ch, 'z_order', 0))
+        
         # Plot each channel using stored style properties
-        for ch in channels:
+        for ch in sorted_channels:
             if ch.show:  # Only plot visible channels
                 # Use stored style properties from channel
                 color = getattr(ch, 'color', '#1f77b4')
                 linestyle = getattr(ch, 'style', '-')
                 marker = getattr(ch, 'marker', 'None')
+                z_order = getattr(ch, 'z_order', 0)
                 
                 # Convert "None" strings to None for matplotlib
                 linestyle = None if linestyle == "None" else linestyle
@@ -894,17 +840,13 @@ class ProcessWizardWindow(QMainWindow):
                                color=color, 
                                linestyle=linestyle, 
                                marker=marker, 
-                               label=ch.legend_label)
+                               label=ch.legend_label,
+                               zorder=z_order)
 
         # Set title and update
         self.ax.set_title(f"File: {active_channel.filename}")
         self.ax.legend().set_visible(False)
         self.canvas.draw()
-
-    def _on_tab_changed(self, index):
-        """Handle tab change event."""
-        # Since we only have one tab now, just update the plot
-        self._update_plot()
 
     def _on_file_selected(self, index):
         """Handle file selection change."""
@@ -1016,20 +958,13 @@ class ProcessWizardWindow(QMainWindow):
                         new_channel = self.wizard_manager._execute_script_safely(script_text, fallback_params)
                         used_custom_script = True
                         print(f"[ProcessWizard] Custom script executed successfully!")
-                        
-                        # Update console with success message
-                        self.console_output.setPlainText(
-                            f"Custom script executed successfully!\n"
-                            f"Created channel: {new_channel.channel_id if new_channel else 'Unknown'}"
-                        )
+                        # Success message is logged by the ProcessWizardManager
                         
                     except Exception as script_e:
                         print(f"[ProcessWizard] Custom script failed: {script_e}")
                         # Don't return here - fall through to use hardcoded script
-                        self.console_output.setPlainText(
-                            f"Custom script failed: {script_e}\n"
-                            f"Falling back to hardcoded script..."
-                        )
+                        fallback_msg = f"Custom script failed: {script_e}\nFalling back to hardcoded script..."
+                        log_message(fallback_msg, "warning", "PROCESS")
                         
         except Exception as e:
             print(f"[ProcessWizard] Error checking custom script: {e}")
@@ -1041,22 +976,10 @@ class ProcessWizardWindow(QMainWindow):
                 new_channel = self.wizard_manager.apply_pending_step()
                 if new_channel:
                     print(f"[ProcessWizard] Hardcoded script executed successfully!")
-                    if not used_custom_script:  # Only update console if we didn't already show a custom script message
-                        # Get the channel name for display
-                        channel_name = new_channel.legend_label or new_channel.ylabel or f"Channel {new_channel.channel_id}"
-                        console_message = f"Operation applied successfully!\nCreated channel: {channel_name}"
-                        
-                        # Check for repair information in the created channel
-                        if (hasattr(new_channel, 'metadata') and new_channel.metadata is not None and 
-                            'data_repair_info' in new_channel.metadata):
-                            repair_info = new_channel.metadata['data_repair_info']
-                            if repair_info and repair_info != "No repairs needed":
-                                console_message += f"\n\nData Repair Applied:\n{repair_info}"
-                        
-                        self.console_output.setPlainText(console_message)
+                    # Success message is logged by the ProcessWizardManager
             except Exception as fallback_e:
                 print(f"[ProcessWizard] Hardcoded script also failed: {fallback_e}")
-                self.console_output.setPlainText(f"Both custom and hardcoded scripts failed: {fallback_e}")
+                log_message(f"Both custom and hardcoded scripts failed: {fallback_e}", "error", "PROCESS")
                 self._adding_filter = False
                 return
 
@@ -1262,6 +1185,7 @@ class ProcessWizardWindow(QMainWindow):
             # Open the line wizard for channel styling
             from line_wizard import LineWizard
             wizard = LineWizard(channel, self)
+            wizard.channel_updated.connect(self._handle_channel_data_updated)
             wizard.exec()
 
             self._update_step_table()
@@ -1463,13 +1387,13 @@ Tips:
 • The Scripts tab shows editable Python code — use with caution"""
 
             
-            self.console_output.setPlainText(welcome_msg)
+            log_message(welcome_msg, "info", "PROCESS")
             
         except Exception as e:
             print(f"[ProcessWizard] Error setting initial console message: {e}")
             # Fallback to basic message
             try:
-                self.console_output.setPlainText("Welcome to the Process Wizard!\n\nSelect a transformation, configure parameters, and click Apply Operation.")
+                log_message("Welcome to the Process Wizard!\n\nSelect a transformation, configure parameters, and click Apply Operation.", "info", "PROCESS")
             except:
                 pass
 
@@ -1524,9 +1448,7 @@ Tips:
             except:
                 pass
     
-    def _on_script_readonly_changed(self, state):
-        """Handle script read-only checkbox change"""
-        self.script_editor.setReadOnly(state == Qt.Checked)
+
         # self.sync_to_params_btn.setEnabled(state != Qt.Checked) # Removed as per edit hint
     
     def _sync_script_from_params(self):
@@ -1614,10 +1536,9 @@ Tips:
         
         # This is a basic implementation - could be enhanced with actual Python AST parsing
         # For now, just show a message that this feature is under development
-        self.wizard_manager.ui.console_output.setPlainText(
-            "Script-to-parameters synchronization is under development.\n"
-            "For now, please use the Parameters tab to modify values."
-        )
+        dev_msg = ("Script-to-parameters synchronization is under development.\n"
+            "For now, please use the Parameters tab to modify values.")
+        log_message(dev_msg, "info", "PROCESS")
     
     def _get_params_from_table(self):
         """Extract parameters from the parameter table"""

@@ -79,7 +79,7 @@ class MetadataWizard(QDialog):
         
         for i, (label_text, key) in enumerate(basic_info):
             label = QLabel(f"{label_text}:")
-            label.setStyleSheet("font-weight: bold; color: #34495e;")
+            label.setStyleSheet("font-weight: bold;")
             value_label = QLabel("Loading...")
             value_label.setWordWrap(True)
             
@@ -117,11 +117,11 @@ class MetadataWizard(QDialog):
             ("Count (non-NaN)", "x_count"),
             ("Min", "x_min"),
             ("Max", "x_max"),
-            ("Mean Sampling Interval", "x_mean_interval"),
-            ("Median Sampling Interval", "x_median_interval"),
-            ("Std Sampling Interval", "x_std_interval"),
-            ("Min Sampling Interval", "x_min_interval"),
-            ("Max Sampling Interval", "x_max_interval")
+            ("Mean Sampling Rate", "x_mean_interval"),
+            ("Median Sampling Rate", "x_median_interval"),
+            ("Std Sampling Rate", "x_std_interval"),
+            ("Min Sampling Rate", "x_min_interval"),
+            ("Max Sampling Rate", "x_max_interval")
         ]
         
         for i, (label_text, key) in enumerate(x_stats):
@@ -270,20 +270,25 @@ class MetadataWizard(QDialog):
             self.x_stats_labels["x_min"].setText(f"{np.min(x_clean):.6g}")
             self.x_stats_labels["x_max"].setText(f"{np.max(x_clean):.6g}")
             
-            # Sampling intervals (differences between consecutive points)
+            # Sampling rates (1/sampling_interval in Hz)
             if len(x_clean) > 1:
                 intervals = np.diff(x_clean)
-                mean_interval = np.mean(intervals)
-                median_interval = np.median(intervals)
-                std_interval = np.std(intervals)
-                min_interval = np.min(intervals)
-                max_interval = np.max(intervals)
+                # Convert intervals to sampling rates (Hz)
+                mean_rate = 1.0 / np.mean(intervals) if np.mean(intervals) > 0 else float('inf')
+                median_rate = 1.0 / np.median(intervals) if np.median(intervals) > 0 else float('inf')
+                min_rate = 1.0 / np.max(intervals) if np.max(intervals) > 0 else float('inf')  # Note: min rate = 1/max_interval
+                max_rate = 1.0 / np.min(intervals) if np.min(intervals) > 0 else float('inf')  # Note: max rate = 1/min_interval
                 
-                self.x_stats_labels["x_mean_interval"].setText(f"{mean_interval:.6g}")
-                self.x_stats_labels["x_median_interval"].setText(f"{median_interval:.6g}")
-                self.x_stats_labels["x_std_interval"].setText(f"{std_interval:.6g}")
-                self.x_stats_labels["x_min_interval"].setText(f"{min_interval:.6g}")
-                self.x_stats_labels["x_max_interval"].setText(f"{max_interval:.6g}")
+                # For std, we need to be more careful - convert each interval to rate first
+                rates = 1.0 / intervals
+                rates = rates[np.isfinite(rates)]  # Remove infinite values
+                std_rate = np.std(rates) if len(rates) > 0 else 0
+                
+                self.x_stats_labels["x_mean_interval"].setText(f"{mean_rate:.6g} Hz")
+                self.x_stats_labels["x_median_interval"].setText(f"{median_rate:.6g} Hz")
+                self.x_stats_labels["x_std_interval"].setText(f"{std_rate:.6g} Hz")
+                self.x_stats_labels["x_min_interval"].setText(f"{min_rate:.6g} Hz")
+                self.x_stats_labels["x_max_interval"].setText(f"{max_rate:.6g} Hz")
             else:
                 self.x_stats_labels["x_mean_interval"].setText("N/A")
                 self.x_stats_labels["x_median_interval"].setText("N/A")

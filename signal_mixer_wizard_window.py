@@ -4,7 +4,8 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
     QLineEdit, QPushButton, QListWidget, QTextEdit, QTableWidget, QTableWidgetItem,
     QCheckBox, QSplitter, QFrame, QSpinBox, QGroupBox, QGridLayout,
-    QFormLayout, QMessageBox, QDoubleSpinBox, QSlider, QAbstractItemView, QHeaderView
+    QFormLayout, QMessageBox, QDoubleSpinBox, QSlider, QAbstractItemView, QHeaderView,
+    QSizePolicy
 )
 from PySide6.QtCore import Qt, Signal
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -16,6 +17,7 @@ from typing import Optional, Dict, List
 
 # Import the reusable DataAlignerWidget
 from data_aligner_window import DataAlignerWidget
+from console import log_message
 
 # Handle mixer imports gracefully
 try:
@@ -58,7 +60,7 @@ class SignalMixerWizardWindow(QMainWindow):
         self.parent_window = parent
         
         self.setWindowTitle("Signal Mixer Wizard")
-        self.setMinimumSize(1200, 800)
+        # Removed minimum size restriction to allow flexible resizing
         
         # Initialize state tracking
         self._stats = {
@@ -138,8 +140,11 @@ class SignalMixerWizardWindow(QMainWindow):
         self._build_left_panel(main_splitter)
         self._build_right_panel(main_splitter)
         
+        # Set main splitter proportions (left panel smaller, right panel larger)
+        main_splitter.setSizes([500, 800])  # Left: 500px, Right: 800px
+        
     def _build_left_panel(self, main_splitter):
-        """Build the left panel with mixing controls"""
+        """Build the left panel with two columns for mixing operations and controls"""
         self.left_panel = QWidget()
         left_layout = QVBoxLayout(self.left_panel)
         
@@ -147,22 +152,45 @@ class SignalMixerWizardWindow(QMainWindow):
         left_splitter = QSplitter(Qt.Horizontal)
         left_layout.addWidget(left_splitter)
         
-        # Create left and right column widgets
-        left_col_widget = QWidget()
-        left_col_layout = QVBoxLayout(left_col_widget)
+        # Left Column - Mixing Operations Section
+        middle_column = QWidget()
+        middle_column_layout = QVBoxLayout(middle_column)
         
-        right_col_widget = QWidget()
-        right_col_layout = QVBoxLayout(right_col_widget)
+        # Mixing Operations (without frame)
+        self._build_mixing_operations_group(middle_column_layout)
         
-        # Mixing Operations Group → left column
-        self._build_mixing_operations_group(left_col_layout)
+        # Right Column - Control Section
+        right_column = QWidget()
+        right_column_layout = QVBoxLayout(right_column)
+        right_column_layout.setSpacing(12)  # Increase spacing between groups
         
-        # All other groups → right column
-        self._build_channel_selection_group(right_col_layout)
-        self._build_alignment_controls_group(right_col_layout)
-        self._build_console_group(right_col_layout)
+        # Channel Selection (without frame)
+        self._build_channel_selection_group(right_column_layout)
         
-        # Channel Name input (outside Console frame)
+        # Alignment Controls (without frame)
+        self._build_alignment_controls_group(right_column_layout)
+        
+        # Apply Mixer Group
+        apply_group = QGroupBox("Apply Mixer")
+        apply_group.setFixedWidth(280)  # Fixed width for Apply Mixer
+        apply_group.setFixedHeight(140)  # Fixed height for Apply Mixer
+        apply_layout = QVBoxLayout(apply_group)
+        apply_layout.setSpacing(4)
+        
+
+        
+        # Expression input
+        expr_layout = QHBoxLayout()
+        expr_layout.addWidget(QLabel("Expression:"))
+        self.expression_input = QLineEdit()
+        self.expression_input.setPlaceholderText("e.g., C = A + B")
+        self.expression_input.setToolTip("Enter expression with label (e.g., C = A + B)\nLabel (C) is used for referencing in other expressions")
+        self.expression_input.returnPressed.connect(self._on_expression_submitted)
+        self.expression_input.textChanged.connect(self._on_input_changed)
+        expr_layout.addWidget(self.expression_input)
+        apply_layout.addLayout(expr_layout)
+        
+        # Channel Name input
         name_layout = QHBoxLayout()
         name_layout.addWidget(QLabel("Channel Name:"))
         self.channel_name_input = QLineEdit()
@@ -170,9 +198,9 @@ class SignalMixerWizardWindow(QMainWindow):
         self.channel_name_input.setToolTip("Descriptive name for display in plots and channel lists\n(separate from expression label)")
         self.channel_name_input.textChanged.connect(self._on_input_changed)
         name_layout.addWidget(self.channel_name_input)
-        right_col_layout.addLayout(name_layout)
+        apply_layout.addLayout(name_layout)
         
-        # Apply Mixer button (outside Console frame)
+        # Apply Mixer button
         self.create_btn = QPushButton("Apply Mixer")
         self.create_btn.setEnabled(False)
         self.create_btn.clicked.connect(self._on_create_mixed_channel)
@@ -199,153 +227,130 @@ class SignalMixerWizardWindow(QMainWindow):
                 border-color: #CCCCCC;
             }
         """)
-        right_col_layout.addWidget(self.create_btn)
+        apply_layout.addWidget(self.create_btn)
         
-        # Add columns to splitter
-        left_splitter.addWidget(left_col_widget)
-        left_splitter.addWidget(right_col_widget)
+        right_column_layout.addWidget(apply_group)
+        
+        # Add both columns to left panel using splitter for better size control
+        left_splitter.addWidget(middle_column)
+        left_splitter.addWidget(right_column)
+        left_splitter.setSizes([400, 500])  # mixing operations column, controls column wider for channel selections
+        left_layout.addWidget(left_splitter)
         
         main_splitter.addWidget(self.left_panel)
     
     def _build_channel_selection_group(self, layout):
-        """Build channel selection controls"""
-        group = QGroupBox("Channel Selection")
-        group_layout = QVBoxLayout(group)
+        """Build channel selection controls with frame"""
+        # Channel Selection Group
+        channel_group = QGroupBox("Channel Selection")
+        channel_group.setFixedWidth(280)  # Fixed width for Channel Selection
+        channel_group.setFixedHeight(180)  # Fixed height for Channel Selection
+        channel_layout = QVBoxLayout(channel_group)
+        channel_layout.setSpacing(4)
         
         # Channel A
         a_layout = QVBoxLayout()
-        a_layout.addWidget(QLabel("Channel A:"))
+        a_layout.setSpacing(2)  # Very tight spacing for Channel A
         
         # File dropdown for Channel A
         a_file_layout = QHBoxLayout()
-        a_file_layout.addWidget(QLabel("File:"))
+        a_file_layout.setSpacing(5)  # Tight spacing
+        a_file_layout.addWidget(QLabel("File A:"))
         self.channel_a_file_combo = QComboBox()
-        self.channel_a_file_combo.setMinimumWidth(200)
+        # Removed minimum width restriction
         self.channel_a_file_combo.currentTextChanged.connect(self._on_channel_a_file_changed)
         a_file_layout.addWidget(self.channel_a_file_combo)
         a_layout.addLayout(a_file_layout)
         
         # Channel dropdown for Channel A
         a_channel_layout = QHBoxLayout()
-        a_channel_layout.addWidget(QLabel("Channel:"))
+        a_channel_layout.setSpacing(5)  # Tight spacing
+        a_channel_layout.addWidget(QLabel("Channel A:"))
         self.channel_a_combo = QComboBox()
-        self.channel_a_combo.setMinimumWidth(200)
+        # Removed minimum width restriction
         self.channel_a_combo.currentTextChanged.connect(self._on_channel_a_changed)
         a_channel_layout.addWidget(self.channel_a_combo)
         a_layout.addLayout(a_channel_layout)
         
-        # Channel A stats
-        self.channel_a_stats = QLabel("No channel selected")
-        self.channel_a_stats.setStyleSheet("color: #666; font-size: 10px;")
-        a_layout.addWidget(self.channel_a_stats)
-        
-        group_layout.addLayout(a_layout)
+        channel_layout.addLayout(a_layout)
         
         # Channel B
         b_layout = QVBoxLayout()
-        b_layout.addWidget(QLabel("Channel B:"))
+        b_layout.setSpacing(2)  # Very tight spacing for Channel B
         
         # File dropdown for Channel B
         b_file_layout = QHBoxLayout()
-        b_file_layout.addWidget(QLabel("File:"))
+        b_file_layout.setSpacing(5)  # Tight spacing
+        b_file_layout.addWidget(QLabel("File B:"))
         self.channel_b_file_combo = QComboBox()
-        self.channel_b_file_combo.setMinimumWidth(200)
+        # Removed minimum width restriction
         self.channel_b_file_combo.currentTextChanged.connect(self._on_channel_b_file_changed)
         b_file_layout.addWidget(self.channel_b_file_combo)
         b_layout.addLayout(b_file_layout)
         
         # Channel dropdown for Channel B
         b_channel_layout = QHBoxLayout()
-        b_channel_layout.addWidget(QLabel("Channel:"))
+        b_channel_layout.setSpacing(5)  # Tight spacing
+        b_channel_layout.addWidget(QLabel("Channel B:"))
         self.channel_b_combo = QComboBox()
-        self.channel_b_combo.setMinimumWidth(200)
+        # Removed minimum width restriction
         self.channel_b_combo.currentTextChanged.connect(self._on_channel_b_changed)
         b_channel_layout.addWidget(self.channel_b_combo)
         b_layout.addLayout(b_channel_layout)
         
-        # Channel B stats
-        self.channel_b_stats = QLabel("No channel selected")
-        self.channel_b_stats.setStyleSheet("color: #666; font-size: 10px;")
-        b_layout.addWidget(self.channel_b_stats)
+        channel_layout.addLayout(b_layout)  # Add Channel B layout to group layout
         
-        group_layout.addLayout(b_layout)
-        
-        layout.addWidget(group)
+        layout.addWidget(channel_group)  # Add the group to main layout
     
     def _build_alignment_controls_group(self, layout):
-        """Build alignment controls using the reusable DataAlignerWidget"""
+        """Build alignment controls using the reusable DataAlignerWidget with frame"""
+        # Data Alignment Group
+        alignment_group = QGroupBox("Data Alignment")
+        alignment_group.setFixedWidth(280)  # Fixed width for Data Alignment
+        alignment_group.setFixedHeight(320)  # Fixed height for Data Alignment
+        alignment_layout = QVBoxLayout(alignment_group)
+        
         self.data_aligner_widget = DataAlignerWidget(self)
         
         # Connect to parameter changes
         self.data_aligner_widget.parameters_changed.connect(self._on_alignment_parameter_changed)
         
-        layout.addWidget(self.data_aligner_widget)
+        alignment_layout.addWidget(self.data_aligner_widget)
+        layout.addWidget(alignment_group)
     
     def _build_mixing_operations_group(self, layout):
-        """Build mixing operations controls"""
-        group = QGroupBox("Mixing Operations")
-        group_layout = QVBoxLayout(group)
+        """Build mixing operations controls with frame"""
+        # Mixer Templates Group
+        templates_group = QGroupBox("Mixer Templates")
+        templates_group.setFixedWidth(200)  # Fixed width for Mixer Templates
+        templates_layout = QVBoxLayout(templates_group)
+        templates_layout.setSpacing(4)
         
         # Operation templates list
         op_layout = QHBoxLayout()
-        op_layout.addWidget(QLabel("Templates:"))
         
         # Filter dropdown
         self.operation_filter = QComboBox()
         self.operation_filter.addItems(["All", "Arithmetic", "Expression", "Logic", "Threshold", "Masking", "Unary"])
         self.operation_filter.currentTextChanged.connect(self._on_operation_filter_changed)
         op_layout.addWidget(self.operation_filter)
-        group_layout.addLayout(op_layout)
+        templates_layout.addLayout(op_layout)
         
         # Operations list
         self.operations_list = QListWidget()
         self.operations_list.itemClicked.connect(self._on_operation_selected)
-        group_layout.addWidget(self.operations_list)
+        templates_layout.addWidget(self.operations_list)
         
-        layout.addWidget(group)
+        layout.addWidget(templates_group)
     
 
     
-    def _build_console_group(self, layout):
-        """Build console controls"""
-        group = QGroupBox("Console")
-        group_layout = QVBoxLayout(group)
-        
-        # Expression input
-        expr_layout = QHBoxLayout()
-        expr_layout.addWidget(QLabel("Expression:"))
-        self.expression_input = QLineEdit()
-        self.expression_input.setPlaceholderText("e.g., C = A + B")
-        self.expression_input.setToolTip("Enter expression with label (e.g., C = A + B)\nLabel (C) is used for referencing in other expressions")
-        self.expression_input.returnPressed.connect(self._on_expression_submitted)
-        self.expression_input.textChanged.connect(self._on_input_changed)
-        expr_layout.addWidget(self.expression_input)
-        group_layout.addLayout(expr_layout)
-        
-        # Console output
-        self.console_output = QTextEdit()
-        self.console_output.setReadOnly(True)
-        self.console_output.setPlaceholderText("Logs and messages will appear here")
-        self.console_output.setMaximumHeight(150)
-        self.console_output.setStyleSheet("""
-            QTextEdit {
-                background-color: #f8f9fa;
-                border: 1px solid #dee2e6;
-                border-radius: 4px;
-                padding: 8px;
-                color: #212529;
-            }
-            QTextEdit:focus {
-                border: 1px solid #007bff;
-            }
-        """)
-        group_layout.addWidget(self.console_output)
-        
-        layout.addWidget(group)
+    # Removed _build_console_group method since console is now handled in the left panel
     
     def _build_right_panel(self, main_splitter):
         """Build the right panel with results table and plots"""
         self.right_panel = QWidget()
+        self.right_panel.setMinimumWidth(680)  # Set minimum width for table/plot panel to match process wizard
         right_layout = QVBoxLayout(self.right_panel)
         
         # Results table
@@ -358,29 +363,25 @@ class SignalMixerWizardWindow(QMainWindow):
     
     def _build_results_table(self, layout):
         """Build the results table showing channels A, B, and mixed channels"""
-        layout.addWidget(QLabel("Channels:"))
-        
-        self.results_table = QTableWidget(0, 6)
-        self.results_table.setHorizontalHeaderLabels(["Show", "Style", "Label", "Expression", "Shape", "Actions"])
+        self.results_table = QTableWidget(0, 5)
+        self.results_table.setHorizontalHeaderLabels(["Show", "Style", "Label", "Expression", "Actions"])
         self.results_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.results_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.results_table.setMaximumHeight(200)
+        # Removed maximum height restriction
         
-        # Set column resize modes for better layout (matching process wizard)
+        # Set column resize modes for flexible layout
         header = self.results_table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.Fixed)     # Show column - fixed width
-        header.setSectionResizeMode(1, QHeaderView.Fixed)     # Style - fixed width
-        header.setSectionResizeMode(2, QHeaderView.Fixed)     # Label - fixed width
+        header.setSectionResizeMode(0, QHeaderView.Interactive)     # Show column - interactive width
+        header.setSectionResizeMode(1, QHeaderView.Interactive)     # Style - interactive width
+        header.setSectionResizeMode(2, QHeaderView.Interactive)     # Label - interactive width
         header.setSectionResizeMode(3, QHeaderView.Stretch)   # Expression - stretches
-        header.setSectionResizeMode(4, QHeaderView.Fixed)     # Shape - fixed width
-        header.setSectionResizeMode(5, QHeaderView.Fixed)     # Actions - fixed width
+        header.setSectionResizeMode(4, QHeaderView.Interactive)     # Actions - interactive width
         
-        # Set specific column widths (matching process wizard)
-        self.results_table.setColumnWidth(0, 60)   # Show checkbox
-        self.results_table.setColumnWidth(1, 80)   # Style preview
-        self.results_table.setColumnWidth(2, 60)   # Label column
-        self.results_table.setColumnWidth(4, 80)   # Shape column
-        self.results_table.setColumnWidth(5, 200)  # Actions column (wider for 5 buttons)
+        # Set fixed column widths
+        self.results_table.setColumnWidth(0, 50)   # Show column - very narrow (checkbox only)
+        self.results_table.setColumnWidth(1, 85)   # Style column - just wide enough for StylePreviewWidget (80px) + padding
+        self.results_table.setColumnWidth(2, 60)   # Label column - fixed width for channel labels
+        self.results_table.setColumnWidth(4, 180)  # Actions column minimum width (5 buttons * 30px + margins + spacing)
         
         layout.addWidget(self.results_table)
     
@@ -432,8 +433,7 @@ Tips:
 • Use custom expressions for advanced operations (e.g., C = A**2 + B**2)
 • When channels are aligned in Index Mode and X values don't match, array index is used as X-axis"""
 
-            self.console_output.clear()
-            self.console_output.append(welcome_msg)
+            log_message(welcome_msg, "info", "MIXER")
             
         except Exception as e:
             # Fallback if console output is not available
@@ -594,6 +594,7 @@ Tips:
         
         self._update_compatibility()
         self._update_plot()
+        self._update_available_channels()
 
     def _on_channel_b_file_changed(self):
         """Handle channel B file selection change"""
@@ -610,18 +611,11 @@ Tips:
         
         self._update_compatibility()
         self._update_plot()
+        self._update_available_channels()
 
     def _on_channel_a_changed(self):
         """Handle channel A selection change"""
         channel = self.channel_a_combo.currentData()
-        if channel:
-            stats = self.manager.get_channel_stats(channel)
-            self.channel_a_stats.setText(
-                f"Length: {stats.get('length', 0)} | "
-                f"Range: {stats.get('min', 0):.3f} to {stats.get('max', 0):.3f}"
-            )
-        else:
-            self.channel_a_stats.setText("No channel selected")
         
         # Auto-configure alignment parameters when channel changes
         channel_b = self.channel_b_combo.currentData()
@@ -633,18 +627,11 @@ Tips:
         
         self._update_compatibility()
         self._update_plot()
+        self._update_available_channels()
 
     def _on_channel_b_changed(self):
         """Handle channel B selection change"""
         channel = self.channel_b_combo.currentData()
-        if channel:
-            stats = self.manager.get_channel_stats(channel)
-            self.channel_b_stats.setText(
-                f"Length: {stats.get('length', 0)} | "
-                f"Range: {stats.get('min', 0):.3f} to {stats.get('max', 0):.3f}"
-            )
-        else:
-            self.channel_b_stats.setText("No channel selected")
         
         # Auto-configure alignment parameters when channel changes
         channel_a = self.channel_a_combo.currentData()
@@ -656,6 +643,24 @@ Tips:
         
         self._update_compatibility()
         self._update_plot()
+        self._update_available_channels()
+
+    def _update_available_channels(self):
+        """Update the available channels display text"""
+        available_channels = []
+        
+        # Check if Channel A is selected
+        channel_a = self.channel_a_combo.currentData()
+        if channel_a:
+            available_channels.append("A")
+        
+        # Check if Channel B is selected
+        channel_b = self.channel_b_combo.currentData()
+        if channel_b:
+            available_channels.append("B")
+        
+        # Available channels are now tracked internally but not displayed in UI
+        # (removed available_channels_label from UI)
 
     def _on_suggest_pair(self):
         """Handle auto-suggest pair button click"""
@@ -735,8 +740,7 @@ Tips:
 
     def _on_operation_selected(self, item):
         """Handle operation template selection"""
-        # Clear console output when a new template is selected
-        self.console_output.clear()
+        # Template selected - no need to clear console in floating console mode
         
         template = item.text()
         
@@ -1190,10 +1194,9 @@ Tips:
             # Show success message with channel name
             channel_display_name = channel_name or new_channel.legend_label or new_channel.channel_id
             
-            # Clear console and show prominent success message
-            self.console_output.clear()
-            self._log_message("Operation applied successfully!")
-            self._log_message(f"Created channel: {channel_display_name}")
+            # Show prominent success message - no need to clear in floating console mode
+            self._log_message("Operation applied successfully!", "success")
+            self._log_message(f"Created channel: {channel_display_name}", "success")
             
             self._update_button_states()
             self._update_plot()
@@ -1533,18 +1536,7 @@ Tips:
         expr_item.setToolTip(tooltip)
         self.results_table.setItem(row, 3, expr_item)
         
-        # Column 4: Shape
-        if channel.xdata is not None and channel.ydata is not None:
-            shape_str = f"({len(channel.xdata)}, 2)"
-        elif channel.ydata is not None:
-            shape_str = f"({len(channel.ydata)},)"
-        else:
-            shape_str = "No data"
-        shape_item = QTableWidgetItem(shape_str)
-        shape_item.setToolTip(tooltip)
-        self.results_table.setItem(row, 4, shape_item)
-        
-        # Column 5: Actions
+        # Column 4: Actions
         actions_widget = QWidget()
         actions_layout = QHBoxLayout(actions_widget)
         actions_layout.setContentsMargins(2, 2, 2, 2)
@@ -1552,45 +1544,40 @@ Tips:
         
         # Info button (channel information)
         info_button = QPushButton("❗")
-        info_button.setMaximumWidth(25)
-        info_button.setMaximumHeight(25)
+        info_button.setFixedSize(30, 30)
         info_button.setToolTip("Channel information and metadata")
         info_button.clicked.connect(lambda checked=False, ch=channel: self._show_channel_info(ch))
         actions_layout.addWidget(info_button)
         
         # Magnifying glass button (inspect data)
         zoom_button = QPushButton("🔍")
-        zoom_button.setMaximumWidth(25)
-        zoom_button.setMaximumHeight(25)
+        zoom_button.setFixedSize(30, 30)
         zoom_button.setToolTip("Inspect and edit channel data")
         zoom_button.clicked.connect(lambda checked=False, ch=channel: self._inspect_channel_data(ch))
         actions_layout.addWidget(zoom_button)
         
         # Paint brush button (styling)
         style_button = QPushButton("🎨")
-        style_button.setMaximumWidth(25)
-        style_button.setMaximumHeight(25)
+        style_button.setFixedSize(30, 30)
         style_button.setToolTip("Channel styling and appearance settings")
         style_button.clicked.connect(lambda checked=False, ch=channel: self._style_channel(ch))
         actions_layout.addWidget(style_button)
         
         # Tool button (transform data)
         tool_button = QPushButton("🔨")
-        tool_button.setMaximumWidth(25)
-        tool_button.setMaximumHeight(25)
+        tool_button.setFixedSize(30, 30)
         tool_button.setToolTip("Transform channel data with math expressions")
         tool_button.clicked.connect(lambda checked=False, ch=channel: self._transform_channel_data(ch))
         actions_layout.addWidget(tool_button)
         
         # Trash button (delete) - always last
         delete_button = QPushButton("🗑️")
-        delete_button.setMaximumWidth(25)
-        delete_button.setMaximumHeight(25)
+        delete_button.setFixedSize(30, 30)
         delete_button.setEnabled(False)  # Always disabled for input channels
         delete_button.setToolTip("Cannot delete input channel")
         actions_layout.addWidget(delete_button)
         
-        self.results_table.setCellWidget(row, 5, actions_widget)
+        self.results_table.setCellWidget(row, 4, actions_widget)
     
     def _add_mixed_channel_to_table(self, channel, index):
         """Add a mixed channel to the results table"""
@@ -1640,18 +1627,7 @@ Tips:
         expr_item.setToolTip(tooltip)
         self.results_table.setItem(row, 3, expr_item)
         
-        # Column 4: Shape
-        if channel.xdata is not None and channel.ydata is not None:
-            shape_str = f"({len(channel.xdata)}, 2)"
-        elif channel.ydata is not None:
-            shape_str = f"({len(channel.ydata)},)"
-        else:
-            shape_str = "No data"
-        shape_item = QTableWidgetItem(shape_str)
-        shape_item.setToolTip(tooltip)
-        self.results_table.setItem(row, 4, shape_item)
-        
-        # Column 5: Actions
+        # Column 4: Actions
         actions_widget = QWidget()
         actions_layout = QHBoxLayout(actions_widget)
         actions_layout.setContentsMargins(2, 2, 2, 2)
@@ -1659,45 +1635,40 @@ Tips:
         
         # Info button (channel information)
         info_button = QPushButton("❗")
-        info_button.setMaximumWidth(25)
-        info_button.setMaximumHeight(25)
+        info_button.setFixedSize(30, 30)
         info_button.setToolTip("Channel information and metadata")
         info_button.clicked.connect(lambda checked=False, ch=channel: self._show_channel_info(ch))
         actions_layout.addWidget(info_button)
         
         # Magnifying glass button (inspect data)
         zoom_button = QPushButton("🔍")
-        zoom_button.setMaximumWidth(25)
-        zoom_button.setMaximumHeight(25)
+        zoom_button.setFixedSize(30, 30)
         zoom_button.setToolTip("Inspect and edit channel data")
         zoom_button.clicked.connect(lambda checked=False, ch=channel: self._inspect_channel_data(ch))
         actions_layout.addWidget(zoom_button)
         
         # Paint brush button (styling)
         style_button = QPushButton("🎨")
-        style_button.setMaximumWidth(25)
-        style_button.setMaximumHeight(25)
+        style_button.setFixedSize(30, 30)
         style_button.setToolTip("Channel styling and appearance settings")
         style_button.clicked.connect(lambda checked=False, ch=channel: self._style_channel(ch))
         actions_layout.addWidget(style_button)
         
         # Tool button (transform data)
         tool_button = QPushButton("🔨")
-        tool_button.setMaximumWidth(25)
-        tool_button.setMaximumHeight(25)
+        tool_button.setFixedSize(30, 30)
         tool_button.setToolTip("Transform channel data with math expressions")
         tool_button.clicked.connect(lambda checked=False, ch=channel: self._transform_channel_data(ch))
         actions_layout.addWidget(tool_button)
         
         # Trash button (delete) - always last
         delete_button = QPushButton("🗑️")
-        delete_button.setMaximumWidth(25)
-        delete_button.setMaximumHeight(25)
+        delete_button.setFixedSize(30, 30)
         delete_button.setToolTip("Delete mixed channel")
         delete_button.clicked.connect(lambda checked=False, ch=channel: self._delete_mixed_channel(ch))
         actions_layout.addWidget(delete_button)
         
-        self.results_table.setCellWidget(row, 5, actions_widget)
+        self.results_table.setCellWidget(row, 4, actions_widget)
 
     def _create_mixed_channel_tooltip(self, mixed_channel):
         """Create a tooltip showing complete lineage information for a mixed channel"""
@@ -2160,14 +2131,9 @@ Tips:
         """Check if a channel is visible based on stored visibility state"""
         return self._channel_visibility_states.get(label, True)  # Default to visible if not stored
 
-    def _log_message(self, message):
-        """Add a message to the console output"""
-        if hasattr(self, 'console_output') and self.console_output is not None:
-            self.console_output.append(message)
-            
-            # Auto-scroll to bottom
-            scrollbar = self.console_output.verticalScrollBar()
-            scrollbar.setValue(scrollbar.maximum())
+    def _log_message(self, message, level="info"):
+        """Add a message to the floating console"""
+        log_message(message, level, "MIXER")
 
     # Manager callback methods
     def _add_channel_to_table(self, channel):
@@ -2220,29 +2186,12 @@ Tips:
             )
             self.results_table.setCellWidget(index, 1, style_widget)
             
-            # Update channel name (Column 2)
-            channel_name = new_channel.legend_label or new_channel.channel_id
-            self.results_table.setItem(index, 2, QTableWidgetItem(channel_name))
+            # Update label (Column 2)
+            self.results_table.setItem(index, 2, QTableWidgetItem(label))
             
-            # Update shape (Column 3)
-            if new_channel.xdata is not None and new_channel.ydata is not None:
-                shape_str = f"({len(new_channel.xdata)}, 2)"
-            elif new_channel.ydata is not None:
-                shape_str = f"({len(new_channel.ydata)},)"
-            else:
-                shape_str = "No data"
-            self.results_table.setItem(index, 3, QTableWidgetItem(shape_str))
-            
-            # Update label (Column 4)
-            self.results_table.setItem(index, 4, QTableWidgetItem(label))
-            
-            # Update expression (Column 5) - only the right side of the equal sign
+            # Update expression (Column 3) - full expression
             full_expression = getattr(new_channel, 'description', f"{label} = mixed signal")
-            if '=' in full_expression:
-                expression = full_expression.split('=', 1)[1].strip()
-            else:
-                expression = full_expression
-            self.results_table.setItem(index, 5, QTableWidgetItem(expression))
+            self.results_table.setItem(index, 3, QTableWidgetItem(full_expression))
 
     def _refresh_after_undo(self):
         """Refresh UI after undo operation"""

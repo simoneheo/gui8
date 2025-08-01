@@ -12,45 +12,25 @@ from plot_manager import PLOT_STYLES
 
 
 class ColorButton(QPushButton):
-    """Custom button that displays and allows selection of colors"""
-    
-    color_changed = Signal(str)  # hex color string
-    
-    def __init__(self, initial_color: str = "#1f77b4"):
+    color_changed = Signal(str)
+    def __init__(self, initial_color="#1f77b4"):
         super().__init__()
         self.current_color = initial_color
-        self.setFixedSize(40, 30)
+        self.setFixedSize(40, 24)
         self.update_button_color()
         self.clicked.connect(self.select_color)
-    
     def update_button_color(self):
-        """Update button appearance to show current color"""
-        self.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {self.current_color};
-                border: 2px solid #333;
-                border-radius: 4px;
-            }}
-            QPushButton:hover {{
-                border: 2px solid #666;
-            }}
-        """)
-    
+        self.setStyleSheet(f"background-color: {self.current_color}; border: 1px solid #333;")
     def select_color(self):
-        """Open color dialog and update color"""
         color = QColorDialog.getColor(QColor(self.current_color), self)
         if color.isValid():
             self.current_color = color.name()
             self.update_button_color()
             self.color_changed.emit(self.current_color)
-    
     def set_color(self, color: str):
-        """Set color programmatically"""
         self.current_color = color
         self.update_button_color()
-    
     def get_color(self) -> str:
-        """Get current color as hex string"""
         return self.current_color
 
 
@@ -98,16 +78,9 @@ class LineWizard(QDialog):
         form_layout.addRow("Legend Name:", self.legend_edit)
         
         # Color Selection
-        color_layout = QHBoxLayout()
         self.color_button = ColorButton()
-        self.color_combo = QComboBox()
-        self.color_combo.addItems(PLOT_STYLES['Colors'].keys())
-        self.color_combo.currentTextChanged.connect(self.on_color_combo_changed)
         self.color_button.color_changed.connect(self.on_color_button_changed)
-        
-        color_layout.addWidget(self.color_button)
-        color_layout.addWidget(self.color_combo)
-        form_layout.addRow("Line Color:", color_layout)
+        form_layout.addRow("Line Color:", self.color_button)
         
         # Line Style - Show symbols instead of names
         self.style_combo = QComboBox()
@@ -184,11 +157,6 @@ class LineWizard(QDialog):
         # Color
         if self.channel.color:
             self.color_button.set_color(self.channel.color)
-            # Find matching color in combo
-            for name, value in PLOT_STYLES['Colors'].items():
-                if value == self.channel.color:
-                    self.color_combo.setCurrentText(name)
-                    break
         
         # Line style - Find matching style and set to symbol
         if self.channel.style:
@@ -208,16 +176,9 @@ class LineWizard(QDialog):
         z_order = getattr(self.channel, 'z_order', 0)
         self.bring_to_front_checkbox.setChecked(z_order > 0)
     
-    def on_color_combo_changed(self, color_name: str):
-        """Handle color combo box changes"""
-        if color_name in PLOT_STYLES['Colors']:
-            color_value = PLOT_STYLES['Colors'][color_name]
-            self.color_button.set_color(color_value)
-    
     def on_color_button_changed(self, color: str):
         """Handle color button changes"""
-        # Update combo to "Custom" or find matching color
-        self.color_combo.setCurrentIndex(-1)  # Clear selection for custom color
+        pass
     
     def apply_changes(self):
         """Apply changes to the channel without closing dialog"""

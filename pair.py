@@ -377,8 +377,37 @@ class Pair:
             f"Name: {self.name}",
             f"Reference: {self.ref_channel_name} ({self.ref_file_id})",
             f"Test: {self.test_channel_name} ({self.test_file_id})",
-            f"Alignment: {self.alignment_config.method.value} - {self.alignment_config.mode}",
         ]
+        
+        # Handle alignment config display with proper error handling
+        try:
+            if hasattr(self, 'alignment_config') and self.alignment_config is not None:
+                if hasattr(self.alignment_config, 'method'):
+                    method_value = self.alignment_config.method.value if hasattr(self.alignment_config.method, 'value') else str(self.alignment_config.method)
+                    mode = getattr(self.alignment_config, 'mode', 'unknown')
+                    lines.append(f"Alignment: {method_value} - {mode}")
+                    
+                    # Add specific alignment details
+                    if method_value == 'index' and mode == 'custom':
+                        start_idx = getattr(self.alignment_config, 'start_index', 'N/A')
+                        end_idx = getattr(self.alignment_config, 'end_index', 'N/A')
+                        offset = getattr(self.alignment_config, 'offset', 0)
+                        lines.append(f"  Index Range: {start_idx} to {end_idx}")
+                        if offset != 0:
+                            lines.append(f"  Offset: {offset}")
+                    elif method_value == 'time' and mode == 'custom':
+                        start_time = getattr(self.alignment_config, 'start_time', 'N/A')
+                        end_time = getattr(self.alignment_config, 'end_time', 'N/A')
+                        offset = getattr(self.alignment_config, 'offset', 0)
+                        lines.append(f"  Time Range: {start_time} to {end_time}")
+                        if offset != 0:
+                            lines.append(f"  Offset: {offset}")
+                else:
+                    lines.append("Alignment: Unknown configuration")
+            else:
+                lines.append("Alignment: Not configured")
+        except Exception as e:
+            lines.append(f"Alignment: Error reading config ({str(e)})")
         
         if self.description:
             lines.append(f"Description: {self.description}")

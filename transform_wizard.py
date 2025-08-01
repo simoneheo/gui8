@@ -177,18 +177,9 @@ class TransformWizard(QDialog):
         """Initialize the UI components"""
         layout = QVBoxLayout(self)
                 
-        # Create tab widget
-        self.tab_widget = QTabWidget()
-        
-        # Tab 1: Transform
-        self.transform_tab = self.create_transform_tab()
-        self.tab_widget.addTab(self.transform_tab, "Transform")
-        
-        # Tab 2: Examples
-        self.examples_tab = self.create_examples_tab()
-        self.tab_widget.addTab(self.examples_tab, "Examples")
-        
-        layout.addWidget(self.tab_widget)
+        # Add transform content directly (no tabs needed)
+        self.transform_content = self.create_transform_tab()
+        layout.addWidget(self.transform_content)
         
         # Dialog buttons
         button_layout = QHBoxLayout()
@@ -206,7 +197,6 @@ class TransformWizard(QDialog):
         
         # Right side buttons
         self.apply_button = QPushButton("Apply Transform")
-        self.apply_button.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; border: none; border-radius: 4px; padding: 8px 16px;")
         self.apply_button.setEnabled(False)  # Initially disabled until preview is successful
         button_layout.addWidget(self.apply_button)
         
@@ -260,7 +250,7 @@ class TransformWizard(QDialog):
         quick_x_layout1 = QHBoxLayout()
         
         quick_x_label = QLabel("Quick X:")
-        quick_x_label.setStyleSheet("font-size: 10px; color: #666;")
+        quick_x_label.setStyleSheet("font-size: 11px; color: #666;")
         quick_x_layout1.addWidget(quick_x_label)
         
         x_buttons1 = [
@@ -275,7 +265,7 @@ class TransformWizard(QDialog):
         for text, transform in x_buttons1:
             btn = QPushButton(text)
             btn.setMaximumWidth(50)
-            btn.setStyleSheet("font-size: 9px; padding: 2px;")
+            btn.setStyleSheet("font-size: 11px; padding: 4px;")
             btn.clicked.connect(lambda checked=False, t=transform: self.x_transform_input.setPlainText(t))
             quick_x_layout1.addWidget(btn)
         
@@ -297,7 +287,7 @@ class TransformWizard(QDialog):
         for text, transform in x_buttons2:
             btn = QPushButton(text)
             btn.setMaximumWidth(50)
-            btn.setStyleSheet("font-size: 9px; padding: 2px;")
+            btn.setStyleSheet("font-size: 11px; padding: 4px;")
             btn.clicked.connect(lambda checked=False, t=transform: self.x_transform_input.setPlainText(t))
             quick_x_layout2.addWidget(btn)
         
@@ -319,7 +309,7 @@ class TransformWizard(QDialog):
         for text, transform in x_buttons3:
             btn = QPushButton(text)
             btn.setMaximumWidth(50)
-            btn.setStyleSheet("font-size: 9px; padding: 2px;")
+            btn.setStyleSheet("font-size: 11px; padding: 4px;")
             btn.clicked.connect(lambda checked=False, t=transform: self.x_transform_input.setPlainText(t))
             quick_x_layout3.addWidget(btn)
         
@@ -341,7 +331,7 @@ class TransformWizard(QDialog):
         for text, transform in x_buttons4:
             btn = QPushButton(text)
             btn.setMaximumWidth(50)
-            btn.setStyleSheet("font-size: 9px; padding: 2px;")
+            btn.setStyleSheet("font-size: 11px; padding: 4px;")
             btn.clicked.connect(lambda checked=False, t=transform: self.x_transform_input.setPlainText(t))
             quick_x_layout4.addWidget(btn)
         
@@ -366,7 +356,7 @@ class TransformWizard(QDialog):
         quick_y_layout1 = QHBoxLayout()
         
         quick_y_label = QLabel("Quick Y:")
-        quick_y_label.setStyleSheet("font-size: 10px; color: #666;")
+        quick_y_label.setStyleSheet("font-size: 11px; color: #666;")
         quick_y_layout1.addWidget(quick_y_label)
         
         y_buttons1 = [
@@ -381,7 +371,7 @@ class TransformWizard(QDialog):
         for text, transform in y_buttons1:
             btn = QPushButton(text)
             btn.setMaximumWidth(50)
-            btn.setStyleSheet("font-size: 9px; padding: 2px;")
+            btn.setStyleSheet("font-size: 11px; padding: 4px;")
             btn.clicked.connect(lambda checked=False, t=transform: self.y_transform_input.setPlainText(t))
             quick_y_layout1.addWidget(btn)
         
@@ -403,7 +393,7 @@ class TransformWizard(QDialog):
         for text, transform in y_buttons2:
             btn = QPushButton(text)
             btn.setMaximumWidth(50)
-            btn.setStyleSheet("font-size: 9px; padding: 2px;")
+            btn.setStyleSheet("font-size: 11px; padding: 4px;")
             btn.clicked.connect(lambda checked=False, t=transform: self.y_transform_input.setPlainText(t))
             quick_y_layout2.addWidget(btn)
         
@@ -425,7 +415,7 @@ class TransformWizard(QDialog):
         for text, transform in y_buttons3:
             btn = QPushButton(text)
             btn.setMaximumWidth(50)
-            btn.setStyleSheet("font-size: 9px; padding: 2px;")
+            btn.setStyleSheet("font-size: 11px; padding: 4px;")
             btn.clicked.connect(lambda checked=False, t=transform: self.y_transform_input.setPlainText(t))
             quick_y_layout3.addWidget(btn)
         
@@ -447,7 +437,7 @@ class TransformWizard(QDialog):
         for text, transform in y_buttons4:
             btn = QPushButton(text)
             btn.setMaximumWidth(50)
-            btn.setStyleSheet("font-size: 9px; padding: 2px;")
+            btn.setStyleSheet("font-size: 11px; padding: 4px;")
             btn.clicked.connect(lambda checked=False, t=transform: self.y_transform_input.setPlainText(t))
             quick_y_layout4.addWidget(btn)
         
@@ -497,9 +487,8 @@ class TransformWizard(QDialog):
         
         # Create table widget for data display
         self.data_table = QTableWidget()
-        self.data_table.setMinimumHeight(300)  # Increased height for better visibility
         
-        # Configure table appearance to match inspection wizard
+        # Configure table appearance to match parse wizard
         self.data_table.setAlternatingRowColors(True)
         self.data_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.data_table.setSelectionMode(QTableWidget.ExtendedSelection)
@@ -521,10 +510,6 @@ class TransformWizard(QDialog):
         # Enable scrolling
         self.data_table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.data_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        
-        # Set font styling to match inspection wizard style
-        table_font = QFont("Arial", 9)
-        self.data_table.setFont(table_font)
         
         data_layout.addWidget(self.data_table)
         layout.addWidget(data_group)
@@ -549,70 +534,7 @@ class TransformWizard(QDialog):
     
 
     
-    def create_examples_tab(self) -> QWidget:
-        """Create the examples tab"""
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        
-        scroll_area = QScrollArea()
-        scroll_widget = QWidget()
-        scroll_layout = QVBoxLayout(scroll_widget)
-        
-        examples_data = [
-            ("Unit Conversions", [
-                ("x = x / 1000", "Convert X from units to thousands"),
-                ("x = x * 3600", "Convert X from hours to seconds"),
-                ("y = y * 1e6", "Convert Y to microunits"),
-                ("y = y / 9.81", "Convert acceleration to g-force")
-            ]),
-            ("Mathematical Operations", [
-                ("y = abs(y)", "Take absolute value of Y"),
-                ("y = sqrt(abs(y))", "Square root (handling negatives)"),
-                ("y = log10(abs(y) + 1)", "Log transform (avoid log(0))"),
-                ("x = x - min(x)", "Shift X to start at zero"),
-                ("y = (y - mean(y)) / std(y)", "Z-score normalization")
-            ]),
-            ("Signal Processing", [
-                ("y = y - mean(y)", "Remove DC offset"),
-                ("y = y / max(abs(y))", "Normalize to [-1, 1]"),
-                ("x = (x - min(x)) / (max(x) - min(x))", "Normalize X to [0, 1]"),
-                ("y = clip(y, -10, 10)", "Clip Y values to range")
-            ]),
-            ("Conditional Transforms", [
-                ("y = where(y > 0, y, 0)", "Set negative values to zero"),
-                ("y = where(abs(y) < 0.1, 0, y)", "Set small values to zero"),
-                ("x = where(x < 0, nan, x)", "Replace negative X with NaN")
-            ])
-        ]
-        
-        for category, examples in examples_data:
-            group = QGroupBox(category)
-            group_layout = QVBoxLayout(group)
-            
-            for expression, description in examples:
-                example_widget = QWidget()
-                example_layout = QHBoxLayout(example_widget)
-                example_layout.setContentsMargins(5, 2, 5, 2)
-                
-                expr_label = QLabel(f"<code>{expression}</code>")
-                expr_label.setStyleSheet("font-family: 'Courier New', monospace; background-color: #f0f0f0; padding: 2px; border-radius: 3px;")
-                
-                desc_label = QLabel(f"→ {description}")
-                desc_label.setStyleSheet("color: #666; margin-left: 10px;")
-                
-                example_layout.addWidget(expr_label)
-                example_layout.addWidget(desc_label)
-                example_layout.addStretch()
-                
-                group_layout.addWidget(example_widget)
-            
-            scroll_layout.addWidget(group)
-        
-        scroll_area.setWidget(scroll_widget)
-        scroll_area.setWidgetResizable(True)
-        layout.addWidget(scroll_area)
-        
-        return widget
+
     
     def connect_signals(self):
         """Connect all signals"""
@@ -911,8 +833,6 @@ class TransformWizard(QDialog):
             
             # Disable apply button since no transform is pending
             self.apply_button.setEnabled(False)
-            
-            QMessageBox.information(self, "Reset", "Channel data restored to original values.")
             
         except Exception as e:
             QMessageBox.critical(

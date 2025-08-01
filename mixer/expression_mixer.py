@@ -129,12 +129,23 @@ class ExpressionMixer(BaseMixer):
         # Evaluate the expression
         try:
             result = self._safe_eval(parsed_expr.body, channels)
-            print(f"[ExpressionMixer] Expression evaluated successfully, result length: {len(result)}")
+            # Handle both scalar and array results
+            if hasattr(result, '__len__'):
+                print(f"[ExpressionMixer] Expression evaluated successfully, result length: {len(result)}")
+            else:
+                print(f"[ExpressionMixer] Expression evaluated successfully, result is scalar: {result}")
         except Exception as e:
             raise ValueError(f"Expression evaluation failed: {e}")
         
         # Create the result channel
         expr_str = f"{label} = {expression}"
+        
+        # Convert scalar results to arrays for channel creation
+        if not hasattr(result, '__len__'):
+            # Convert scalar to array with same length as reference channel
+            result = np.full_like(ref_channel.ydata, result)
+            print(f"[ExpressionMixer] Converted scalar result to array with length: {len(result)}")
+        
         return self.create_channel(
             ref_channel.xdata, 
             result, 

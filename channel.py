@@ -99,6 +99,7 @@ class Channel:
         self.color = None
         self.style = "-"
         self.marker = "None"
+        self.z_order = 0  # Z-order for plotting (higher values appear on top)
         
         # Lineage tracking
         self.parent_ids = []

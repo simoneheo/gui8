@@ -989,8 +989,8 @@ class AutoParser:
                     xlabel = f"{x_col_name} (datetime)"
             else:
                 x_col_name = None
-                xdata = np.arange(len(df))
-                xlabel = "Index"
+                xdata = np.arange(len(df)) + 1  # Start from 1, not 0
+                xlabel = "Row Number"
             
             # Get Y columns (excluding X column)
             y_columns = [col for col in df.columns if col != x_col_name]
@@ -1008,17 +1008,17 @@ class AutoParser:
             if len(df.columns) == 1:
                 single_col = df.columns[0]
                 if pd.api.types.is_numeric_dtype(df[single_col]):
-                    channel = Channel.from_parsing(
-                        file_id=file_obj.file_id,
-                        filename=file_obj.filename,
-                        xdata=np.arange(len(df)),
-                        ydata=df[single_col].values,
-                        xlabel="Index",
-                        ylabel=str(single_col),
-                        legend_label=str(single_col),  # Just use the header name
-                        metadata={'original_column': single_col, 'parse_method': 'single_column'}
-                    )
-                    return [channel]
+                                    channel = Channel.from_parsing(
+                    file_id=file_obj.file_id,
+                    filename=file_obj.filename,
+                    xdata=np.arange(len(df)) + 1,  # Start from 1, not 0
+                    ydata=df[single_col].values,
+                    xlabel="Row Number",
+                    ylabel=str(single_col),
+                    legend_label=str(single_col),  # Just use the header name
+                    metadata={'original_column': single_col, 'parse_method': 'single_column'}
+                )
+                return [channel]
             
             # Create channels for Y columns
             if not numeric_y_cols:

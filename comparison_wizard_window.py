@@ -23,6 +23,7 @@ from typing import Dict, Any, List, Optional, Tuple
 
 # Import the reusable DataAlignerWidget
 from data_aligner_window import DataAlignerWidget
+from console import log_message
 
 
 class ScriptChangeTracker:
@@ -373,54 +374,75 @@ class ComparisonWizardWindow(QWidget):
         self._build_left_panel(main_splitter)
         self._build_right_panel(main_splitter)
         
-        # Set splitter proportions
-        main_splitter.setSizes([220, 220, 760])
+        # Set splitter proportions - give more space to left panel
+        main_splitter.setSizes([600, 600])
         
     def _build_left_panel(self, main_splitter):
-        """Build the left control panel"""
+        """Build the left panel with two columns for comparison methods and controls"""
         self.left_panel = QWidget()
         left_layout = QVBoxLayout(self.left_panel)
-        left_layout.setContentsMargins(5, 5, 5, 5)
-        left_layout.setSpacing(10)
+        
+        # Note section spanning across both columns - at the top
+        note_group = QGroupBox("Note")
+        note_layout = QVBoxLayout(note_group)
+        note_text = QLabel("This wizard is experimental. If you close it, all analysis results will be lost. Remember to save before exiting. Questions or suggestions? chicago.lakes@pm.me")
+        note_text.setWordWrap(True)
+        note_text.setStyleSheet("""
+            QLabel {
+                color: #6c757d;
+                padding: 8px;
+                background-color: #f8f9fa;
+                border: 1px solid #dee2e6;
+                border-radius: 4px;
+            }
+        """)
+        note_layout.addWidget(note_text)
+        left_layout.addWidget(note_group)
         
         # Create horizontal splitter for two columns
-        left_splitter = QSplitter(Qt.Orientation.Horizontal)
+        left_splitter = QSplitter(Qt.Horizontal)
         left_layout.addWidget(left_splitter)
         
-        # Left column
-        left_col_widget = QWidget()
-        left_col_layout = QVBoxLayout(left_col_widget)
-        left_col_layout.setContentsMargins(5, 5, 5, 5)
-        left_col_layout.setSpacing(10)
+        # Column 1 - Comparison Methods and Configuration
+        middle_column = QWidget()
+        middle_column_layout = QVBoxLayout(middle_column)
+        middle_column_layout.setSpacing(12)
         
-        # Right column
-        right_col_widget = QWidget()
-        right_col_layout = QVBoxLayout(right_col_widget)
-        right_col_layout.setContentsMargins(5, 5, 5, 5)
-        right_col_layout.setSpacing(10)
+        # Comparison Methods Group
+        self._create_comparison_method_group(middle_column_layout)
         
-        # Left column components
-        self._create_comparison_method_group(left_col_layout)
-        self._create_method_controls_group(left_col_layout)
-        self._create_performance_options_group(left_col_layout)
-        self._create_action_buttons(left_col_layout)
+        # Method Configuration Group (without frame)
+        self._create_method_controls_group(middle_column_layout)
         
-        # Right column components
-        self._create_channel_selection_group(right_col_layout)
-        self._create_alignment_group(right_col_layout)
-        self._create_console_group(right_col_layout)
-        self._create_pair_management_group(right_col_layout)
+        # Action Buttons Group
+        self._create_action_buttons(middle_column_layout)
         
-        # Add columns to splitter
-        left_splitter.addWidget(left_col_widget)
-        left_splitter.addWidget(right_col_widget)
-        left_splitter.setSizes([200, 200])
+        # Column 3 - Channel Selection, Data Alignment, Performance Options, Add Pair
+        right_column = QWidget()
+        right_column_layout = QVBoxLayout(right_column)
+        right_column_layout.setSpacing(12)
+        
+        # Channel Selection Group
+        self._create_channel_selection_group(right_column_layout)
+        
+        # Data Alignment Group
+        self._create_alignment_group(right_column_layout)
+        
+        # Add Pair Group
+        self._create_pair_management_group(right_column_layout)
+        
+        # Add both columns to left panel
+        left_splitter.addWidget(middle_column)
+        left_splitter.addWidget(right_column)
+        left_splitter.setSizes([300, 300])  # Equal proportions for middle and right columns
+        left_layout.addWidget(left_splitter)
         
         main_splitter.addWidget(self.left_panel)
         
     def _create_comparison_method_group(self, layout):
         """Create comparison method selection group"""
         group = QGroupBox("Comparison Methods")
+        group.setFixedHeight(160)  # Fixed height for Comparison Methods list
         group_layout = QVBoxLayout(group)
         
         # Method list
@@ -434,14 +456,14 @@ class ComparisonWizardWindow(QWidget):
         layout.addWidget(group)
         
     def _create_method_controls_group(self, layout):
-        """Create method configuration tabs"""
-        group = QGroupBox("Method Configuration")
-        group_layout = QVBoxLayout(group)
-        group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        """Create method configuration tabs with Comparison Config frame"""
+        # Comparison Config Group
+        comparison_config_group = QGroupBox("Comparison Config")
+        comparison_config_group.setFixedHeight(320)  # Fixed height for Comparison Config
+        comparison_config_layout = QVBoxLayout(comparison_config_group)
         
         # Tabbed interface
         self.method_tabs = QTabWidget()
-        group_layout.addWidget(self.method_tabs)
         
         # Parameters tab
         self._create_parameters_tab()
@@ -450,7 +472,8 @@ class ComparisonWizardWindow(QWidget):
         plot_tab = self._create_plot_script_tab()
         self.method_tabs.addTab(plot_tab, "Plot Script")
         
-        layout.addWidget(group)
+        comparison_config_layout.addWidget(self.method_tabs)
+        layout.addWidget(comparison_config_group)
         
     def _create_parameters_tab(self):
         """Create parameters table tab"""
@@ -469,26 +492,42 @@ class ComparisonWizardWindow(QWidget):
         header.setSectionResizeMode(0, QHeaderView.Interactive)
         header.setSectionResizeMode(1, QHeaderView.Stretch)
         
+        # Set initial column widths - make both columns narrower
+        self.param_table.setColumnWidth(0, 100)  # Parameter name column - narrower
+        self.param_table.setColumnWidth(1, 80)   # Value column - even narrower
+        
+        # Set row height to make rows less squished
+        self.param_table.verticalHeader().setDefaultSectionSize(35)
+        self.param_table.verticalHeader().setMinimumSectionSize(30)
+        
         # Set table styling
         self.param_table.setStyleSheet("""
             QTableWidget {
-                gridline-color: #e0e0e0;
-                background-color: white;
-                alternate-background-color: #f8f9fa;
+                gridline-color: #555555;
+                background-color: #2d2d2d;
+                alternate-background-color: #3a3a3a;
+                color: #ffffff;
+                border: 1px solid #555555;
             }
             QTableWidget::item {
-                padding: 4px;
+                padding: 8px;
                 border: none;
+                color: #ffffff;
+                background-color: transparent;
             }
             QTableWidget::item:selected {
-                background-color: #e3f2fd;
-                color: black;
+                background-color: #4a90e2;
+                color: #ffffff;
             }
             QHeaderView::section {
-                background-color: #f5f5f5;
-                padding: 6px;
-                border: 1px solid #ddd;
+                background-color: #404040;
+                padding: 8px;
+                border: 1px solid #555555;
                 font-weight: bold;
+                color: #ffffff;
+            }
+            QHeaderView::section:hover {
+                background-color: #505050;
             }
         """)
         
@@ -533,12 +572,17 @@ class ComparisonWizardWindow(QWidget):
 
 
 
-    def _create_performance_options_group(self, layout):
-        """Create performance options group"""
-        group = QGroupBox("Performance Options")
-        group_layout = QVBoxLayout(group)
+
         
-        # Max points option
+    def _create_action_buttons(self, layout):
+        """Create action buttons in Extract Analysis group with Performance Options"""
+        # Extract Analysis Group
+        extract_group = QGroupBox("Extract Analysis")
+        extract_group.setFixedHeight(160)  # Fixed height for Extract Analysis
+        extract_layout = QVBoxLayout(extract_group)
+        
+        # Performance Options Section
+        # Max points option (restored for compatibility) - First row
         max_points_layout = QHBoxLayout()
         self.max_points_checkbox = QCheckBox("Max Points:")
         self.max_points_input = QSpinBox()
@@ -550,9 +594,9 @@ class ComparisonWizardWindow(QWidget):
         max_points_layout.addWidget(self.max_points_checkbox)
         max_points_layout.addWidget(self.max_points_input)
         max_points_layout.addStretch()
-        group_layout.addLayout(max_points_layout)
+        extract_layout.addLayout(max_points_layout)
         
-        # Density display
+        # Density display - Second row
         density_layout = QHBoxLayout()
         density_layout.addWidget(QLabel("Density:"))
         self.density_combo = QComboBox()
@@ -568,12 +612,12 @@ class ComparisonWizardWindow(QWidget):
         density_layout.addWidget(self.bins_spinbox)
         
         density_layout.addStretch()
-        group_layout.addLayout(density_layout)
+        extract_layout.addLayout(density_layout)
         
-        layout.addWidget(group)
+        # Add stretch to push buttons to bottom
+        extract_layout.addStretch()
         
-    def _create_action_buttons(self, layout):
-        """Create action buttons"""
+        # Action Buttons Section
         buttons_layout = QHBoxLayout()
         
         self.refresh_plot_btn = QPushButton("Refresh Plot")
@@ -610,7 +654,8 @@ class ComparisonWizardWindow(QWidget):
         self.export_data_btn.clicked.connect(self._export_data)
         buttons_layout.addWidget(self.export_data_btn)
         
-        layout.addLayout(buttons_layout)
+        extract_layout.addLayout(buttons_layout)
+        layout.addWidget(extract_group)
         
 
     def _export_data(self):
@@ -618,16 +663,16 @@ class ComparisonWizardWindow(QWidget):
         try:
             # Check if we have a manager reference
             if not hasattr(self, 'manager') or not self.manager:
-                if hasattr(self, 'info_output'):
-                    self.info_output.append("Export Data: Exports currently plotted data and statistics to Excel format")
-                    self.info_output.append("Run analysis first to generate data for export")
+                                # Using floating console - no need for hasattr check
+                log_message("Export Data: Exports currently plotted data and statistics to Excel format", "info", "COMPARE")
+                log_message("Run analysis first to generate data for export", "info", "COMPARE")
                 return
             
             # Check if analysis results exist
             if not hasattr(self.manager, '_last_analysis_results') or not self.manager._last_analysis_results:
-                if hasattr(self, 'info_output'):
-                    self.info_output.append("Export Data: Exports currently plotted data and statistics to Excel format")
-                    self.info_output.append("Run analysis first to generate data for export")
+                                # Using floating console - no need for hasattr check
+                log_message("Export Data: Exports currently plotted data and statistics to Excel format", "info", "COMPARE")
+                log_message("Run analysis first to generate data for export", "info", "COMPARE")
                 return
                 
             # Call the manager's export method
@@ -635,12 +680,13 @@ class ComparisonWizardWindow(QWidget):
             
         except Exception as e:
             print(f"[ComparisonWizard] Error exporting data: {e}")
-            if hasattr(self, 'info_output'):
-                self.info_output.append(f"Error exporting data: {e}")
+            # Using floating console - no need for hasattr check
+            log_message(f"Error exporting data: {e}", "error", "COMPARE")
     
     def _create_channel_selection_group(self, layout):
         """Create channel selection group"""
         group = QGroupBox("Channel Selection")
+        group.setFixedHeight(180)  # Fixed height for Channel Selection
         group_layout = QFormLayout(group)
         
         # Reference file and channel
@@ -666,13 +712,19 @@ class ComparisonWizardWindow(QWidget):
         layout.addWidget(group)
         
     def _create_alignment_group(self, layout):
-        """Create data alignment controls using the reusable DataAlignerWidget"""
+        """Create data alignment controls using the reusable DataAlignerWidget with frame"""
+        # Data Alignment Group
+        alignment_group = QGroupBox("Data Alignment")
+        alignment_group.setFixedHeight(320)  # Fixed height for Data Alignment
+        alignment_layout = QVBoxLayout(alignment_group)
+        
         self.data_aligner_widget = DataAlignerWidget(self)
         
         # Connect to parameter changes
         self.data_aligner_widget.parameters_changed.connect(self._on_alignment_parameters_changed)
         
-        layout.addWidget(self.data_aligner_widget)
+        alignment_layout.addWidget(self.data_aligner_widget)
+        layout.addWidget(alignment_group)
         
     def _create_console_group(self, layout):
         """Create console output"""
@@ -685,10 +737,12 @@ class ComparisonWizardWindow(QWidget):
         self.info_output.setPlaceholderText("Logs and messages will appear here")
         self.info_output.setStyleSheet("""
             QTextEdit {
-                background-color: #f8f9fa;
-                border: 1px solid #dee2e6;
-                border-radius: 4px;
-                padding: 8px;
+                background-color: #f5f5f5;
+                border: 1px solid #d0d0d0;
+                border-radius: 3px;
+                padding: 5px;
+                font-family: 'Consolas', 'Courier New', monospace;
+                font-size: 11px;
                 color: #212529;
             }
             QTextEdit:focus {
@@ -700,14 +754,23 @@ class ComparisonWizardWindow(QWidget):
         layout.addWidget(group)
     
     def _create_pair_management_group(self, layout):
-        """Create pair management controls"""
+        """Create pair management controls with frame"""
+        # Add Pair Group
+        add_pair_group = QGroupBox("Add Pair")
+        add_pair_group.setFixedHeight(140)  # Fixed height for Add Pair
+        add_pair_layout = QVBoxLayout(add_pair_group)
+        add_pair_layout.setSpacing(4)
+        
         # Pair name input
         name_layout = QHBoxLayout()
         name_layout.addWidget(QLabel("Pair Name:"))
         self.pair_name_input = QLineEdit()
         self.pair_name_input.setPlaceholderText("Enter pair name (optional)")
         name_layout.addWidget(self.pair_name_input)
-        layout.addLayout(name_layout)
+        add_pair_layout.addLayout(name_layout)
+        
+        # Add stretch to push button to bottom
+        add_pair_layout.addStretch()
         
         # Add Pair button
         self.add_pair_btn = QPushButton("Add Comparison Pair")
@@ -724,11 +787,14 @@ class ComparisonWizardWindow(QWidget):
                 background-color: #219a52;
             }
         """)
-        layout.addWidget(self.add_pair_btn)
+        add_pair_layout.addWidget(self.add_pair_btn)
+        
+        layout.addWidget(add_pair_group)
     
     def _build_right_panel(self, main_splitter):
         """Build the right panel with results and plots"""
         self.right_panel = QWidget()
+        self.right_panel.setMinimumWidth(620)  # Set minimum width for table/plot panel
         right_layout = QVBoxLayout(self.right_panel)
         right_layout.setContentsMargins(5, 5, 5, 5)
         right_layout.setSpacing(5)
@@ -767,22 +833,20 @@ class ComparisonWizardWindow(QWidget):
         
     def _build_channels_table(self, layout):
         """Build the channels/pairs table"""
-        self.channels_table = QTableWidget(0, 5)
-        self.channels_table.setHorizontalHeaderLabels(["Show", "Style", "Pair Name", "Shape", "Actions"])
+        self.channels_table = QTableWidget(0, 4)
+        self.channels_table.setHorizontalHeaderLabels(["Show", "Style", "Pair Name", "Actions"])
         self.channels_table.setAlternatingRowColors(True)
         
         # Set column widths
         header = self.channels_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.Fixed)
         header.setSectionResizeMode(1, QHeaderView.Fixed)
-        header.setSectionResizeMode(2, QHeaderView.Fixed)
+        header.setSectionResizeMode(2, QHeaderView.Stretch)
         header.setSectionResizeMode(3, QHeaderView.Fixed)
-        header.setSectionResizeMode(4, QHeaderView.Stretch)
         
-        self.channels_table.setColumnWidth(0, 60)
-        self.channels_table.setColumnWidth(1, 80)
-        self.channels_table.setColumnWidth(2, 120)
-        self.channels_table.setColumnWidth(3, 80)
+        self.channels_table.setColumnWidth(0, 50)
+        self.channels_table.setColumnWidth(1, 85)
+        self.channels_table.setColumnWidth(3, 150)
         
         # Table will be populated dynamically when pairs are added
         
@@ -825,8 +889,8 @@ class ComparisonWizardWindow(QWidget):
         header.setSectionResizeMode(3, QHeaderView.Fixed)
         
         self.overlay_table.setColumnWidth(0, 50)
-        self.overlay_table.setColumnWidth(1, 80)
-        self.overlay_table.setColumnWidth(3, 100)
+        self.overlay_table.setColumnWidth(1, 85)
+        self.overlay_table.setColumnWidth(3, 150)
         
         # Table will be populated dynamically when overlays are generated
         
@@ -864,8 +928,8 @@ class ComparisonWizardWindow(QWidget):
         """Populate initial data for the wizard"""
         try:
             # Display welcome message in the console output only
-            if hasattr(self, 'info_output'):
-                welcome_msg = """Welcome to the Data Comparison Wizard!
+            # Using floating console - no need for hasattr check
+            welcome_msg = """Welcome to the Data Comparison Wizard!
 
 Quick Start:
 1. Select comparison method from the left panel
@@ -877,8 +941,8 @@ Tips:
 • Multiple pairs can be added for a single analysis
 • Customize plot scripts in the 'Plot Script' tab - use with caution
 """
-                
-                self.info_output.append(welcome_msg)
+            
+            log_message(welcome_msg, "info", "COMPARE")
             
             # Tables will be populated dynamically when pairs are added
             # and overlays are generated by the analysis methods
@@ -992,6 +1056,13 @@ Tips:
                     
                     # Parameter widget
                     widget = self._create_parameter_widget(param)
+                    
+                    # Set proper sizing for the widget
+                    if hasattr(widget, 'setMinimumWidth'):
+                        widget.setMinimumWidth(100)  # Reduced minimum width for value widgets
+                    if hasattr(widget, 'setSizePolicy'):
+                        widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                    
                     self.param_table.setCellWidget(i, 1, widget)
                     
                 # Connect parameter change signals
@@ -1141,6 +1212,71 @@ Tips:
             # Set tooltip if description available
             if param_description:
                 widget.setToolTip(param_description)
+            
+            # Apply dark theme styling to input widgets
+            if widget_type in ['spinbox', 'doublespinbox', 'lineedit', 'combobox']:
+                # Set maximum width to make widgets narrower than column but still functional
+                widget.setMaximumWidth(75)
+                
+                widget.setStyleSheet("""
+                    QSpinBox, QDoubleSpinBox, QLineEdit, QComboBox {
+                        background-color: #ffffff;
+                        color: #000000;
+                        border: 1px solid #555555;
+                        border-radius: 3px;
+                        padding: 2px 4px;
+                        font-size: 10px;
+                        min-height: 20px;
+                    }
+                    QSpinBox:focus, QDoubleSpinBox:focus, QLineEdit:focus, QComboBox:focus {
+                        border: 1px solid #4a90e2;
+                    }
+                    QComboBox::drop-down {
+                        border: none;
+                        width: 16px;
+                    }
+                    QComboBox::down-arrow {
+                        image: none;
+                        border-left: 4px solid transparent;
+                        border-right: 4px solid transparent;
+                        border-top: 4px solid #555555;
+                    }
+                    QComboBox::down-arrow:hover {
+                        border-top-color: #4a90e2;
+                    }
+                    QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {
+                        width: 12px;
+                        height: 8px;
+                    }
+                    QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {
+                        width: 12px;
+                        height: 8px;
+                    }
+                """)
+            elif widget_type == 'checkbox':
+                widget.setStyleSheet("""
+                    QCheckBox {
+                        color: #ffffff;
+                        font-size: 11px;
+                    }
+                    QCheckBox::indicator {
+                        width: 16px;
+                        height: 16px;
+                        border: 1px solid #555555;
+                        border-radius: 3px;
+                        background-color: #2d2d2d;
+                    }
+                    QCheckBox::indicator:checked {
+                        background-color: #4a90e2;
+                        border-color: #4a90e2;
+                    }
+                    QCheckBox::indicator:checked::after {
+                        content: "✓";
+                        color: white;
+                        font-weight: bold;
+                        font-size: 12px;
+                    }
+                """)
                 
             # Register widget with dynamic parameter capture
             self.param_capture.register_widget(param_name, widget, widget_type)
@@ -1448,49 +1584,46 @@ Tips:
                 is_initial_setup = previous is None
                 
                 # Only clear console and show method description if this is not the initial setup
-                if not is_initial_setup and hasattr(self, 'info_output'):
-                    self.info_output.clear()
+                # Floating console doesn't need clearing - messages persist
                     
-                    # Get the comparison class and its description
-                    comparison_cls = None
-                    if self.manager and hasattr(self.manager, 'get_comparison_class'):
-                        # Try to get the comparison class
-                        comparison_cls = self.manager.get_comparison_class(method_name)
-                        
-                        # If not found, try lowercase version
-                        if not comparison_cls:
-                            comparison_cls = self.manager.get_comparison_class(method_name.lower())
-                        
-                        # If still not found, try common variations
-                        if not comparison_cls:
-                            method_variations = [
-                                method_name.replace(' ', '_').lower(),
-                                method_name.replace('-', '_').lower(),
-                                method_name.replace(' ', '').lower()
-                            ]
-                            for variation in method_variations:
-                                comparison_cls = self.manager.get_comparison_class(variation)
-                                if comparison_cls:
-                                    break
+                # Get the comparison class and its description
+                comparison_cls = None
+                if self.manager and hasattr(self.manager, 'get_comparison_class'):
+                    # Try to get the comparison class
+                    comparison_cls = self.manager.get_comparison_class(method_name)
                     
-                    # Display the method description
-                    if comparison_cls and hasattr(comparison_cls, 'get_description'):
-                        description = comparison_cls.get_description()
-                        self.info_output.append(description)
-                        self.info_output.append("")  # Add empty line for spacing
-                    else:
-                        # Fallback if no description available
-                        self.info_output.append(f"Selected method: {method_name}")
-                        self.info_output.append("Description not available.")
-                        self.info_output.append("")
+                    # If not found, try lowercase version
+                    if not comparison_cls:
+                        comparison_cls = self.manager.get_comparison_class(method_name.lower())
+                    
+                    # If still not found, try common variations
+                    if not comparison_cls:
+                        method_variations = [
+                            method_name.replace(' ', '_').lower(),
+                            method_name.replace('-', '_').lower(),
+                            method_name.replace(' ', '').lower()
+                        ]
+                        for variation in method_variations:
+                            comparison_cls = self.manager.get_comparison_class(variation)
+                            if comparison_cls:
+                                break
+                
+                # Display the method description
+                if comparison_cls and hasattr(comparison_cls, 'get_description'):
+                    description = comparison_cls.get_description()
+                    log_message(description, "info", "COMPARE")
+                else:
+                    # Fallback if no description available
+                    log_message(f"Selected method: {method_name}", "info", "COMPARE")
+                    log_message("Description not available.", "warning", "COMPARE")
                 
                 # Update method configuration based on selected method
                 self._update_method_configuration(method_name)
                 
         except Exception as e:
             print(f"[ComparisonWizard] Error handling method change: {e}")
-            if hasattr(self, 'info_output'):
-                self.info_output.append(f"Error loading method description: {e}")
+            # Using floating console - no need for hasattr check
+            log_message(f"Error loading method description: {e}", "error", "COMPARE")
     
     def _on_density_changed(self, density_type):
         """Handle density type change"""
@@ -1509,28 +1642,28 @@ Tips:
         try:
             print("[ComparisonWizard] Refresh button clicked - triggering analysis refresh")
             
-            if hasattr(self, 'info_output'):
-                self.info_output.append("Refreshing plot with current settings...")
+            # Using floating console - no need for hasattr check
+            log_message("Refreshing plot with current settings...", "info", "COMPARE")
             
             # Check if we have a manager and pairs to analyze
             if not self.manager:
                 print("[ComparisonWizard] No manager available for refresh")
-                if hasattr(self, 'info_output'):
-                    self.info_output.append("No manager available for refresh")
+                                # Using floating console - no need for hasattr check
+                log_message("No manager available for refresh", "warning", "COMPARE")
                 return
             
             # Check if we have any pairs to analyze
             if not hasattr(self.manager, 'pair_manager') or not self.manager.pair_manager:
                 print("[ComparisonWizard] No pair manager available")
-                if hasattr(self, 'info_output'):
-                    self.info_output.append("No pair manager available")
+                                # Using floating console - no need for hasattr check
+                log_message("No pair manager available", "warning", "COMPARE")
                 return
             
             all_pairs = self.manager.pair_manager.get_all_pairs()
             if not all_pairs:
                 print("[ComparisonWizard] No pairs available to refresh")
-                if hasattr(self, 'info_output'):
-                    self.info_output.append("No pairs available to refresh - add some pairs first")
+                                # Using floating console - no need for hasattr check
+                log_message("No pairs available to refresh - add some pairs first", "info", "COMPARE")
                 return
             
             # Get current method configuration
@@ -1539,8 +1672,8 @@ Tips:
             
             if not method_name:
                 print("[ComparisonWizard] No method selected for refresh")
-                if hasattr(self, 'info_output'):
-                    self.info_output.append("No comparison method selected")
+                                # Using floating console - no need for hasattr check
+                log_message("No comparison method selected", "warning", "COMPARE")
                 return
             
             print(f"[ComparisonWizard] Refreshing {len(all_pairs)} pairs with method '{method_name}' and parameters: {parameters}")
@@ -1552,42 +1685,42 @@ Tips:
                 print("[ComparisonWizard] Analysis refresh triggered successfully")
             else:
                 print("[ComparisonWizard] Manager does not have _perform_analysis method")
-                if hasattr(self, 'info_output'):
-                    self.info_output.append("Manager does not support analysis refresh")
+                                # Using floating console - no need for hasattr check
+                log_message("Manager does not support analysis refresh", "warning", "COMPARE")
                 
         except Exception as e:
             print(f"[ComparisonWizard] Error refreshing plot: {e}")
-            if hasattr(self, 'info_output'):
-                self.info_output.append(f"Error refreshing plot: {e}")
+            # Using floating console - no need for hasattr check
+            log_message(f"Error refreshing plot: {e}", "error", "COMPARE")
         
     def _on_add_pair_clicked(self):
         """Handle add pair button click"""
+        print("[DEBUG] Add Pair button clicked!")  # Debug print
         try:
             # Clear console first
-            if hasattr(self, 'info_output'):
-                self.info_output.clear()
+            # Floating console doesn't need clearing - messages persist
                 
             # Show current info messages
-            if hasattr(self, 'info_output'):
-                self.info_output.append("Processing comparison pair addition...")
-                
-                # Get current selections for info display
-                ref_file = self.ref_file_combo.currentText()
-                ref_channel = self.ref_channel_combo.currentData()
-                test_file = self.test_file_combo.currentText()
-                test_channel = self.test_channel_combo.currentData()
-                method_name = self.get_current_method_name()
-                
-                # Display current configuration info
-                info_msg = f"""Current Configuration:
+            # Using floating console - no need for hasattr check
+            log_message("Processing comparison pair addition...", "info", "COMPARE")
+            
+            # Get current selections for info display
+            ref_file = self.ref_file_combo.currentText()
+            ref_channel = self.ref_channel_combo.currentData()
+            test_file = self.test_file_combo.currentText()
+            test_channel = self.test_channel_combo.currentData()
+            method_name = self.get_current_method_name()
+            
+            # Display current configuration info
+            info_msg = f"""Current Configuration:
 • Method: {method_name}
 • Reference: {ref_file} → {getattr(ref_channel, 'legend_label', 'Unknown') if ref_channel else 'None'}
 • Test: {test_file} → {getattr(test_channel, 'legend_label', 'Unknown') if test_channel else 'None'}
 • Pair Name: {self.pair_name_input.text() or 'Auto-generated'}
 
 Starting pair addition process..."""
-                
-                self.info_output.append(info_msg)
+            
+            log_message(info_msg, "info", "COMPARE")
             
             # Get current selections - use currentData() to get Channel objects
             ref_file = self.ref_file_combo.currentText()
@@ -1643,6 +1776,9 @@ Starting pair addition process..."""
                 # Update the table
                 self._add_pair_to_table(pair_name)
                 
+                # Log success message
+                log_message(f"Successfully added pair: {pair_name}", "success", "COMPARE")
+                
                     
             elif result_type == 'pair_add_blocked':
                 # Pair was blocked (duplicate or other issue)
@@ -1650,17 +1786,26 @@ Starting pair addition process..."""
                 error_msg = result.get('error', 'Unknown error')
                 pair_name = pair_data.get('name', 'Unnamed')
                 
+                # Log blocked message
+                log_message(f"Pair blocked: {pair_name} - {error_msg}", "warning", "COMPARE")
+                
             elif result_type == 'pair_add_failed':
                 # Pair addition failed due to alignment or other error
                 pair_data = result.get('data', {})
                 error_msg = result.get('error', 'Unknown error')
                 pair_name = pair_data.get('name', 'Unnamed')
                 
+                # Log failure message
+                log_message(f"Failed to add pair: {pair_name} - {error_msg}", "error", "COMPARE")
+                
                     
             elif result_type == 'analysis_refreshed':
                 # Analysis refresh completed successfully
                 n_pairs = result.get('n_pairs', 0)
                 cache_stats = result.get('cache_stats', {})
+                
+                # Log refresh success message
+                log_message(f"Successfully refreshed analysis for {n_pairs} pairs", "success", "COMPARE")
                 
                     
                     
@@ -1724,22 +1869,25 @@ Starting pair addition process..."""
             print(f"  - marker_color: {getattr(pair, 'marker_color', 'NOT SET')}")
             print(f"  - alpha: {getattr(pair, 'alpha', 'NOT SET')}")
             
+            # Create tooltip text for the entire row
+            tooltip_text = pair.get_tooltip_text()
+            
             # Show checkbox
             checkbox = QCheckBox()
             checkbox.setChecked(pair.show if hasattr(pair, 'show') else True)
             checkbox.stateChanged.connect(lambda state, pair_id=pair.pair_id: self._on_pair_visibility_changed(pair_id, state))
+            checkbox.setToolTip(tooltip_text)
             self.channels_table.setCellWidget(row, 0, checkbox)
             
             # Style preview - create based on actual pair styling
             style_widget = self._create_style_preview_from_pair_object(pair)
+            style_widget.setToolTip(tooltip_text)
             self.channels_table.setCellWidget(row, 1, style_widget)
             
-            # Name and shape
-            self.channels_table.setItem(row, 2, QTableWidgetItem(pair.name))
-            
-            # Get data dimensions from pair object
-            shape_text = self._get_pair_data_shape_from_object(pair)
-            self.channels_table.setItem(row, 3, QTableWidgetItem(shape_text))
+            # Name
+            name_item = QTableWidgetItem(pair.name)
+            name_item.setToolTip(tooltip_text)
+            self.channels_table.setItem(row, 2, name_item)
             
             # Actions
             actions_widget = QWidget()
@@ -1747,29 +1895,30 @@ Starting pair addition process..."""
             actions_layout.setContentsMargins(2, 2, 2, 2)
             
             info_btn = QPushButton("ℹ️")
-            info_btn.setMaximumSize(25, 25)
-            info_btn.setToolTip("View pair metadata and statistics")
+            info_btn.setFixedSize(30, 30)
+            info_btn.setToolTip(f"View metadata and statistics for {pair.name}")
             info_btn.clicked.connect(lambda: self._on_pair_info_clicked(pair))
             actions_layout.addWidget(info_btn)
             
             inspect_btn = QPushButton("🔍")
-            inspect_btn.setMaximumSize(25, 25)
-            inspect_btn.setToolTip("Inspect aligned pair data")
+            inspect_btn.setFixedSize(30, 30)
+            inspect_btn.setToolTip(f"Inspect aligned data for {pair.name}")
             inspect_btn.clicked.connect(lambda: self._on_pair_inspect_clicked(pair))
             actions_layout.addWidget(inspect_btn)
             
             style_btn = QPushButton("🎨")
-            style_btn.setMaximumSize(25, 25)
-            style_btn.setToolTip("Edit pair marker styling")
+            style_btn.setFixedSize(30, 30)
+            style_btn.setToolTip(f"Edit styling for {pair.name}")
             style_btn.clicked.connect(lambda: self._on_pair_style_clicked(pair))
             actions_layout.addWidget(style_btn)
             
             delete_btn = QPushButton("🗑️")
-            delete_btn.setMaximumSize(25, 25)
+            delete_btn.setFixedSize(30, 30)
+            delete_btn.setToolTip(f"Delete pair {pair.name}")
             delete_btn.clicked.connect(lambda: self._delete_pair(row))
             actions_layout.addWidget(delete_btn)
             
-            self.channels_table.setCellWidget(row, 4, actions_widget)
+            self.channels_table.setCellWidget(row, 3, actions_widget)
             
         except Exception as e:
             print(f"[ComparisonWizard] Error adding single pair to table: {e}")
@@ -1895,8 +2044,8 @@ Starting pair addition process..."""
             # Emit signal with pair name so manager can remove it from backend
             self.pair_deleted.emit({'pair_name': pair_name})
             
-            if hasattr(self, 'info_output'):
-                self.info_output.append(f"Pair deleted: {pair_name}")
+            # Using floating console - no need for hasattr check
+            log_message(f"Pair deleted: {pair_name}", "info", "COMPARE")
                 
         except Exception as e:
             print(f"[ComparisonWizard] Error deleting pair: {e}")
@@ -1931,9 +2080,9 @@ Starting pair addition process..."""
                     print(f"[ComparisonWizard] Manager missing update methods")
             
             # Update info output
-            if hasattr(self, 'info_output'):
+            # Using floating console - no need for hasattr check
                 visibility_text = "shown" if is_visible else "hidden"
-                self.info_output.append(f"Pair {pair_id} {visibility_text}")
+                log_message(f"Pair {pair_id} {visibility_text}", "info", "COMPARE")
                 
         except Exception as e:
             print(f"[ComparisonWizard] Error handling pair visibility change: {e}")

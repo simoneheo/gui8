@@ -1114,14 +1114,34 @@ def _get_add_constant_defaults(fs, total_samples, channel):
 def _get_bandpass_bessel_defaults(fs, total_samples, channel):
     """Calculate intelligent defaults for bandpass_bessel step."""
     try:
-        # Use same logic as bandpass_butter
-        return _get_bandpass_butter_defaults(fs, total_samples, channel)
+        # Calculate Nyquist frequency
+        nyquist = fs / 2
+        
+        # Low cutoff: 10% of Nyquist
+        low_cutoff = nyquist * 0.1
+        # High cutoff: 80% of Nyquist
+        high_cutoff = nyquist * 0.8
+        
+        # Ensure both cutoffs are well below Nyquist (safety margin)
+        if high_cutoff >= nyquist * 0.9:
+            high_cutoff = nyquist * 0.8
+        if low_cutoff >= nyquist * 0.9:
+            low_cutoff = nyquist * 0.1
+        
+        return {
+            "low_cutoff": str(round(low_cutoff, 2)),
+            "high_cutoff": str(round(high_cutoff, 2)),
+            "order": "2"
+        }
     except Exception as e:
         return {"low_cutoff": "0.5", "high_cutoff": "4.0", "order": "2"}
 
 def _get_bandpass_fir_defaults(fs, total_samples, channel):
     """Calculate intelligent defaults for bandpass_fir step."""
     try:
+        # Calculate Nyquist frequency
+        nyquist = fs / 2
+        
         # Calculate intelligent numtaps based on sampling rate and signal length
         # Rule: numtaps should be odd and provide good frequency resolution
         # But not too large to avoid computational issues
@@ -1145,16 +1165,22 @@ def _get_bandpass_fir_defaults(fs, total_samples, channel):
         if numtaps % 2 == 0:
             numtaps -= 1
         
-        # Default frequency range based on sampling rate
-        # Low cutoff: remove DC and very low frequencies
-        low_cutoff = min(0.5, fs / 200)  # 0.5% of sampling rate
+        # Default frequency range based on Nyquist frequency
+        # Low cutoff: remove DC and very low frequencies (1% of Nyquist)
+        low_cutoff = min(nyquist * 0.01, 0.5)  # 1% of Nyquist or 0.5 Hz
         
-        # High cutoff: remove high frequency noise, keep main signal
-        high_cutoff = min(fs / 4, 20.0)  # Quarter of sampling rate or 20 Hz
+        # High cutoff: remove high frequency noise, keep main signal (40% of Nyquist)
+        high_cutoff = min(nyquist * 0.4, 20.0)  # 40% of Nyquist or 20 Hz
         
         # Ensure low < high
         if low_cutoff >= high_cutoff:
             low_cutoff = high_cutoff * 0.1
+        
+        # Ensure both cutoffs are well below Nyquist (safety margin)
+        if high_cutoff >= nyquist * 0.9:
+            high_cutoff = nyquist * 0.4
+        if low_cutoff >= nyquist * 0.9:
+            low_cutoff = nyquist * 0.01
         
         return {
             "low_cutoff": f"{low_cutoff:.3f}",
@@ -1264,15 +1290,27 @@ def _get_envelope_peaks_defaults(fs, total_samples, channel):
 def _get_highpass_bessel_defaults(fs, total_samples, channel):
     """Calculate intelligent defaults for highpass_bessel step."""
     try:
+        # Calculate Nyquist frequency
+        nyquist = fs / 2
+        
         # Conservative highpass cutoff - remove DC and very low frequencies
-        cutoff = min(0.1, fs / 100) if fs > 0 else 0.1
-        return {"cutoff": str(cutoff), "order": "2"}
+        # Use 1% of Nyquist frequency, but ensure it's well below Nyquist
+        cutoff = min(nyquist * 0.01, 0.1) if fs > 0 else 0.1
+        
+        # Ensure cutoff is well below Nyquist (safety margin)
+        if cutoff >= nyquist * 0.9:
+            cutoff = nyquist * 0.01
+        
+        return {"cutoff": str(round(cutoff, 3)), "order": "2"}
     except Exception as e:
         return {"cutoff": "0.1", "order": "2"}
 
 def _get_highpass_fir_defaults(fs, total_samples, channel):
     """Calculate intelligent defaults for highpass_fir step."""
     try:
+        # Calculate Nyquist frequency
+        nyquist = fs / 2
+        
         # Calculate intelligent numtaps similar to other FIR filters
         base_taps = max(51, int(fs * 0.05))  # 50ms of data minimum
         
@@ -1293,7 +1331,12 @@ def _get_highpass_fir_defaults(fs, total_samples, channel):
             numtaps -= 1
         
         # Conservative highpass cutoff - remove DC and very low frequencies
-        cutoff = min(0.1, fs / 100)  # 1% of sampling rate or 0.1 Hz
+        # Use 1% of Nyquist frequency, but ensure it's well below Nyquist
+        cutoff = min(nyquist * 0.01, 0.1)  # 1% of Nyquist or 0.1 Hz
+        
+        # Ensure cutoff is well below Nyquist (safety margin)
+        if cutoff >= nyquist * 0.9:
+            cutoff = nyquist * 0.01
         
         return {
             "cutoff": f"{cutoff:.3f}",
@@ -1318,15 +1361,27 @@ def _get_impute_missing_defaults(fs, total_samples, channel):
 def _get_lowpass_bessel_defaults(fs, total_samples, channel):
     """Calculate intelligent defaults for lowpass_bessel step."""
     try:
+        # Calculate Nyquist frequency
+        nyquist = fs / 2
+        
         # Conservative lowpass cutoff - remove high frequency noise
-        cutoff = min(fs / 4, 10.0) if fs > 0 else 10.0
-        return {"cutoff": str(cutoff), "order": "2"}
+        # Use 40% of Nyquist frequency, but ensure it's well below Nyquist
+        cutoff = min(nyquist * 0.4, 10.0) if fs > 0 else 10.0
+        
+        # Ensure cutoff is well below Nyquist (safety margin)
+        if cutoff >= nyquist * 0.9:
+            cutoff = nyquist * 0.4
+        
+        return {"cutoff": str(round(cutoff, 2)), "order": "2"}
     except Exception as e:
         return {"cutoff": "10.0", "order": "2"}
 
 def _get_lowpass_fir_defaults(fs, total_samples, channel):
     """Calculate intelligent defaults for lowpass_fir step."""
     try:
+        # Calculate Nyquist frequency
+        nyquist = fs / 2
+        
         # Calculate intelligent numtaps similar to bandpass
         base_taps = max(51, int(fs * 0.05))  # 50ms of data minimum
         
@@ -1347,7 +1402,12 @@ def _get_lowpass_fir_defaults(fs, total_samples, channel):
             numtaps -= 1
         
         # Conservative lowpass cutoff - remove high frequency noise
-        cutoff = min(fs / 4, 10.0)  # Quarter of sampling rate or 10 Hz
+        # Use 40% of Nyquist frequency, but ensure it's well below Nyquist
+        cutoff = min(nyquist * 0.4, 10.0)  # 40% of Nyquist or 10 Hz
+        
+        # Ensure cutoff is well below Nyquist (safety margin)
+        if cutoff >= nyquist * 0.9:
+            cutoff = nyquist * 0.4
         
         return {
             "cutoff": f"{cutoff:.1f}",
@@ -1837,23 +1897,53 @@ def _get_detect_zero_crossings_defaults(fs, total_samples, channel):
 
 def _get_log_transform_defaults(fs, total_samples, channel):
     """Get intelligent defaults for log transform step"""
-    # Try to determine appropriate offset based on signal minimum
+    # Try to determine appropriate offset based on signal statistics
     try:
         if hasattr(channel, 'ydata') and channel.ydata is not None:
-            y_min = np.min(channel.ydata)
-            if y_min <= 0:
-                # If signal has negative or zero values, add offset
-                offset = abs(y_min) + 1.0
+            y_data = np.array(channel.ydata)
+            
+            # Filter out non-finite values
+            finite_mask = np.isfinite(y_data)
+            if np.any(finite_mask):
+                finite_data = y_data[finite_mask]
+                
+                # Get minimum and maximum of finite data
+                y_min = np.min(finite_data)
+                y_max = np.max(finite_data)
+                
+                # Calculate offset to ensure all values are positive after offset
+                if y_min <= 0:
+                    # If signal has negative or zero values, add offset
+                    # Use abs(min) + small epsilon to ensure positive
+                    offset = abs(y_min) + 1e-6
+                else:
+                    # If signal is already positive, add small offset for numerical stability
+                    # Use a small fraction of the data range or minimum value
+                    data_range = y_max - y_min
+                    if data_range > 0:
+                        # Use 1% of data range as offset
+                        offset = max(1e-6, data_range * 0.01)
+                    else:
+                        # If no range (constant signal), use small offset
+                        offset = max(1e-6, abs(y_min) * 0.01)
+                
+                # Additional safety check: ensure offset is reasonable
+                if offset < 1e-6:
+                    offset = 1e-6
+                elif offset > 1e6:
+                    offset = 1.0  # Cap at reasonable value
             else:
-                # If signal is already positive, small offset
-                offset = 0.1
+                # No finite data available, use safe default
+                offset = 1.0
         else:
+            # No channel data available, use safe default
             offset = 1.0
-    except:
+    except Exception as e:
+        # Fallback to safe default
         offset = 1.0
     
     return {
-        "offset": offset
+        "offset": str(round(offset, 6))
     }
 
 def _get_ppg_processing_defaults(fs, total_samples, channel):
